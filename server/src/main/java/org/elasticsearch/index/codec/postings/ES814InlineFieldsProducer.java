@@ -26,6 +26,8 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.lucene.util.BinaryInterpolativeCoding;
+import org.elasticsearch.lucene.util.BitStreamInput;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -369,6 +371,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
     private static class InlinePostingsEnum extends PostingsEnum {
 
         private final ES814InlineFieldsProducer producer;
+        private final int maxDoc;
         private final int flags;
         private IndexOptions options;
         private int docFreq;
@@ -388,6 +391,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         InlinePostingsEnum(ES814InlineFieldsProducer producer, int flags, IndexInput index, IndexInput prox) {
             this.producer = Objects.requireNonNull(producer);
+            this.maxDoc = producer.state.segmentInfo.maxDoc();
             this.flags = flags;
             this.index = Objects.requireNonNull(index);
             this.prox = prox;
@@ -501,18 +505,18 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 }
             } else {
                 // Tail postings
-                skipDoc = NO_MORE_DOCS;
-                nextBlockProxOffset = -1L;
-                for (int i = 0; i < remaining; ++i) {
-                    docBuffer[i] = index.readInt();
-                }
+                BitStreamInput bitIn = new BitStreamInput(index);
+                BinaryInterpolativeCoding.decodeIncreasing(bitIn, docBuffer, 0, remaining - 1, skipDoc + 1, maxDoc - 1);
                 if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
                     for (int i = 0; i < remaining; ++i) {
-                        freqBuffer[i] = index.readInt();
+                        freqBuffer[i] = bitIn.readDeltaCode();
                     }
                 } else {
                     Arrays.fill(freqBuffer, 0, remaining, 1L);
                 }
+                bitIn.done();
+                skipDoc = NO_MORE_DOCS;
+                nextBlockProxOffset = -1L;
             }
         }
 

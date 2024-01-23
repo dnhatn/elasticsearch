@@ -23,6 +23,8 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.lucene.util.BinaryInterpolativeCoding;
+import org.elasticsearch.lucene.util.BitStreamOutput;
 
 import java.io.IOException;
 
@@ -241,14 +243,21 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 }
             }
             // Tail postings
-            for (int i = 0; i < docBufferSize; ++i) {
-                index.writeInt((int) docBuffer[i]);
-            }
+            BitStreamOutput bitOut = new BitStreamOutput(index);
+            BinaryInterpolativeCoding.encodeIncreasing(
+                docBuffer,
+                0,
+                docBufferSize - 1,
+                lastDocInPrevBlock + 1,
+                state.segmentInfo.maxDoc() - 1,
+                bitOut
+            );
             if (hasFreqs) {
                 for (int i = 0; i < docBufferSize; ++i) {
-                    index.writeInt((int) freqBuffer[i]);
+                    bitOut.writeDeltaCode((int) freqBuffer[i]);
                 }
             }
+            bitOut.flush();
             sumDocFreq += docFreq;
             sumTotalTermFreq += totalTermFreq;
         }
