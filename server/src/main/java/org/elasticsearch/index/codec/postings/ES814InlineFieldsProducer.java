@@ -476,9 +476,9 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             final int remaining = docFreq - docIndex;
             if (remaining >= POSTINGS_BLOCK_SIZE) {
                 // Full block
-                skipDoc = index.readInt();
+                skipDoc += index.readVInt() + POSTINGS_BLOCK_SIZE;
                 if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
-                    nextBlockProxOffset = index.readLong();
+                    nextBlockProxOffset += index.readVLong();
                 }
                 if (skipDoc >= target) {
                     docBuffer[POSTINGS_BLOCK_SIZE - 1] = skipDoc;

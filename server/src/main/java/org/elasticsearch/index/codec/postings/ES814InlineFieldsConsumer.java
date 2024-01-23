@@ -186,6 +186,11 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             docFreq = 0;
             totalTermFreq = 0;
             int docBufferSize = 0;
+            int lastDocInPrevBlock = -1;
+            long lastProxOffset = -1L;
+            if (hasPositions) {
+                lastProxOffset = prox.getFilePointer();
+            }
             for (int doc = pe.docID(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = pe.nextDoc()) {
                 docsWithField.set(doc);
                 ++docFreq;
@@ -218,9 +223,11 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
                 if (++docBufferSize == POSTINGS_BLOCK_SIZE) {
                     // Write the last doc in the block first, which we can use as skip data, to know whether or not to decompress the block
-                    index.writeInt(doc);
+                    index.writeVInt(doc - lastDocInPrevBlock - POSTINGS_BLOCK_SIZE);
+                    lastDocInPrevBlock = doc;
                     if (hasPositions) {
-                        index.writeLong(prox.getFilePointer());
+                        index.writeVLong(prox.getFilePointer() - lastProxOffset);
+                        lastProxOffset = prox.getFilePointer();
                     }
                     for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
                         index.writeInt((int) docBuffer[i]);
