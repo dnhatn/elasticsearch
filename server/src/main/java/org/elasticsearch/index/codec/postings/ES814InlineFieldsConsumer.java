@@ -173,6 +173,9 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         long sumDocFreq, totalTermFreq, sumTotalTermFreq;
         boolean hasPayloads;
 
+        private final long[] docBuffer = new long[POSTINGS_BLOCK_SIZE];
+        private final long[] freqBuffer = new long[POSTINGS_BLOCK_SIZE];
+
         PostingsWriter(boolean hasFreqs, boolean hasPositions, boolean hasOffsets) {
             this.hasFreqs = hasFreqs;
             this.hasPositions = hasPositions;
@@ -182,17 +185,18 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         void write(PostingsEnum pe, ByteBuffersDataOutput index) throws IOException {
             docFreq = 0;
             totalTermFreq = 0;
+            int docBufferSize = 0;
             for (int doc = pe.docID(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = pe.nextDoc()) {
                 docsWithField.set(doc);
                 ++docFreq;
-                index.writeInt(doc);
+                docBuffer[docBufferSize] = doc;
                 int freq;
                 if (hasFreqs) {
                     freq = pe.freq();
-                    index.writeInt(freq);
                 } else {
                     freq = 1;
                 }
+                freqBuffer[docBufferSize] = freq;
                 totalTermFreq += freq;
                 if (hasPositions) {
                     for (int i = 0; i < freq; ++i) {
@@ -210,6 +214,29 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                             prox.writeBytes(payload.bytes, payload.offset, payload.length);
                         }
                     }
+                }
+
+                if (++docBufferSize == POSTINGS_BLOCK_SIZE) {
+                    // Write the last doc in the block first, which we can use as skip data, to know whether or not to decompress the block
+                    index.writeInt(doc);
+                    for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
+                        index.writeInt((int) docBuffer[i]);
+                    }
+                    if (hasFreqs) {
+                        for (int i = 0; i < POSTINGS_BLOCK_SIZE; ++i) {
+                            index.writeInt((int) freqBuffer[i]);
+                        }
+                    }
+                    docBufferSize = 0;
+                }
+            }
+            // Tail postings
+            for (int i = 0; i < docBufferSize; ++i) {
+                index.writeInt((int) docBuffer[i]);
+            }
+            if (hasFreqs) {
+                for (int i = 0; i < docBufferSize; ++i) {
+                    index.writeInt((int) freqBuffer[i]);
                 }
             }
             sumDocFreq += docFreq;

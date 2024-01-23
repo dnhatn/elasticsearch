@@ -28,6 +28,7 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.core.IOUtils;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -379,6 +380,9 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private int pos;
         private int startOffset, endOffset;
         private BytesRef payload;
+        private final long[] docBuffer = new long[POSTINGS_BLOCK_SIZE];
+        private final long[] freqBuffer = new long[POSTINGS_BLOCK_SIZE];
+        private int docBufferIndex;
 
         InlinePostingsEnum(ES814InlineFieldsProducer producer, int flags, IndexInput index, IndexInput prox) {
             this.producer = Objects.requireNonNull(producer);
@@ -396,6 +400,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             this.options = Objects.requireNonNull(options);
             this.docFreq = docFreq;
             docIndex = -1;
+            docBufferIndex = POSTINGS_BLOCK_SIZE - 1; // Trigger a refill on the next read
             doc = -1;
             freq = 1;
             posIndex = 1;
@@ -423,14 +428,44 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             if (++docIndex >= docFreq) {
                 return doc = DocIdSetIterator.NO_MORE_DOCS;
             }
-            doc = index.readInt();
-            if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
-                freq = index.readInt();
-            } else {
-                freq = 1;
+            if (++docBufferIndex == POSTINGS_BLOCK_SIZE) {
+                refillDocs();
+                docBufferIndex = 0;
             }
             posIndex = -1;
-            return doc;
+            freq = (int) freqBuffer[docBufferIndex];
+            return doc = (int) docBuffer[docBufferIndex];
+        }
+
+        private void refillDocs() throws IOException {
+            final int remaining = docFreq - docIndex;
+            if (remaining >= POSTINGS_BLOCK_SIZE) {
+                // Full block
+                final int lastDocInBlock = index.readInt();
+                docBuffer[POSTINGS_BLOCK_SIZE - 1] = lastDocInBlock;
+                for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
+                    docBuffer[i] = index.readInt();
+                }
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
+                    for (int i = 0; i < POSTINGS_BLOCK_SIZE; ++i) {
+                        freqBuffer[i] = index.readInt();
+                    }
+                } else {
+                    Arrays.fill(freqBuffer, -1L);
+                }
+            } else {
+                // Tail postings
+                for (int i = 0; i < remaining; ++i) {
+                    docBuffer[i] = index.readInt();
+                }
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
+                    for (int i = 0; i < remaining; ++i) {
+                        freqBuffer[i] = index.readInt();
+                    }
+                } else {
+                    Arrays.fill(freqBuffer, 0, remaining, 1L);
+                }
+            }
         }
 
         @Override

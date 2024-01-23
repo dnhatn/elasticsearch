@@ -31,6 +31,8 @@ public final class ES814InlinePostingsFormat extends PostingsFormat {
     public static final String PROXIMITY_EXTENSION = "prx";
     static final int VERSION_START = 0;
     static final int VERSION_CURRENT = VERSION_START;
+    // One for the last posting in a block, which is used as skip data. Plus 128 for the block of docs that gets compressed together.
+    static final int POSTINGS_BLOCK_SIZE = ForUtil.BLOCK_SIZE + 1;
 
     /**
      * Sole constructor.
