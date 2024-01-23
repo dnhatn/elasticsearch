@@ -375,7 +375,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private final IndexInput index, prox;
         private int docIndex;
         private int posIndex;
-        private int doc = -1;
+        private int doc;
         private int freq;
         private int pos;
         private int startOffset, endOffset;
@@ -383,6 +383,8 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private final long[] docBuffer = new long[POSTINGS_BLOCK_SIZE];
         private final long[] freqBuffer = new long[POSTINGS_BLOCK_SIZE];
         private int docBufferIndex;
+        private int skipDoc; // last doc in the current block
+        private long nextBlockProxOffset; // start offset of proximity data for the next block
 
         InlinePostingsEnum(ES814InlineFieldsProducer producer, int flags, IndexInput index, IndexInput prox) {
             this.producer = Objects.requireNonNull(producer);
@@ -402,11 +404,13 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             docIndex = -1;
             docBufferIndex = POSTINGS_BLOCK_SIZE - 1; // Trigger a refill on the next read
             doc = -1;
+            skipDoc = -1;
             freq = 1;
             posIndex = 1;
             index.seek(docOffset);
-            if (prox != null) {
+            if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
                 prox.seek(proxOffset);
+                nextBlockProxOffset = proxOffset;
             }
             startOffset = -1;
             endOffset = -1;
@@ -429,7 +433,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 return doc = DocIdSetIterator.NO_MORE_DOCS;
             }
             if (++docBufferIndex == POSTINGS_BLOCK_SIZE) {
-                refillDocs();
+                refillDocs(0);
                 docBufferIndex = 0;
             }
             posIndex = -1;
@@ -437,27 +441,68 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             return doc = (int) docBuffer[docBufferIndex];
         }
 
-        private void refillDocs() throws IOException {
+        @Override
+        public int advance(int target) throws IOException {
+            if (target > skipDoc) { // Target is not in the current block
+                // Move to the boundary between this block and the next one
+                docIndex = docIndex - docBufferIndex + POSTINGS_BLOCK_SIZE;
+                docBufferIndex = 0;
+                while (true) {
+                    long proxOffset = nextBlockProxOffset;
+                    refillDocs(target);
+                    if (target <= skipDoc) { // Just found the target block, or last block
+                        if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                            prox.seek(proxOffset);
+                        }
+                        break;
+                    } else {
+                        docIndex += POSTINGS_BLOCK_SIZE;
+                    }
+                }
+                posIndex = -1;
+                freq = (int) freqBuffer[docBufferIndex];
+                doc = (int) docBuffer[docBufferIndex];
+                if (doc >= target) {
+                    return doc;
+                }
+            }
+            return slowAdvance(target);
+        }
+
+        /**
+         * Refill blocks of documents, or skip data if none of the documents in the next block may be greater than or equal to {@code target}.
+         */
+        private void refillDocs(int target) throws IOException {
             final int remaining = docFreq - docIndex;
             if (remaining >= POSTINGS_BLOCK_SIZE) {
                 // Full block
-                final int lastDocInBlock = index.readInt();
+                skipDoc = index.readInt();
                 if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
-                    index.readLong(); // end offset of proximity data, unused for now
+                    nextBlockProxOffset = index.readLong();
                 }
-                docBuffer[POSTINGS_BLOCK_SIZE - 1] = lastDocInBlock;
-                for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
-                    docBuffer[i] = index.readInt();
-                }
-                if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
-                    for (int i = 0; i < POSTINGS_BLOCK_SIZE; ++i) {
-                        freqBuffer[i] = index.readInt();
+                if (skipDoc >= target) {
+                    docBuffer[POSTINGS_BLOCK_SIZE - 1] = skipDoc;
+                    for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
+                        docBuffer[i] = index.readInt();
+                    }
+                    if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
+                        for (int i = 0; i < POSTINGS_BLOCK_SIZE; ++i) {
+                            freqBuffer[i] = index.readInt();
+                        }
+                    } else {
+                        Arrays.fill(freqBuffer, -1L);
                     }
                 } else {
-                    Arrays.fill(freqBuffer, -1L);
+                    // Skip block
+                    index.skipBytes((POSTINGS_BLOCK_SIZE - 1) * Integer.BYTES);
+                    if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
+                        index.skipBytes(POSTINGS_BLOCK_SIZE * Integer.BYTES);
+                    }
                 }
             } else {
                 // Tail postings
+                skipDoc = NO_MORE_DOCS;
+                nextBlockProxOffset = -1L;
                 for (int i = 0; i < remaining; ++i) {
                     docBuffer[i] = index.readInt();
                 }
@@ -515,11 +560,6 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         @Override
         public BytesRef getPayload() throws IOException {
             return payload;
-        }
-
-        @Override
-        public int advance(int target) throws IOException {
-            return slowAdvance(target);
         }
 
         @Override
