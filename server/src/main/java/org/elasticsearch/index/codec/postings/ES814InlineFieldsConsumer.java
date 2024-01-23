@@ -22,22 +22,35 @@ import org.apache.lucene.store.ByteBuffersDataOutput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
+import org.apache.lucene.util.packed.MonotonicBlockPackedWriter;
+import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.lucene.util.BinaryInterpolativeCoding;
 import org.elasticsearch.lucene.util.BitStreamOutput;
 
 import java.io.IOException;
 
-import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.*;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.INVERTED_INDEX_CODEC;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.INVERTED_INDEX_EXTENSION;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.META_CODEC;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.META_EXTENSION;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.POSTINGS_BLOCK_SIZE;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.PROXIMITY_CODEC;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.PROXIMITY_EXTENSION;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.TERM_INDEX_BLOCK_SIZE;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.TERM_INDEX_CODEC;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.TERM_INDEX_EXTENSION;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.VERSION_CURRENT;
 
 final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
-    private final IndexOutput meta, index, prox;
+    private final IndexOutput meta, index, termIndex, prox;
     private final SegmentWriteState state;
 
     ES814InlineFieldsConsumer(SegmentWriteState state) throws IOException {
         String metaFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, META_EXTENSION);
         String indexFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, INVERTED_INDEX_EXTENSION);
+        String termIndexFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, TERM_INDEX_EXTENSION);
         String proxFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, PROXIMITY_EXTENSION);
         boolean success = false;
         try {
@@ -45,6 +58,9 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             CodecUtil.writeIndexHeader(meta, META_CODEC, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
             index = state.directory.createOutput(indexFileName, state.context);
             CodecUtil.writeIndexHeader(index, INVERTED_INDEX_CODEC, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
+            termIndex = state.directory.createOutput(termIndexFileName, state.context);
+            CodecUtil.writeIndexHeader(termIndex, TERM_INDEX_CODEC, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
+
             if (state.fieldInfos.hasProx()) {
                 prox = state.directory.createOutput(proxFileName, state.context);
                 CodecUtil.writeIndexHeader(prox, PROXIMITY_CODEC, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
@@ -101,6 +117,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             ByteBuffersDataOutput postingsOut = new ByteBuffersDataOutput();
 
             PostingsWriter writer = new PostingsWriter(hasFreqs, hasPositions, hasOffsets);
+            TermIndexWriter termIndexWriter = new TermIndexWriter(termIndex, index.getFilePointer());
             TermsEnum te = terms.iterator();
             PostingsEnum pe = null;
             long numBlocks = 0;
@@ -111,11 +128,6 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 pe = te.postings(pe, flags);
                 if (pe.nextDoc() == DocIdSetIterator.NO_MORE_DOCS) {
                     continue;
-                }
-                if (numPending >= MAX_BLOCK_TERMS || (termsOut.size() + postingsOut.size()) >= MAX_BLOCK_BYTES) {
-                    flushBlock(numPending, termsOut, postingsOut);
-                    numPending = 0;
-                    ++numBlocks;
                 }
                 long proxOffset = hasPositions ? prox.getFilePointer() : -1L;
                 long postingsPointer = postingsOut.size();
@@ -133,7 +145,14 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 ++numPending;
                 maxTermLength = Math.max(maxTermLength, term.length);
                 ++numTerms;
+                if (numPending >= MAX_BLOCK_TERMS || (termsOut.size() + postingsOut.size()) >= MAX_BLOCK_BYTES) {
+                    termIndexWriter.addTerm(term, index.getFilePointer());
+                    flushBlock(numPending, termsOut, postingsOut);
+                    numPending = 0;
+                    ++numBlocks;
+                }
             }
+            termIndexWriter.finish(index.getFilePointer());
             if (numPending > 0) {
                 flushBlock(numPending, termsOut, postingsOut);
                 ++numBlocks;
@@ -147,10 +166,16 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             }
             meta.writeInt(maxTermLength);
             meta.writeByte((byte) (writer.hasPayloads ? 1 : 0));
+            // term index
+            meta.writeVInt(PackedInts.VERSION_CURRENT);
+            meta.writeLong(termIndexWriter.entries);
+            meta.writeLong(termIndexWriter.termOffsetPointer);
+            meta.writeLong(termIndexWriter.blockAddressPointer);
         }
         meta.writeByte((byte) -1); // no more fields
         CodecUtil.writeFooter(meta);
         CodecUtil.writeFooter(index);
+        CodecUtil.writeFooter(termIndex);
         if (prox != null) {
             CodecUtil.writeFooter(prox);
         }
@@ -275,9 +300,59 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         }
     }
 
+    // similar to LuceneFixedGap
+    private static class TermIndexWriter {
+        // offsets of the terms
+        final long offsetStart;
+        final ByteBuffersDataOutput offsetsBuffer = new ByteBuffersDataOutput();
+        final MonotonicBlockPackedWriter offsets = new MonotonicBlockPackedWriter(offsetsBuffer, TERM_INDEX_BLOCK_SIZE);
+
+        // block addresses
+        final long blockStartAddress;
+        final ByteBuffersDataOutput blockAddressBuffer = new ByteBuffersDataOutput();
+        final MonotonicBlockPackedWriter blockAddresses = new MonotonicBlockPackedWriter(blockAddressBuffer, TERM_INDEX_BLOCK_SIZE);
+
+        final IndexOutput out;
+
+        long entries = 0;
+        long termOffsetPointer = -1; // not available until finish
+        long blockAddressPointer = -1; // not available until finish
+
+        TermIndexWriter(IndexOutput out, long blockStartAddress) throws IOException {
+            this.out = out;
+            this.offsetStart = out.getFilePointer();
+            this.blockStartAddress = blockStartAddress;
+        }
+
+        void addTerm(BytesRef term, long blockAddress) throws IOException {
+            long offset = out.getFilePointer();
+            offsets.add(offset - offsetStart);
+            // TODO: write prefix only
+            out.writeBytes(term.bytes, term.offset, term.length);
+            blockAddresses.add(blockAddress - blockStartAddress);
+            entries++;
+        }
+
+        void finish(long blockAddress) throws IOException {
+            long offset = out.getFilePointer();
+            offsets.add(offset - offsetStart);
+            offsets.finish();
+            this.termOffsetPointer = out.getFilePointer();
+            out.writeLong(offsetStart);
+            offsetsBuffer.copyTo(out);
+
+            this.blockAddressPointer = out.getFilePointer();
+            out.writeLong(blockStartAddress);
+            blockAddresses.add(blockAddress - blockStartAddress);
+            blockAddresses.finish();
+            blockAddressBuffer.copyTo(out);
+            entries++;
+        }
+    }
+
     @Override
     public void close() throws IOException {
-        IOUtils.close(meta, index, prox);
+        IOUtils.close(meta, index, termIndex, prox);
     }
 
 }
