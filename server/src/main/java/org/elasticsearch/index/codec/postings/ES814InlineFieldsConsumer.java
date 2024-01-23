@@ -177,7 +177,8 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
         private final long[] docBuffer = new long[POSTINGS_BLOCK_SIZE];
         private final long[] freqBuffer = new long[POSTINGS_BLOCK_SIZE];
-        private final PForUtil pforUtil = new PForUtil(new ForUtil());
+        private final PForUtil2 pforUtil = new PForUtil2(new ForUtil());
+        private final ByteBuffersDataOutput spare = new ByteBuffersDataOutput();
 
         PostingsWriter(boolean hasFreqs, boolean hasPositions, boolean hasOffsets) {
             this.hasFreqs = hasFreqs;
@@ -238,13 +239,16 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                     }
                     // Delta-code postings
                     for (int i = ForUtil.BLOCK_SIZE - 1; i > 0; --i) {
-                        docBuffer[i] -= docBuffer[i - 1];
+                        docBuffer[i] = docBuffer[i] - docBuffer[i - 1] - 1;
                     }
-                    docBuffer[0] -= lastDocInPrevBlock;
-                    pforUtil.encode(docBuffer, index);
+                    docBuffer[0] = docBuffer[0] - lastDocInPrevBlock - 1;
+                    pforUtil.encodeValuesMinus1(docBuffer, index, spare);
                     if (hasFreqs) {
-                        pforUtil.encode(freqBuffer, index);
-                        index.writeVLong(freqBuffer[ForUtil.BLOCK_SIZE]);
+                        for (int i = 0; i < ForUtil.BLOCK_SIZE; ++i) {
+                            freqBuffer[i] -= 1;
+                        }
+                        pforUtil.encodeValuesMinus1(freqBuffer, index, spare);
+                        index.writeVLong(freqBuffer[ForUtil.BLOCK_SIZE] - 1);
                     }
                     docBufferSize = 0;
                     lastDocInPrevBlock = doc;

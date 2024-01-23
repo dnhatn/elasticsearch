@@ -388,7 +388,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private int docBufferIndex;
         private int skipDoc; // last doc in the current block
         private long nextBlockProxOffset; // start offset of proximity data for the next block
-        private final PForUtil pforUtil = new PForUtil(new ForUtil());
+        private final PForUtil2 pforUtil = new PForUtil2(new ForUtil());
 
         InlinePostingsEnum(ES814InlineFieldsProducer producer, int flags, IndexInput index, IndexInput prox) {
             this.producer = Objects.requireNonNull(producer);
@@ -503,7 +503,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                     docBuffer[ForUtil.BLOCK_SIZE] = skipDoc;
                     if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
                         pforUtil.decode(index, freqBuffer);
-                        freqBuffer[ForUtil.BLOCK_SIZE] = index.readVLong();
+                        freqBuffer[ForUtil.BLOCK_SIZE] = 1L + index.readVLong();
                     } else {
                         Arrays.fill(freqBuffer, 1L);
                     }
