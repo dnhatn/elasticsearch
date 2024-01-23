@@ -207,11 +207,16 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 freqBuffer[docBufferSize] = freq;
                 totalTermFreq += freq;
                 if (hasPositions) {
+                    int prevPosition = 0;
+                    int prevOffset = 0;
                     for (int i = 0; i < freq; ++i) {
-                        prox.writeInt(pe.nextPosition());
+                        int pos = pe.nextPosition();
+                        prox.writeVInt(pos - prevPosition);
+                        prevPosition = pos;
                         if (hasOffsets) {
-                            prox.writeInt(pe.startOffset());
-                            prox.writeInt(pe.endOffset());
+                            prox.writeVInt(pe.startOffset() - prevOffset);
+                            prox.writeVInt(pe.endOffset() - pe.startOffset());
+                            prevOffset = pe.endOffset();
                         }
                         BytesRef payload = pe.getPayload();
                         if (payload == null) {

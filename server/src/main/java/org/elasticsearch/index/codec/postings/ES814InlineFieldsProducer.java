@@ -417,6 +417,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 prox.seek(proxOffset);
                 nextBlockProxOffset = proxOffset;
             }
+            pos = -1;
             startOffset = -1;
             endOffset = -1;
             payload = null;
@@ -443,6 +444,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             }
             posIndex = -1;
             freq = (int) freqBuffer[docBufferIndex];
+            resetProxData();
             return doc = (int) docBuffer[docBufferIndex];
         }
 
@@ -467,11 +469,21 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 posIndex = -1;
                 freq = (int) freqBuffer[docBufferIndex];
                 doc = (int) docBuffer[docBufferIndex];
+                resetProxData();
                 if (doc >= target) {
                     return doc;
                 }
             }
             return slowAdvance(target);
+        }
+
+        private void resetProxData() {
+            if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                pos = 0;
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
+                    endOffset = 0;
+                }
+            }
         }
 
         /**
@@ -528,17 +540,16 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         @Override
         public int nextPosition() throws IOException {
             if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) < 0) {
+                assert pos == -1;
                 return -1;
             }
             if (++posIndex >= freq) {
                 throw new IllegalStateException();
             }
-            pos = prox.readInt();
+            pos += prox.readVInt();
             if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
-                startOffset = prox.readInt();
-                endOffset = prox.readInt();
-            } else {
-                startOffset = endOffset = -1;
+                startOffset = endOffset + prox.readVInt();
+                endOffset = startOffset + prox.readVInt();
             }
             int payloadLength = prox.readVInt() - 1;
             if (payloadLength == -1) {
