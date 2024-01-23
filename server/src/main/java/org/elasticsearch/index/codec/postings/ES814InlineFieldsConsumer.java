@@ -177,6 +177,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
         private final long[] docBuffer = new long[POSTINGS_BLOCK_SIZE];
         private final long[] freqBuffer = new long[POSTINGS_BLOCK_SIZE];
+        private final PForUtil pforUtil = new PForUtil(new ForUtil());
 
         PostingsWriter(boolean hasFreqs, boolean hasPositions, boolean hasOffsets) {
             this.hasFreqs = hasFreqs;
@@ -226,20 +227,22 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 if (++docBufferSize == POSTINGS_BLOCK_SIZE) {
                     // Write the last doc in the block first, which we can use as skip data, to know whether or not to decompress the block
                     index.writeVInt(doc - lastDocInPrevBlock - POSTINGS_BLOCK_SIZE);
-                    lastDocInPrevBlock = doc;
                     if (hasPositions) {
                         index.writeVLong(prox.getFilePointer() - lastProxOffset);
                         lastProxOffset = prox.getFilePointer();
                     }
-                    for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
-                        index.writeInt((int) docBuffer[i]);
+                    // Delta-code postings
+                    for (int i = ForUtil.BLOCK_SIZE - 1; i > 0; --i) {
+                        docBuffer[i] -= docBuffer[i - 1];
                     }
+                    docBuffer[0] -= lastDocInPrevBlock;
+                    pforUtil.encode(docBuffer, index);
                     if (hasFreqs) {
-                        for (int i = 0; i < POSTINGS_BLOCK_SIZE; ++i) {
-                            index.writeInt((int) freqBuffer[i]);
-                        }
+                        pforUtil.encode(freqBuffer, index);
+                        index.writeVLong(freqBuffer[ForUtil.BLOCK_SIZE]);
                     }
                     docBufferSize = 0;
+                    lastDocInPrevBlock = doc;
                 }
             }
             // Tail postings

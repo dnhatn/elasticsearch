@@ -388,6 +388,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private int docBufferIndex;
         private int skipDoc; // last doc in the current block
         private long nextBlockProxOffset; // start offset of proximity data for the next block
+        private final PForUtil pforUtil = new PForUtil(new ForUtil());
 
         InlinePostingsEnum(ES814InlineFieldsProducer producer, int flags, IndexInput index, IndexInput prox) {
             this.producer = Objects.requireNonNull(producer);
@@ -480,27 +481,26 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             final int remaining = docFreq - docIndex;
             if (remaining >= POSTINGS_BLOCK_SIZE) {
                 // Full block
+                final int lastDocInPrevBlock = skipDoc;
                 skipDoc += index.readVInt() + POSTINGS_BLOCK_SIZE;
                 if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
                     nextBlockProxOffset += index.readVLong();
                 }
                 if (skipDoc >= target) {
-                    docBuffer[POSTINGS_BLOCK_SIZE - 1] = skipDoc;
-                    for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
-                        docBuffer[i] = index.readInt();
-                    }
+                    pforUtil.decodeAndPrefixSum(index, lastDocInPrevBlock, docBuffer);
+                    docBuffer[ForUtil.BLOCK_SIZE] = skipDoc;
                     if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
-                        for (int i = 0; i < POSTINGS_BLOCK_SIZE; ++i) {
-                            freqBuffer[i] = index.readInt();
-                        }
+                        pforUtil.decode(index, freqBuffer);
+                        freqBuffer[ForUtil.BLOCK_SIZE] = index.readVLong();
                     } else {
-                        Arrays.fill(freqBuffer, -1L);
+                        Arrays.fill(freqBuffer, 1L);
                     }
                 } else {
                     // Skip block
-                    index.skipBytes((POSTINGS_BLOCK_SIZE - 1) * Integer.BYTES);
+                    pforUtil.skip(index);
                     if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
-                        index.skipBytes(POSTINGS_BLOCK_SIZE * Integer.BYTES);
+                        pforUtil.skip(index);
+                        index.readVLong();
                     }
                 }
             } else {
