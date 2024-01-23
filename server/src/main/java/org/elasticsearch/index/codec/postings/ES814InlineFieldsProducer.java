@@ -442,6 +442,9 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             if (remaining >= POSTINGS_BLOCK_SIZE) {
                 // Full block
                 final int lastDocInBlock = index.readInt();
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                    index.readLong(); // end offset of proximity data, unused for now
+                }
                 docBuffer[POSTINGS_BLOCK_SIZE - 1] = lastDocInBlock;
                 for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
                     docBuffer[i] = index.readInt();

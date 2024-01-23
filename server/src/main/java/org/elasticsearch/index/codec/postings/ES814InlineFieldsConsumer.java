@@ -219,6 +219,9 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 if (++docBufferSize == POSTINGS_BLOCK_SIZE) {
                     // Write the last doc in the block first, which we can use as skip data, to know whether or not to decompress the block
                     index.writeInt(doc);
+                    if (hasPositions) {
+                        index.writeLong(prox.getFilePointer());
+                    }
                     for (int i = 0; i < POSTINGS_BLOCK_SIZE - 1; ++i) {
                         index.writeInt((int) docBuffer[i]);
                     }
