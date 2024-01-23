@@ -37,12 +37,13 @@ import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.*
 
 final class ES814InlineFieldsProducer extends FieldsProducer {
 
-    private static record Meta(
+    private record Meta(
         IndexOptions options,
         boolean hasPayloads,
         long indexOffset,
         long proxOffset,
         long size,
+        long numBlocks,
         int docCount,
         long sumDocFreq,
         long sumTotalTermFreq,
@@ -110,6 +111,8 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                         proxOffset = meta.readLong();
                     }
                     long size = meta.readLong();
+                    long numBlocks = meta.readLong();
+                    assert size >= numBlocks : size + " < " + numBlocks;
                     int docCount = meta.readInt();
                     long sumDocFreq = meta.readLong();
                     long sumTotalTermFreq = sumDocFreq;
@@ -129,6 +132,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                             indexOffset,
                             proxOffset,
                             size,
+                            numBlocks,
                             docCount,
                             sumDocFreq,
                             sumTotalTermFreq,
@@ -244,8 +248,12 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private int docFreq;
         private long totalTermFreq;
         private final BytesRef term;
-        private long ord;
+        private long blockIndex;
+        private int numTermsInBlock;
+        private int termIndexInBlock;
+        private long postingsPointer;
         private long postingsSize;
+        private long docOffset;
         private long proxOffset;
 
         InlineTermsEnum(Meta meta) throws IOException {
@@ -256,7 +264,10 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         private void reset() throws IOException {
             index.seek(meta.indexOffset);
-            ord = -1;
+            blockIndex = -1;
+            termIndexInBlock = -1;
+            numTermsInBlock = -1;
+            postingsPointer = 0;
             postingsSize = 0;
         }
 
@@ -308,12 +319,18 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public BytesRef next() throws IOException {
-            if (++ord >= meta.size) {
-                // exhausted
-                return null;
+            if (++termIndexInBlock >= numTermsInBlock) {
+                if (++blockIndex >= meta.numBlocks) {
+                    return null; // exhausted
+                }
+                if (blockIndex > 0) {
+                    index.seek(postingsPointer + postingsSize);
+                }
+                termIndexInBlock = 0;
+                numTermsInBlock = index.readVInt();
+                postingsSize = index.readVLong();
+                postingsPointer = index.readLong();
             }
-            // Skip postings from the last term
-            index.skipBytes(postingsSize);
             term.length = index.readVInt();
             index.readBytes(term.bytes, 0, term.length);
             docFreq = index.readInt();
@@ -322,10 +339,10 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             } else {
                 totalTermFreq = docFreq;
             }
-            postingsSize = index.readLong();
             if (meta.options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
                 proxOffset = index.readLong();
             }
+            docOffset = postingsPointer + index.readLong();
             return term;
         }
 
@@ -343,7 +360,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 }
                 postings = new InlinePostingsEnum(ES814InlineFieldsProducer.this, flags, index.clone(), prox);
             }
-            postings.reset(meta.options, docFreq, index.getFilePointer(), proxOffset);
+            postings.reset(meta.options, docFreq, docOffset, proxOffset);
             return postings;
         }
     }
@@ -375,14 +392,14 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             return this.producer == producer && this.flags == flags;
         }
 
-        void reset(IndexOptions options, int docFreq, long indexOffset, long proxOffset) throws IOException {
+        void reset(IndexOptions options, int docFreq, long docOffset, long proxOffset) throws IOException {
             this.options = Objects.requireNonNull(options);
             this.docFreq = docFreq;
             docIndex = -1;
             doc = -1;
             freq = 1;
             posIndex = 1;
-            index.seek(indexOffset);
+            index.seek(docOffset);
             if (prox != null) {
                 prox.seek(proxOffset);
             }

@@ -58,6 +58,9 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         this.state = state;
     }
 
+    static final long MAX_BLOCK_BYTES = 1024 * 1024;
+    static final int MAX_BLOCK_TERMS = 128;
+
     @Override
     public void write(Fields fields, NormsProducer norms) throws IOException {
         for (String field : fields) {
@@ -92,37 +95,49 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 flags |= PostingsEnum.OFFSETS;
             }
 
-            ByteBuffersDataOutput tempIndex = new ByteBuffersDataOutput();
+            ByteBuffersDataOutput termsOut = new ByteBuffersDataOutput();
+            ByteBuffersDataOutput postingsOut = new ByteBuffersDataOutput();
+
             PostingsWriter writer = new PostingsWriter(hasFreqs, hasPositions, hasOffsets);
             TermsEnum te = terms.iterator();
             PostingsEnum pe = null;
+            long numBlocks = 0;
             long numTerms = 0;
             int maxTermLength = 0;
+            int numPending = 0;
             for (BytesRef term = te.next(); term != null; term = te.next()) {
                 pe = te.postings(pe, flags);
-                int doc = pe.nextDoc();
-                if (doc != DocIdSetIterator.NO_MORE_DOCS) {
-                    long proxOffset = hasPositions ? prox.getFilePointer() : -1L;
-                    writer.write(pe, tempIndex);
-                    index.writeVInt(term.length);
-                    index.writeBytes(term.bytes, term.offset, term.length);
-                    index.writeInt(writer.docFreq);
-                    if (hasFreqs) {
-                        index.writeLong(writer.totalTermFreq);
-                    }
-                    index.writeLong(tempIndex.size());
-                    if (hasPositions) {
-                        index.writeLong(proxOffset);
-                    }
-                    ++numTerms;
-                    maxTermLength = Math.max(maxTermLength, term.length);
-
-                    tempIndex.copyTo(this.index);
-                    tempIndex.reset();
+                if (pe.nextDoc() == DocIdSetIterator.NO_MORE_DOCS) {
+                    continue;
                 }
+                if (numPending >= MAX_BLOCK_TERMS || (termsOut.size() + postingsOut.size()) >= MAX_BLOCK_BYTES) {
+                    flushBlock(numPending, termsOut, postingsOut);
+                    numPending = 0;
+                    ++numBlocks;
+                }
+                long proxOffset = hasPositions ? prox.getFilePointer() : -1L;
+                long postingsPointer = postingsOut.size();
+                writer.write(pe, postingsOut);
+                termsOut.writeVInt(term.length);
+                termsOut.writeBytes(term.bytes, term.offset, term.length);
+                termsOut.writeInt(writer.docFreq);
+                if (hasFreqs) {
+                    termsOut.writeLong(writer.totalTermFreq);
+                }
+                if (hasPositions) {
+                    termsOut.writeLong(proxOffset);
+                }
+                termsOut.writeLong(postingsPointer);
+                ++numPending;
+                maxTermLength = Math.max(maxTermLength, term.length);
+                ++numTerms;
             }
-
+            if (numPending > 0) {
+                flushBlock(numPending, termsOut, postingsOut);
+                ++numBlocks;
+            }
             meta.writeLong(numTerms);
+            meta.writeLong(numBlocks);
             meta.writeInt(writer.docsWithField.cardinality()); // docCount
             meta.writeLong(writer.sumDocFreq);
             if (hasFreqs) {
@@ -137,6 +152,17 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         if (prox != null) {
             CodecUtil.writeFooter(prox);
         }
+    }
+
+    private void flushBlock(int numPending, ByteBuffersDataOutput termsOut, ByteBuffersDataOutput postingsOut) throws IOException {
+        index.writeVInt(numPending); // num terms
+        index.writeVLong(postingsOut.size()); // postings size
+        final long postingPointer = index.getFilePointer() + termsOut.size() + Long.BYTES;
+        index.writeLong(postingPointer);
+        termsOut.copyTo(index);
+        termsOut.reset();
+        postingsOut.copyTo(index);
+        postingsOut.reset();
     }
 
     private class PostingsWriter {
