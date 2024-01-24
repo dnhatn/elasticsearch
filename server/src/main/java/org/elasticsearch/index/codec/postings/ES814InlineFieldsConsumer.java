@@ -86,6 +86,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             final boolean hasFreqs = terms.hasFreqs();
             final boolean hasPositions = terms.hasPositions();
             final boolean hasOffsets = terms.hasOffsets();
+            final boolean hasPayloads = terms.hasPayloads();
 
             if (hasOffsets) {
                 meta.writeByte((byte) 3);
@@ -116,7 +117,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             ByteBuffersDataOutput termsOut = new ByteBuffersDataOutput();
             ByteBuffersDataOutput postingsOut = new ByteBuffersDataOutput();
 
-            PostingsWriter writer = new PostingsWriter(hasFreqs, hasPositions, hasOffsets);
+            PostingsWriter writer = new PostingsWriter(hasFreqs, hasPositions, hasOffsets, hasPayloads);
             TermIndexWriter termIndexWriter = new TermIndexWriter(termIndex, index.getFilePointer());
             TermsEnum te = terms.iterator();
             PostingsEnum pe = null;
@@ -194,32 +195,39 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
     private class PostingsWriter {
 
-        private final boolean hasFreqs, hasPositions, hasOffsets;
+        private final boolean hasFreqs, hasPositions, hasOffsets, hasPayloads;
         final FixedBitSet docsWithField = new FixedBitSet(state.segmentInfo.maxDoc());
         int docFreq;
         long sumDocFreq, totalTermFreq, sumTotalTermFreq;
-        boolean hasPayloads;
 
         private final long[] docBuffer = new long[POSTINGS_BLOCK_SIZE];
         private final long[] freqBuffer = new long[POSTINGS_BLOCK_SIZE];
+        private final long[] posBuffer = new long[ForUtil.BLOCK_SIZE];
+        private final long[] offsetBuffer = new long[ForUtil.BLOCK_SIZE];
+        private final long[] lengthBuffer = new long[ForUtil.BLOCK_SIZE];
+        private final long[] payloadLengthBuffer = new long[ForUtil.BLOCK_SIZE];
+        private final ByteBuffersDataOutput payloadsBuffer = new ByteBuffersDataOutput();
         private final PForUtil2 pforUtil = new PForUtil2(new ForUtil());
         private final ByteBuffersDataOutput spare = new ByteBuffersDataOutput();
 
-        PostingsWriter(boolean hasFreqs, boolean hasPositions, boolean hasOffsets) {
+        PostingsWriter(boolean hasFreqs, boolean hasPositions, boolean hasOffsets, boolean hasPayloads) {
             this.hasFreqs = hasFreqs;
             this.hasPositions = hasPositions;
             this.hasOffsets = hasOffsets;
+            this.hasPayloads = hasPayloads;
         }
 
         void write(PostingsEnum pe, ByteBuffersDataOutput index) throws IOException {
             docFreq = 0;
             totalTermFreq = 0;
             int docBufferSize = 0;
+            int posBufferSize = 0;
             int lastDocInPrevBlock = -1;
             long lastProxOffset = -1L;
             if (hasPositions) {
                 lastProxOffset = prox.getFilePointer();
             }
+            long lastBlockTTF = 0;
             for (int doc = pe.docID(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = pe.nextDoc()) {
                 docsWithField.set(doc);
                 ++docFreq;
@@ -237,20 +245,34 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                     int prevOffset = 0;
                     for (int i = 0; i < freq; ++i) {
                         int pos = pe.nextPosition();
-                        prox.writeVInt(pos - prevPosition);
+                        posBuffer[posBufferSize] = pos - prevPosition;
                         prevPosition = pos;
                         if (hasOffsets) {
-                            prox.writeVInt(pe.startOffset() - prevOffset);
-                            prox.writeVInt(pe.endOffset() - pe.startOffset());
+                            offsetBuffer[posBufferSize] = pe.startOffset() - prevOffset;
+                            lengthBuffer[posBufferSize] = pe.endOffset() - pe.startOffset();
                             prevOffset = pe.endOffset();
                         }
-                        BytesRef payload = pe.getPayload();
-                        if (payload == null) {
-                            prox.writeVInt(0);
-                        } else {
-                            hasPayloads = true;
-                            prox.writeVInt(1 + payload.length);
-                            prox.writeBytes(payload.bytes, payload.offset, payload.length);
+                        if (hasPayloads) {
+                            BytesRef payload = pe.getPayload();
+                            if (payload == null) {
+                                payloadLengthBuffer[posBufferSize] = 0;
+                            } else {
+                                payloadLengthBuffer[posBufferSize] = 1 + payload.length;
+                                payloadsBuffer.writeBytes(payload.bytes, payload.offset, payload.length);
+                            }
+                        }
+                        if (++posBufferSize == ForUtil.BLOCK_SIZE) {
+                            pforUtil.encode(posBuffer, prox, spare);
+                            if (hasOffsets) {
+                                pforUtil.encode(offsetBuffer, prox, spare);
+                                pforUtil.encode(lengthBuffer, prox, spare);
+                            }
+                            if (hasPayloads) {
+                                pforUtil.encode(payloadLengthBuffer, prox, spare);
+                                payloadsBuffer.copyTo(prox);
+                                payloadsBuffer.reset();
+                            }
+                            posBufferSize = 0;
                         }
                     }
                 }
@@ -259,25 +281,34 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                     // Write the last doc in the block first, which we can use as skip data, to know whether or not to decompress the block
                     index.writeVInt(doc - lastDocInPrevBlock - POSTINGS_BLOCK_SIZE);
                     if (hasPositions) {
+                        writeTailProxData(posBufferSize);
+                        index.writeVLong(totalTermFreq - lastBlockTTF); // number of positions in this block
+                        lastBlockTTF = totalTermFreq;
                         index.writeVLong(prox.getFilePointer() - lastProxOffset);
                         lastProxOffset = prox.getFilePointer();
+                        posBufferSize = 0;
                     }
                     // Delta-code postings
                     for (int i = ForUtil.BLOCK_SIZE - 1; i > 0; --i) {
                         docBuffer[i] = docBuffer[i] - docBuffer[i - 1] - 1;
                     }
                     docBuffer[0] = docBuffer[0] - lastDocInPrevBlock - 1;
-                    pforUtil.encodeValuesMinus1(docBuffer, index, spare);
+                    pforUtil.encode(docBuffer, index, spare);
                     if (hasFreqs) {
                         for (int i = 0; i < ForUtil.BLOCK_SIZE; ++i) {
                             freqBuffer[i] -= 1;
                         }
-                        pforUtil.encodeValuesMinus1(freqBuffer, index, spare);
+                        pforUtil.encode(freqBuffer, index, spare);
                         index.writeVLong(freqBuffer[ForUtil.BLOCK_SIZE] - 1);
                     }
                     docBufferSize = 0;
                     lastDocInPrevBlock = doc;
                 }
+            }
+            // Tail prox data
+            if (hasPositions) {
+                index.writeVLong(totalTermFreq - lastBlockTTF); // number of positions in this block
+                writeTailProxData(posBufferSize);
             }
             // Tail postings
             BitStreamOutput bitOut = new BitStreamOutput(index);
@@ -297,6 +328,30 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             bitOut.flush();
             sumDocFreq += docFreq;
             sumTotalTermFreq += totalTermFreq;
+        }
+
+        private void writeTailProxData(int bufferSize) throws IOException {
+            assert hasPositions;
+            BitStreamOutput bitOut = new BitStreamOutput(prox);
+            for (int i = 0; i < bufferSize; ++i) {
+                bitOut.writeDeltaCode((int) posBuffer[i] + 1);
+            }
+            if (hasOffsets) {
+                for (int i = 0; i < bufferSize; ++i) {
+                    bitOut.writeDeltaCode((int) offsetBuffer[i] + 1);
+                    bitOut.writeDeltaCode((int) lengthBuffer[i] + 1);
+                }
+            }
+            if (hasPayloads) {
+                for (int i = 0; i < bufferSize; ++i) {
+                    bitOut.writeDeltaCode((int) payloadLengthBuffer[i] + 1);
+                }
+            }
+            bitOut.flush();
+            if (hasPayloads) {
+                payloadsBuffer.copyTo(prox);
+                payloadsBuffer.reset();
+            }
         }
     }
 

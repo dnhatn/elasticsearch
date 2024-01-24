@@ -125,7 +125,7 @@ public class PForUtil2Tests extends ESTestCase {
             for (int j = 0; j < ForUtil.BLOCK_SIZE; ++j) {
                 source[j] = values[i * ForUtil.BLOCK_SIZE + j] - 1;
             }
-            pforUtil.encodeValuesMinus1(source, out, new ByteBuffersDataOutput());
+            pforUtil.encode(source, out, new ByteBuffersDataOutput());
         }
         final long endPointer = out.getFilePointer();
         out.close();

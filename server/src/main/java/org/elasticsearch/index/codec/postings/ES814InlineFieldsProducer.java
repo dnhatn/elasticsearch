@@ -25,6 +25,7 @@ import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.packed.MonotonicBlockPackedReader;
 import org.elasticsearch.core.IOUtils;
@@ -467,7 +468,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 }
                 postings = new InlinePostingsEnum(ES814InlineFieldsProducer.this, flags, index.clone(), prox);
             }
-            postings.reset(meta.options, state.docFreq, state.docOffset, state.proxOffset);
+            postings.reset(meta.options, meta.hasPayloads, state.docFreq, state.docOffset, state.proxOffset);
             return postings;
         }
     }
@@ -478,6 +479,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private final int maxDoc;
         private final int flags;
         private IndexOptions options;
+        private boolean hasPayloads;
         private int docFreq;
         private final IndexInput index, prox;
         private int docIndex;
@@ -487,10 +489,18 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private int pos;
         private int startOffset, endOffset;
         private BytesRef payload;
+        private int payloadOffset;
         private final long[] docBuffer = new long[POSTINGS_BLOCK_SIZE];
         private final long[] freqBuffer = new long[POSTINGS_BLOCK_SIZE];
+        private final long[] posBuffer = new long[ForUtil.BLOCK_SIZE];
+        private final long[] offsetBuffer = new long[ForUtil.BLOCK_SIZE];
+        private final long[] lengthBuffer = new long[ForUtil.BLOCK_SIZE];
+        private final long[] payloadLengthBuffer = new long[ForUtil.BLOCK_SIZE];
+        private byte[] payloadBytesBuffer = BytesRef.EMPTY_BYTES;
+        private long posIndexInBlock;
         private int docBufferIndex;
         private int skipDoc; // last doc in the current block
+        private long numPositionsInBlock;
         private long nextBlockProxOffset; // start offset of proximity data for the next block
         private final PForUtil2 pforUtil = new PForUtil2(new ForUtil());
         private long skippedPositions;
@@ -508,8 +518,9 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             return this.producer == producer && this.flags == flags;
         }
 
-        void reset(IndexOptions options, int docFreq, long docOffset, long proxOffset) throws IOException {
+        void reset(IndexOptions options, boolean hasPayloads, int docFreq, long docOffset, long proxOffset) throws IOException {
             this.options = Objects.requireNonNull(options);
+            this.hasPayloads = hasPayloads;
             this.docFreq = docFreq;
             docIndex = -1;
             docBufferIndex = POSTINGS_BLOCK_SIZE - 1; // Trigger a refill on the next read
@@ -526,6 +537,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             startOffset = -1;
             endOffset = -1;
             payload = null;
+            payloadOffset = 0;
         }
 
         @Override
@@ -598,6 +610,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 // Don't let the cursor on prox data lag behind
                 prox.seek(nextBlockProxOffset); // effectively the current block at this point
                 skippedPositions = 0;
+                posIndexInBlock = 0;
             }
 
             final int remaining = docFreq - docIndex;
@@ -606,6 +619,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 final int lastDocInPrevBlock = skipDoc;
                 skipDoc += index.readVInt() + POSTINGS_BLOCK_SIZE;
                 if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                    numPositionsInBlock = index.readVLong();
                     nextBlockProxOffset += index.readVLong();
                 }
                 if (skipDoc >= target) {
@@ -613,6 +627,9 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                     docBuffer[ForUtil.BLOCK_SIZE] = skipDoc;
                     if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
                         pforUtil.decode(index, freqBuffer);
+                        for (int i = 0; i < ForUtil.BLOCK_SIZE; ++i) {
+                            freqBuffer[i] += 1L;
+                        }
                         freqBuffer[ForUtil.BLOCK_SIZE] = 1L + index.readVLong();
                     } else {
                         Arrays.fill(freqBuffer, 1L);
@@ -627,6 +644,9 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 }
             } else {
                 // Tail postings
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                    numPositionsInBlock = index.readVLong();
+                }
                 BitStreamInput bitIn = new BitStreamInput(index);
                 BinaryInterpolativeCoding.decodeIncreasing(bitIn, docBuffer, 0, remaining - 1, skipDoc + 1, maxDoc - 1);
                 if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
@@ -639,6 +659,51 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 bitIn.done();
                 skipDoc = NO_MORE_DOCS;
                 nextBlockProxOffset = -1L;
+            }
+        }
+
+        private void refillPositions() throws IOException {
+            final long remaining = numPositionsInBlock - posIndexInBlock;
+            if (remaining >= ForUtil.BLOCK_SIZE) {
+                pforUtil.decode(prox, posBuffer);
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
+                    pforUtil.decode(prox, offsetBuffer);
+                    pforUtil.decode(prox, lengthBuffer);
+                }
+                if (hasPayloads) {
+                    pforUtil.decode(prox, payloadLengthBuffer);
+                    for (int i = 0; i < ForUtil.BLOCK_SIZE; ++i) {
+                        payloadLengthBuffer[i] -= 1;
+                    }
+                }
+            } else {
+                // Tail block
+                BitStreamInput bitIn = new BitStreamInput(prox);
+                for (int i = 0; i < remaining; ++i) {
+                    posBuffer[i] = bitIn.readDeltaCode() - 1;
+                }
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
+                    for (int i = 0; i < remaining; ++i) {
+                        offsetBuffer[i] = bitIn.readDeltaCode() - 1;
+                        lengthBuffer[i] = bitIn.readDeltaCode() - 1;
+                    }
+                }
+                if (hasPayloads) {
+                    for (int i = 0; i < remaining; ++i) {
+                        payloadLengthBuffer[i] = bitIn.readDeltaCode() - 2;
+                    }
+                }
+                bitIn.done();
+            }
+            if (hasPayloads) {
+                int blockSize = (int) Math.min(ForUtil.BLOCK_SIZE, remaining);
+                long lengthSum = 0;
+                for (int i = 0; i < blockSize; ++i) {
+                    lengthSum += Math.max(0, payloadLengthBuffer[i]);
+                }
+                payloadBytesBuffer = ArrayUtil.growNoCopy(payloadBytesBuffer, Math.toIntExact(lengthSum));
+                prox.readBytes(payloadBytesBuffer, 0, Math.toIntExact(lengthSum));
+                payloadOffset = 0;
             }
         }
 
@@ -669,19 +734,29 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         }
 
         private void readPosition() throws IOException {
-            pos += prox.readVInt();
+            if (posIndexInBlock >= numPositionsInBlock) {
+                throw new IllegalStateException();
+            }
+            int p = (int) (posIndexInBlock & (ForUtil.BLOCK_SIZE - 1));
+            if (p == 0) {
+                refillPositions();
+            }
+            pos += posBuffer[p];
             if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
-                startOffset = endOffset + prox.readVInt();
-                endOffset = startOffset + prox.readVInt();
+                startOffset = endOffset + (int) offsetBuffer[p];
+                endOffset = startOffset + (int) lengthBuffer[p];
             }
-            int payloadLength = prox.readVInt() - 1;
-            if (payloadLength == -1) {
-                payload = null;
-            } else {
-                payload = new BytesRef(payloadLength);
-                payload.length = payloadLength;
-                prox.readBytes(payload.bytes, 0, payloadLength);
+            if (hasPayloads) {
+                int payloadLength = (int) payloadLengthBuffer[p];
+                if (payloadLength == -1) {
+                    payload = null;
+                } else {
+                    assert payloadLength >= 0;
+                    payload = new BytesRef(payloadBytesBuffer, payloadOffset, payloadLength);
+                    payloadOffset += payloadLength;
+                }
             }
+            ++posIndexInBlock;
         }
 
         @Override

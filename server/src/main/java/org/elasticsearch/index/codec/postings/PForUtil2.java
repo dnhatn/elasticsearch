@@ -53,7 +53,7 @@ final class PForUtil2 {
     }
 
     /** Encode 128 integers from {@code longs} into {@code out}. */
-    void encodeValuesMinus1(long[] longs, DataOutput out, ByteBuffersDataOutput spare) throws IOException {
+    void encode(long[] longs, DataOutput out, ByteBuffersDataOutput spare) throws IOException {
         // Determine the top MAX_EXCEPTIONS + 1 values
         final LongHeap top = new LongHeap(MAX_EXCEPTIONS + 1);
         for (int i = 0; i <= MAX_EXCEPTIONS; ++i) {
@@ -120,12 +120,9 @@ final class PForUtil2 {
             final int index = (int) exceptionIndexes[i];
             longs[index] |= exceptionValues[i] << patchBitsRequired;
         }
-        for (int i = 0; i < ForUtil.BLOCK_SIZE; ++i) {
-            longs[i] += 1;
-        }
     }
 
-    /** Decode deltas minus 1, add one, compute the prefix sum and add {@code base} to all decoded longs. */
+    /** Decode deltas, add one, compute the prefix sum and add {@code base} to all decoded longs. */
     void decodeAndPrefixSum(IndexInput in, long base, long[] longs) throws IOException {
         final long token = in.readVLong();
         final int patchBitsRequired = (int) (token & 0x1F);
