@@ -29,8 +29,8 @@ public final class ES814InlinePostingsFormat extends PostingsFormat {
     public static final String PROXIMITY_CODEC = "ES814InlineProximity";
     public static final String META_EXTENSION = "tpm";
     public static final String INVERTED_INDEX_EXTENSION = "inv";
-    public static final String TERM_INDEX_EXTENSION = "tin";
-    public static final String PROXIMITY_EXTENSION = "prx";
+    public static final String TERM_INDEX_EXTENSION = "tip";
+    public static final String PROXIMITY_EXTENSION = "pos";
     static final int VERSION_START = 0;
     static final int VERSION_CURRENT = VERSION_START;
     // One for the last posting in a block, which is used as skip data. Plus 128 for the block of docs that gets compressed together.

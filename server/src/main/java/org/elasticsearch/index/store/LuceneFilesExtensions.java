@@ -79,7 +79,9 @@ public enum LuceneFilesExtensions {
     VEM("vem", "Vector Metadata", true, false),
     VEMF("vemf", "Flat Vector Metadata", true, false),
     VEMQ("vemq", "Scalar Quantized Vector Metadata", true, false),
-    VEQ("veq", "Scalar Quantized Vector Data", false, true);
+    VEQ("veq", "Scalar Quantized Vector Data", false, true),
+    TPM("tpm", "Inline posting format metadata", false, true),
+    INV("inv", "Inline posting format inverted index extension", false, true);
 
     /**
      * Allow plugin developers of custom codecs to opt out of the assertion in {@link #fromExtension}
