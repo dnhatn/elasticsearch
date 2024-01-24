@@ -10,11 +10,12 @@ package org.elasticsearch.lucene.util;
 import java.io.IOException;
 
 /**
- * Implements binary interpolative coding, as described in Moffat, A., Stuiver, L. Binary Interpolative Coding for Effective Index Compression. Information Retrieval 3, 25–47 (2000). https://doi.org/10.1023/A:1013002601898
+ * Implements binary interpolative coding, as described in Moffat, A., Stuiver, L. Binary Interpolative Coding for Effective Index
+ * Compression. Information Retrieval 3, 25–47 (2000). https://doi.org/10.1023/A:1013002601898
  */
 public final class BinaryInterpolativeCoding {
 
-    private static final int split(int length) {
+    private static int split(int length) {
         // idealLength is the greatest value that is less than or equal to currentLength and can be
         // expressed as 2^r-1
         int idealLength = Integer.highestOneBit(length + 1) - 1;

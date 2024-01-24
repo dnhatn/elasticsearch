@@ -37,7 +37,18 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
-import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.*;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.INVERTED_INDEX_CODEC;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.INVERTED_INDEX_EXTENSION;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.META_CODEC;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.META_EXTENSION;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.POSTINGS_BLOCK_SIZE;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.PROXIMITY_CODEC;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.PROXIMITY_EXTENSION;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.TERM_INDEX_BLOCK_SIZE;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.TERM_INDEX_CODEC;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.TERM_INDEX_EXTENSION;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.VERSION_CURRENT;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.VERSION_START;
 
 final class ES814InlineFieldsProducer extends FieldsProducer {
 
@@ -572,7 +583,8 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         }
 
         /**
-         * Refill blocks of documents, or skip data if none of the documents in the next block may be greater than or equal to {@code target}.
+         * Refill blocks of documents, or skip data if none of the documents in the next block may be greater than or equal
+         * to {@code target}.
          */
         private void refillDocs(int target) throws IOException {
             final int remaining = docFreq - docIndex;

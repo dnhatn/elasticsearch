@@ -217,26 +217,26 @@ public class PerFieldMapperCodecTests extends ESTestCase {
     public void testUseInlinePostingFormat() throws Exception {
         {
             var mapping = """
-            {
-                "_data_stream_timestamp": {
-                    "enabled": true
-                },
-                "properties": {
-                    "@timestamp": {
-                        "type": "date"
+                {
+                    "_data_stream_timestamp": {
+                        "enabled": true
                     },
-                    "field1": {
-                        "type": "keyword"
-                    },
-                    "field2": {
-                        "type": "text"
-                    },
-                    "field3": {
-                        "type": "match_only_text"
+                    "properties": {
+                        "@timestamp": {
+                            "type": "date"
+                        },
+                        "field1": {
+                            "type": "keyword"
+                        },
+                        "field2": {
+                            "type": "text"
+                        },
+                        "field3": {
+                            "type": "match_only_text"
+                        }
                     }
                 }
-            }
-            """;
+                """;
             PerFieldMapperCodec perFieldMapperCodec = createCodec(false, false, mapping);
             assertThat((perFieldMapperCodec.useInlinePostingFormat("@timestamp")), is(false));
             assertThat((perFieldMapperCodec.useInlinePostingFormat("field1")), is(true));

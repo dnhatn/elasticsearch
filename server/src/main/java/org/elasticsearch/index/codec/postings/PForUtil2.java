@@ -32,7 +32,10 @@ import org.elasticsearch.lucene.util.BitStreamOutput;
 import java.io.IOException;
 import java.util.Arrays;
 
-/** Like {@link PForUtil}, but trades more CPU for better space efficiency by allowing more exceptions and encoding them in a more compact way. */
+/**
+ * Like {@link PForUtil}, but trades more CPU for better space efficiency by allowing more exceptions and encoding them in
+ * a more compact way.
+ */
 final class PForUtil2 {
 
     private static final int NUM_EXCEPTIONS_BITS = 4;

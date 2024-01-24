@@ -99,7 +99,7 @@ public final class PerFieldMapperCodec extends Lucene99Codec {
     }
 
     boolean useInlinePostingFormat(String field) {
-        if (mapperService.mappingLookup().isDataStreamTimestampFieldEnabled()){
+        if (mapperService.mappingLookup().isDataStreamTimestampFieldEnabled()) {
             var fieldType = mapperService.mappingLookup().getFieldType(field);
             return fieldType != null && ("keyword".equals(fieldType.typeName()) || "match_only_text".equals(fieldType.typeName()));
         } else {
