@@ -8,6 +8,8 @@
 
 package org.elasticsearch.index.codec.postings;
 
+import com.github.luben.zstd.Zstd;
+
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.index.BaseTermsEnum;
@@ -22,7 +24,9 @@ import org.apache.lucene.index.TermState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ChecksumIndexInput;
+import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
@@ -293,6 +297,11 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private final BytesRefBuilder term;
         private final ES814InlinePostingsFormat.InlineTermState state = new ES814InlinePostingsFormat.InlineTermState();
 
+        // term buffers for zstd
+        private byte[] zCompressedTerms = new byte[1024];
+        private byte[] zDecompressedTerms = new byte[1024];
+        private DataInput termsReader;
+
         InlineTermsEnum(Meta meta) throws IOException {
             this.meta = meta;
             this.term = new BytesRefBuilder();
@@ -325,8 +334,8 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             state.blockIndex = -1;
             state.termIndexInBlock = 0;
             state.numTermsInBlock = -1;
-            state.postingsFilePointer = 0;
-            state.postingsSize = 0;
+            state.postingsFP = 0;
+            state.postingsBytes = 0;
         }
 
         private long findBlockIndex(BytesRef target) throws IOException {
@@ -424,7 +433,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                     return null; // exhausted
                 }
                 if (state.blockIndex > 0) {
-                    index.seek(state.postingsFilePointer + state.postingsSize);
+                    index.seek(state.postingsFP + state.postingsBytes);
                 }
                 loadFrame();
             }
@@ -432,26 +441,40 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             return term.get();
         }
 
+        private void decompressTerms(int compressedBytes, int originalBytes) throws IOException {
+            zCompressedTerms = ArrayUtil.growNoCopy(zCompressedTerms, compressedBytes);
+            zDecompressedTerms = ArrayUtil.growNoCopy(zDecompressedTerms, originalBytes);
+            index.readBytes(zCompressedTerms, 0, (int) compressedBytes);
+            long actual = Zstd.decompressByteArray(zDecompressedTerms, 0, originalBytes, zCompressedTerms, 0, compressedBytes);
+            assert actual == originalBytes : actual + " != " + originalBytes;
+            termsReader = new ByteArrayDataInput(zDecompressedTerms, 0, (int) actual);
+        }
+
         private void loadFrame() throws IOException {
             state.termIndexInBlock = 0;
             state.numTermsInBlock = index.readVInt();
-            state.postingsSize = index.readVLong();
-            state.postingsFilePointer = index.readLong();
+            final long originalTermsBytes = index.readVLong();
+            final long termBytes = index.readVLong();
+            state.postingsBytes = index.readVLong();
+            long termsFP = index.getFilePointer();
+            state.postingsFP = termsFP + termBytes;
+            decompressTerms((int) termBytes, (int) originalTermsBytes);
         }
 
         private void scanNextTermInCurrentFrame() throws IOException {
-            term.setLength(index.readVInt());
-            index.readBytes(term.bytes(), 0, term.length());
-            state.docFreq = index.readInt();
+            term.setLength(termsReader.readVInt());
+            termsReader.readBytes(term.bytes(), 0, term.length());
+            state.docFreq = termsReader.readInt();
+
             if (meta.options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
-                state.totalTermFreq = index.readLong();
+                state.totalTermFreq = termsReader.readLong();
             } else {
                 state.totalTermFreq = state.docFreq;
             }
             if (meta.options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
-                state.proxOffset = index.readLong();
+                state.proxOffset = termsReader.readLong();
             }
-            state.docOffset = state.postingsFilePointer + index.readLong();
+            state.docOffset = state.postingsFP + termsReader.readLong();
             state.termIndexInBlock++;
         }
 
@@ -742,7 +765,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             if (p == 0) {
                 refillPositions();
             }
-            pos += posBuffer[p];
+            pos += (int) posBuffer[p];
             if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
                 startOffset = endOffset + (int) offsetBuffer[p];
                 endOffset = startOffset + (int) lengthBuffer[p];

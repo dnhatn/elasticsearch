@@ -40,6 +40,8 @@ public final class ES814InlinePostingsFormat extends PostingsFormat {
 
     static final int TERM_INDEX_BLOCK_SIZE = 4096;
 
+    static final int ZSTD_COMPRESSION_LEVEL = 3;
+
     /**
      * Sole constructor.
      */
@@ -62,8 +64,8 @@ public final class ES814InlinePostingsFormat extends PostingsFormat {
         public long termIndexInBlock;
         public long numTermsInBlock;
 
-        public long postingsFilePointer;
-        public long postingsSize;
+        public long postingsFP;
+        public long postingsBytes;
 
         public long docOffset;
         public long proxOffset;
@@ -75,8 +77,8 @@ public final class ES814InlinePostingsFormat extends PostingsFormat {
             this.blockIndex = state.blockIndex;
             this.termIndexInBlock = state.termIndexInBlock;
             this.numTermsInBlock = state.numTermsInBlock;
-            this.postingsFilePointer = state.postingsFilePointer;
-            this.postingsSize = state.postingsSize;
+            this.postingsFP = state.postingsFP;
+            this.postingsBytes = state.postingsBytes;
             this.docOffset = state.docOffset;
             this.proxOffset = state.proxOffset;
         }
