@@ -58,7 +58,6 @@ public final class ES814InlinePostingsFormat extends PostingsFormat {
     }
 
     public static final class InlineTermState extends BlockTermState {
-        public long currentTermFP;
         public long blockIndex;
         public long termIndexInBlock;
         public long numTermsInBlock;
@@ -73,7 +72,6 @@ public final class ES814InlinePostingsFormat extends PostingsFormat {
         public void copyFrom(TermState _other) {
             super.copyFrom(_other);
             InlineTermState state = (InlineTermState) _other;
-            this.currentTermFP = state.currentTermFP;
             this.blockIndex = state.blockIndex;
             this.termIndexInBlock = state.termIndexInBlock;
             this.numTermsInBlock = state.numTermsInBlock;

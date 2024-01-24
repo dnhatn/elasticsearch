@@ -27,6 +27,7 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.packed.MonotonicBlockPackedReader;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.lucene.util.BinaryInterpolativeCoding;
@@ -289,12 +290,13 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private final MonotonicBlockPackedReader blockAddresses;
 
         private final Meta meta;
-        private final BytesRef term;
+        private final BytesRefBuilder term;
         private final ES814InlinePostingsFormat.InlineTermState state = new ES814InlinePostingsFormat.InlineTermState();
 
         InlineTermsEnum(Meta meta) throws IOException {
             this.meta = meta;
-            this.term = new BytesRef(meta.maxTermLength);
+            this.term = new BytesRefBuilder();
+            this.term.grow(meta.maxTermLength);
 
             IndexInput offsetInput = termIndex.clone();
             offsetInput.seek(meta.termIndexMeta.termIndexOffset);
@@ -333,10 +335,11 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             while (hi >= lo) {
                 long mid = (lo + hi) >>> 1;
                 long offset = termIndexOffsets.get(mid);
-                term.length = Math.toIntExact(termIndexOffsets.get(mid + 1) - offset);
+                int length = Math.toIntExact(termIndexOffsets.get(mid + 1) - offset);
                 termIndex.seek(termIndexOffsetStart + offset);
-                termIndex.readBytes(term.bytes, 0, term.length);
-                int cmp = target.compareTo(term);
+                term.setLength(length);
+                termIndex.readBytes(term.bytes(), 0, length);
+                int cmp = target.compareTo(term.get());
                 if (cmp == 0) {
                     return mid;
                 } else if (cmp < 0) {
@@ -360,7 +363,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             int cmp;
             do {
                 scanNextTermInCurrentFrame();
-            } while ((cmp = term.compareTo(target)) < 0 && state.termIndexInBlock < state.numTermsInBlock);
+            } while ((cmp = term.get().compareTo(target)) < 0 && state.termIndexInBlock < state.numTermsInBlock);
 
             if (cmp == 0) {
                 return SeekStatus.FOUND;
@@ -382,17 +385,16 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         }
 
         @Override
-        public void seekExact(BytesRef term, TermState state) throws IOException {
+        public void seekExact(BytesRef text, TermState state) throws IOException {
             var other = (ES814InlinePostingsFormat.InlineTermState) state;
             this.state.copyFrom(other);
-            index.seek(this.state.currentTermFP);
-            this.state.termIndexInBlock--;
-            scanNextTermInCurrentFrame();
+            index.seek(this.state.docOffset);
+            term.copyBytes(text);
         }
 
         @Override
         public BytesRef term() throws IOException {
-            return term;
+            return term.get();
         }
 
         @Override
@@ -427,7 +429,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 loadFrame();
             }
             scanNextTermInCurrentFrame();
-            return term;
+            return term.get();
         }
 
         private void loadFrame() throws IOException {
@@ -438,9 +440,8 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         }
 
         private void scanNextTermInCurrentFrame() throws IOException {
-            state.currentTermFP = index.getFilePointer();
-            term.length = index.readVInt();
-            index.readBytes(term.bytes, 0, term.length);
+            term.setLength(index.readVInt());
+            index.readBytes(term.bytes(), 0, term.length());
             state.docFreq = index.readInt();
             if (meta.options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
                 state.totalTermFreq = index.readLong();
