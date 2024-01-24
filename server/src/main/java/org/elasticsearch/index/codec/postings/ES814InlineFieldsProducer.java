@@ -485,6 +485,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private int skipDoc; // last doc in the current block
         private long nextBlockProxOffset; // start offset of proximity data for the next block
         private final PForUtil2 pforUtil = new PForUtil2(new ForUtil());
+        private long skippedPositions;
 
         InlinePostingsEnum(ES814InlineFieldsProducer producer, int flags, IndexInput index, IndexInput prox) {
             this.producer = Objects.requireNonNull(producer);
@@ -526,9 +527,8 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public int nextDoc() throws IOException {
-            while (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0 && posIndex < freq - 1) {
-                // read unused positions
-                nextPosition();
+            if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                skippedPositions += freq - 1 - posIndex;
             }
 
             if (++docIndex >= docFreq) {
@@ -538,7 +538,6 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 refillDocs(0);
                 docBufferIndex = 0;
             }
-            posIndex = -1;
             freq = (int) freqBuffer[docBufferIndex];
             resetProxData();
             return doc = (int) docBuffer[docBufferIndex];
@@ -562,7 +561,6 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                         docIndex += POSTINGS_BLOCK_SIZE;
                     }
                 }
-                posIndex = -1;
                 freq = (int) freqBuffer[docBufferIndex];
                 doc = (int) docBuffer[docBufferIndex];
                 resetProxData();
@@ -575,6 +573,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         private void resetProxData() {
             if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                posIndex = -1;
                 pos = 0;
                 if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
                     endOffset = 0;
@@ -587,6 +586,12 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
          * to {@code target}.
          */
         private void refillDocs(int target) throws IOException {
+            if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                // Don't let the cursor on prox data lag behind
+                prox.seek(nextBlockProxOffset); // effectively the current block at this point
+                skippedPositions = 0;
+            }
+
             final int remaining = docFreq - docIndex;
             if (remaining >= POSTINGS_BLOCK_SIZE) {
                 // Full block
@@ -640,9 +645,22 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 assert pos == -1;
                 return -1;
             }
+            if (skippedPositions > 0) {
+                assert posIndex == -1;
+                for (long i = 0; i < skippedPositions; ++i) {
+                    readPosition();
+                }
+                resetProxData();
+                skippedPositions = 0;
+            }
             if (++posIndex >= freq) {
                 throw new IllegalStateException();
             }
+            readPosition();
+            return pos;
+        }
+
+        private void readPosition() throws IOException {
             pos += prox.readVInt();
             if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
                 startOffset = endOffset + prox.readVInt();
@@ -656,7 +674,6 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 payload.length = payloadLength;
                 prox.readBytes(payload.bytes, 0, payloadLength);
             }
-            return pos;
         }
 
         @Override
