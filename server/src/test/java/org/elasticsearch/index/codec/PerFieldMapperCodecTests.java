@@ -17,10 +17,17 @@ import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.MapperTestUtils;
 import org.elasticsearch.index.codec.bloomfilter.ES87BloomFilterPostingsFormat;
 import org.elasticsearch.index.codec.postings.ES812PostingsFormat;
+import org.elasticsearch.index.mapper.KeywordFieldMapper;
+import org.elasticsearch.index.mapper.Mapper;
 import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.indices.IndicesModule;
+import org.elasticsearch.plugins.MapperPlugin;
 import org.elasticsearch.test.ESTestCase;
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
@@ -207,14 +214,85 @@ public class PerFieldMapperCodecTests extends ESTestCase {
         assertThat((perFieldMapperCodec.useTSDBDocValuesFormat("gauge")), is(false));
     }
 
+    public void testUseInlinePostingFormat() throws Exception {
+        {
+            var mapping = """
+            {
+                "_data_stream_timestamp": {
+                    "enabled": true
+                },
+                "properties": {
+                    "@timestamp": {
+                        "type": "date"
+                    },
+                    "field1": {
+                        "type": "keyword"
+                    },
+                    "field2": {
+                        "type": "text"
+                    },
+                    "field3": {
+                        "type": "match_only_text"
+                    }
+                }
+            }
+            """;
+            PerFieldMapperCodec perFieldMapperCodec = createCodec(false, false, mapping);
+            assertThat((perFieldMapperCodec.useInlinePostingFormat("@timestamp")), is(false));
+            assertThat((perFieldMapperCodec.useInlinePostingFormat("field1")), is(true));
+            assertThat((perFieldMapperCodec.useInlinePostingFormat("field2")), is(false));
+            assertThat((perFieldMapperCodec.useInlinePostingFormat("field3")), is(true));
+        }
+        {
+            String mapping = """
+                {
+                    "properties": {
+                        "@timestamp": {
+                        "type": "date"
+                        },
+                        "field1": {
+                            "type": "keyword"
+                        },
+                        "field2": {
+                            "type": "text"
+                        },
+                        "field3": {
+                            "type": "match_only_text"
+                        }
+                    }
+                }
+                """;
+            PerFieldMapperCodec perFieldMapperCodec = createCodec(false, false, mapping);
+            assertThat((perFieldMapperCodec.useInlinePostingFormat("@timestamp")), is(false));
+            assertThat((perFieldMapperCodec.useInlinePostingFormat("field1")), is(false));
+            assertThat((perFieldMapperCodec.useInlinePostingFormat("field2")), is(false));
+            assertThat((perFieldMapperCodec.useInlinePostingFormat("field3")), is(false));
+        }
+    }
+
     private PerFieldMapperCodec createCodec(boolean enableES87TSDBCodec, boolean timeSeries, String mapping) throws IOException {
+        // Fake match_only_text, because it exists in mappers-extra module.
+        MapperPlugin mapperPlugin = new MapperPlugin() {
+            @Override
+            public Map<String, Mapper.TypeParser> getMappers() {
+                return Collections.singletonMap("match_only_text", KeywordFieldMapper.PARSER);
+            }
+        };
+        IndicesModule indicesModule = new IndicesModule(List.of(mapperPlugin));
+
         Settings.Builder settings = Settings.builder();
         if (timeSeries) {
             settings.put(IndexSettings.MODE.getKey(), "time_series");
             settings.put(IndexMetadata.INDEX_ROUTING_PATH.getKey(), "field");
         }
         settings.put(IndexSettings.TIME_SERIES_ES87TSDB_CODEC_ENABLED_SETTING.getKey(), enableES87TSDBCodec);
-        MapperService mapperService = MapperTestUtils.newMapperService(xContentRegistry(), createTempDir(), settings.build(), "test");
+        MapperService mapperService = MapperTestUtils.newMapperService(
+            xContentRegistry(),
+            createTempDir(),
+            settings.build(),
+            indicesModule,
+            "test"
+        );
         mapperService.merge("type", new CompressedXContent(mapping), MapperService.MergeReason.MAPPING_UPDATE);
         return new PerFieldMapperCodec(Lucene99Codec.Mode.BEST_SPEED, mapperService, BigArrays.NON_RECYCLING_INSTANCE);
     }

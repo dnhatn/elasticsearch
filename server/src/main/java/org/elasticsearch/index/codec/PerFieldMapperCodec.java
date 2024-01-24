@@ -20,6 +20,7 @@ import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.codec.bloomfilter.ES87BloomFilterPostingsFormat;
 import org.elasticsearch.index.codec.postings.ES812PostingsFormat;
+import org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat;
 import org.elasticsearch.index.codec.tsdb.ES87TSDBDocValuesFormat;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
@@ -44,8 +45,8 @@ public final class PerFieldMapperCodec extends Lucene99Codec {
     private final DocValuesFormat docValuesFormat = new Lucene90DocValuesFormat();
     private final ES87BloomFilterPostingsFormat bloomFilterPostingsFormat;
     private final ES87TSDBDocValuesFormat tsdbDocValuesFormat;
-
     private final ES812PostingsFormat es812PostingsFormat;
+    private final ES814InlinePostingsFormat es814InlinePostingsFormat;
 
     static {
         assert Codec.forName(Lucene.LATEST_CODEC).getClass().isAssignableFrom(PerFieldMapperCodec.class)
@@ -58,6 +59,7 @@ public final class PerFieldMapperCodec extends Lucene99Codec {
         this.bloomFilterPostingsFormat = new ES87BloomFilterPostingsFormat(bigArrays, this::internalGetPostingsFormatForField);
         this.tsdbDocValuesFormat = new ES87TSDBDocValuesFormat();
         this.es812PostingsFormat = new ES812PostingsFormat();
+        this.es814InlinePostingsFormat = new ES814InlinePostingsFormat();
     }
 
     @Override
@@ -73,8 +75,12 @@ public final class PerFieldMapperCodec extends Lucene99Codec {
         if (format != null) {
             return format;
         }
-        // return our own posting format using PFOR
-        return es812PostingsFormat;
+        if (useInlinePostingFormat(field)) {
+            return es814InlinePostingsFormat;
+        } else {
+            // return our own posting format using PFOR
+            return es812PostingsFormat;
+        }
     }
 
     boolean useBloomFilter(String field) {
@@ -89,6 +95,15 @@ public final class PerFieldMapperCodec extends Lucene99Codec {
                 && IndexSettings.BLOOM_FILTER_ID_FIELD_ENABLED_SETTING.get(indexSettings.getSettings());
         } else {
             return IdFieldMapper.NAME.equals(field) && IndexSettings.BLOOM_FILTER_ID_FIELD_ENABLED_SETTING.get(indexSettings.getSettings());
+        }
+    }
+
+    boolean useInlinePostingFormat(String field) {
+        if (mapperService.mappingLookup().isDataStreamTimestampFieldEnabled()){
+            var fieldType = mapperService.mappingLookup().getFieldType(field);
+            return fieldType != null && ("keyword".equals(fieldType.typeName()) || "match_only_text".equals(fieldType.typeName()));
+        } else {
+            return false;
         }
     }
 
