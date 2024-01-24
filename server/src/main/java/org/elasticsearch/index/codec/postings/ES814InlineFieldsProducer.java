@@ -18,6 +18,7 @@ import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SlowImpactsEnum;
+import org.apache.lucene.index.TermState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -287,16 +288,8 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private final MonotonicBlockPackedReader blockAddresses;
 
         private final Meta meta;
-        private int docFreq;
-        private long totalTermFreq;
         private final BytesRef term;
-        private long blockIndex;
-        private int numTermsInBlock;
-        private int termIndexInBlock;
-        private long postingsPointer;
-        private long postingsSize;
-        private long docOffset;
-        private long proxOffset;
+        private final ES814InlinePostingsFormat.InlineTermState state = new ES814InlinePostingsFormat.InlineTermState();
 
         InlineTermsEnum(Meta meta) throws IOException {
             this.meta = meta;
@@ -326,11 +319,11 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         private void reset() throws IOException {
             index.seek(meta.indexOffset);
-            blockIndex = -1;
-            termIndexInBlock = 0;
-            numTermsInBlock = -1;
-            postingsPointer = 0;
-            postingsSize = 0;
+            state.blockIndex = -1;
+            state.termIndexInBlock = 0;
+            state.numTermsInBlock = -1;
+            state.postingsFilePointer = 0;
+            state.postingsSize = 0;
         }
 
         private long findBlockIndex(BytesRef target) throws IOException {
@@ -356,17 +349,17 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public SeekStatus seekCeil(BytesRef target) throws IOException {
-            blockIndex = findBlockIndex(target);
-            if (blockIndex == meta.numBlocks) {
+            state.blockIndex = Math.toIntExact(findBlockIndex(target));
+            if (state.blockIndex == meta.numBlocks) {
                 return SeekStatus.END;
             }
-            index.seek(blockStartAddress + blockAddresses.get(blockIndex));
+            index.seek(blockStartAddress + blockAddresses.get(state.blockIndex));
             loadFrame();
             // TODO: should we support binary search here?
             int cmp;
             do {
                 scanNextTermInCurrentFrame();
-            } while ((cmp = term.compareTo(target)) < 0 && termIndexInBlock < numTermsInBlock);
+            } while ((cmp = term.compareTo(target)) < 0 && state.termIndexInBlock < state.numTermsInBlock);
 
             if (cmp == 0) {
                 return SeekStatus.FOUND;
@@ -383,6 +376,20 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         }
 
         @Override
+        public TermState termState() throws IOException {
+            return state.clone();
+        }
+
+        @Override
+        public void seekExact(BytesRef term, TermState state) throws IOException {
+            var other = (ES814InlinePostingsFormat.InlineTermState) state;
+            this.state.copyFrom(other);
+            index.seek(this.state.currentTermFP);
+            this.state.termIndexInBlock--;
+            scanNextTermInCurrentFrame();
+        }
+
+        @Override
         public BytesRef term() throws IOException {
             return term;
         }
@@ -394,12 +401,12 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public int docFreq() throws IOException {
-            return docFreq;
+            return state.docFreq;
         }
 
         @Override
         public long totalTermFreq() throws IOException {
-            return totalTermFreq;
+            return state.totalTermFreq;
         }
 
         @Override
@@ -409,12 +416,12 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public BytesRef next() throws IOException {
-            if (termIndexInBlock >= numTermsInBlock) {
-                if (++blockIndex >= meta.numBlocks) {
+            if (state.termIndexInBlock >= state.numTermsInBlock) {
+                if (++state.blockIndex >= meta.numBlocks) {
                     return null; // exhausted
                 }
-                if (blockIndex > 0) {
-                    index.seek(postingsPointer + postingsSize);
+                if (state.blockIndex > 0) {
+                    index.seek(state.postingsFilePointer + state.postingsSize);
                 }
                 loadFrame();
             }
@@ -423,26 +430,27 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         }
 
         private void loadFrame() throws IOException {
-            termIndexInBlock = 0;
-            numTermsInBlock = index.readVInt();
-            postingsSize = index.readVLong();
-            postingsPointer = index.readLong();
+            state.termIndexInBlock = 0;
+            state.numTermsInBlock = index.readVInt();
+            state.postingsSize = index.readVLong();
+            state.postingsFilePointer = index.readLong();
         }
 
         private void scanNextTermInCurrentFrame() throws IOException {
+            state.currentTermFP = index.getFilePointer();
             term.length = index.readVInt();
             index.readBytes(term.bytes, 0, term.length);
-            docFreq = index.readInt();
+            state.docFreq = index.readInt();
             if (meta.options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
-                totalTermFreq = index.readLong();
+                state.totalTermFreq = index.readLong();
             } else {
-                totalTermFreq = docFreq;
+                state.totalTermFreq = state.docFreq;
             }
             if (meta.options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
-                proxOffset = index.readLong();
+                state.proxOffset = index.readLong();
             }
-            docOffset = postingsPointer + index.readLong();
-            termIndexInBlock++;
+            state.docOffset = state.postingsFilePointer + index.readLong();
+            state.termIndexInBlock++;
         }
 
         @Override
@@ -459,7 +467,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 }
                 postings = new InlinePostingsEnum(ES814InlineFieldsProducer.this, flags, index.clone(), prox);
             }
-            postings.reset(meta.options, docFreq, docOffset, proxOffset);
+            postings.reset(meta.options, state.docFreq, state.docOffset, state.proxOffset);
             return postings;
         }
     }

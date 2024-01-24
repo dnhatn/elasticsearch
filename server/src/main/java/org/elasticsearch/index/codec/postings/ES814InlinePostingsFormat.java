@@ -8,11 +8,13 @@
 
 package org.elasticsearch.index.codec.postings;
 
+import org.apache.lucene.codecs.BlockTermState;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
+import org.apache.lucene.index.TermState;
 
 import java.io.IOException;
 
@@ -53,5 +55,39 @@ public final class ES814InlinePostingsFormat extends PostingsFormat {
     @Override
     public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
         return new ES814InlineFieldsProducer(state);
+    }
+
+    public static final class InlineTermState extends BlockTermState {
+        public long currentTermFP;
+        public long blockIndex;
+        public long termIndexInBlock;
+        public long numTermsInBlock;
+
+        public long postingsFilePointer;
+        public long postingsSize;
+
+        public long docOffset;
+        public long proxOffset;
+
+        @Override
+        public void copyFrom(TermState _other) {
+            super.copyFrom(_other);
+            InlineTermState state = (InlineTermState) _other;
+            this.currentTermFP = state.currentTermFP;
+            this.blockIndex = state.blockIndex;
+            this.termIndexInBlock = state.termIndexInBlock;
+            this.numTermsInBlock = state.numTermsInBlock;
+            this.postingsFilePointer = state.postingsFilePointer;
+            this.postingsSize = state.postingsSize;
+            this.docOffset = state.docOffset;
+            this.proxOffset = state.proxOffset;
+        }
+
+        @Override
+        public InlineTermState clone() {
+            InlineTermState state = new InlineTermState();
+            state.copyFrom(this);
+            return state;
+        }
     }
 }
