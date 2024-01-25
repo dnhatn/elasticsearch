@@ -44,6 +44,7 @@ import static org.elasticsearch.index.mapper.MapperService.INDEX_MAPPING_DIMENSI
 import static org.elasticsearch.index.mapper.MapperService.INDEX_MAPPING_FIELD_NAME_LENGTH_LIMIT_SETTING;
 import static org.elasticsearch.index.mapper.MapperService.INDEX_MAPPING_NESTED_DOCS_LIMIT_SETTING;
 import static org.elasticsearch.index.mapper.MapperService.INDEX_MAPPING_NESTED_FIELDS_LIMIT_SETTING;
+import static org.elasticsearch.index.mapper.MapperService.INDEX_MAPPING_NON_TEXT_FIELDS_SHARED_INVERTED_INDEX;
 import static org.elasticsearch.index.mapper.MapperService.INDEX_MAPPING_TOTAL_FIELDS_LIMIT_SETTING;
 
 /**
@@ -756,6 +757,7 @@ public final class IndexSettings {
     private volatile long mappingDepthLimit;
     private volatile long mappingFieldNameLengthLimit;
     private volatile long mappingDimensionFieldsLimit;
+    private final boolean mappingNonTextFieldsSharedInvertedIndex;
 
     /**
      * The maximum number of refresh listeners allows on this shard.
@@ -900,6 +902,7 @@ public final class IndexSettings {
         mappingDepthLimit = scopedSettings.get(INDEX_MAPPING_DEPTH_LIMIT_SETTING);
         mappingFieldNameLengthLimit = scopedSettings.get(INDEX_MAPPING_FIELD_NAME_LENGTH_LIMIT_SETTING);
         mappingDimensionFieldsLimit = scopedSettings.get(INDEX_MAPPING_DIMENSION_FIELDS_LIMIT_SETTING);
+        mappingNonTextFieldsSharedInvertedIndex = scopedSettings.get(INDEX_MAPPING_NON_TEXT_FIELDS_SHARED_INVERTED_INDEX);
         indexRouting = IndexRouting.fromIndexMetadata(indexMetadata);
         es87TSDBCodecEnabled = scopedSettings.get(TIME_SERIES_ES87TSDB_CODEC_ENABLED_SETTING);
 
@@ -1541,6 +1544,10 @@ public final class IndexSettings {
 
     private void setMappingDimensionFieldsLimit(long value) {
         this.mappingDimensionFieldsLimit = value;
+    }
+
+    public boolean isMappingNonTextFieldsSharedInvertedIndex() {
+        return mappingNonTextFieldsSharedInvertedIndex;
     }
 
     /**
