@@ -45,6 +45,7 @@ import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.T
 import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.TERM_INDEX_CODEC;
 import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.TERM_INDEX_EXTENSION;
 import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.VERSION_CURRENT;
+import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.ZSTD_COMPRESSION_LEVEL;
 
 final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
@@ -424,7 +425,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             public void write(byte[] b, int off, int len) {
                 out.writeBytes(b, off, len);
             }
-        });
+        }, ZSTD_COMPRESSION_LEVEL);
         in.copyTo(new DataOutput() {
             @Override
             public void writeByte(byte b) throws IOException {
