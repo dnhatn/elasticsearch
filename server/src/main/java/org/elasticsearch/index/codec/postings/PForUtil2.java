@@ -146,7 +146,6 @@ final class PForUtil2 {
             // we need to shift by 1) the bpv, and 2) 32 for positions [0..63] (and no 32 shift for
             // [64..127])
             final int shift32 = patchBitsRequired + ((1 ^ (index >> 6)) << 5);
-            ;
             longs[index32] |= exceptionValues[i] << shift32;
         }
         for (int i = 0; i < HALF_BLOCK_SIZE; ++i) {
