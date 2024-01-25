@@ -8,8 +8,6 @@
 
 package org.elasticsearch.index.codec.postings;
 
-import com.github.luben.zstd.ZstdOutputStreamNoFinalizer;
-
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.NormsProducer;
@@ -24,6 +22,7 @@ import org.apache.lucene.store.ByteBuffersDataOutput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.packed.MonotonicBlockPackedWriter;
 import org.apache.lucene.util.packed.PackedInts;
@@ -32,7 +31,6 @@ import org.elasticsearch.lucene.util.BinaryInterpolativeCoding;
 import org.elasticsearch.lucene.util.BitStreamOutput;
 
 import java.io.IOException;
-import java.io.OutputStream;
 
 import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.INVERTED_INDEX_CODEC;
 import static org.elasticsearch.index.codec.postings.ES814InlinePostingsFormat.INVERTED_INDEX_EXTENSION;
@@ -119,9 +117,8 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 flags |= PostingsEnum.OFFSETS;
             }
 
-            ByteBuffersDataOutput termsOut = new ByteBuffersDataOutput();
+            ZstdDataOutput termsOut = new ZstdDataOutput();
             ByteBuffersDataOutput postingsOut = new ByteBuffersDataOutput();
-            ByteBuffersDataOutput sparse = new ByteBuffersDataOutput();
 
             PostingsWriter writer = new PostingsWriter(hasFreqs, hasPositions, hasOffsets, hasPayloads);
             TermIndexWriter termIndexWriter = new TermIndexWriter(termIndex, index.getFilePointer());
@@ -152,16 +149,16 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 ++numPending;
                 maxTermLength = Math.max(maxTermLength, term.length);
                 ++numTerms;
-                if (numPending >= MAX_BLOCK_TERMS || (termsOut.size() + postingsOut.size()) >= MAX_BLOCK_BYTES) {
+                if (numPending >= MAX_BLOCK_TERMS || (termsOut.rawSize() + postingsOut.size()) >= MAX_BLOCK_BYTES) {
                     termIndexWriter.addTerm(term, index.getFilePointer());
-                    flushBlock(numPending, termsOut, postingsOut, sparse);
+                    flushBlock(numPending, termsOut, postingsOut);
                     numPending = 0;
                     ++numBlocks;
                 }
             }
             termIndexWriter.finish(index.getFilePointer());
             if (numPending > 0) {
-                flushBlock(numPending, termsOut, postingsOut, sparse);
+                flushBlock(numPending, termsOut, postingsOut);
                 ++numBlocks;
             }
             meta.writeLong(numTerms);
@@ -188,18 +185,15 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         }
     }
 
-    private void flushBlock(int numPending, ByteBuffersDataOutput termsOut, ByteBuffersDataOutput postingsOut, ByteBuffersDataOutput sparse)
-        throws IOException {
+    private void flushBlock(int numPending, ZstdDataOutput termsOut, ByteBuffersDataOutput postingsOut) throws IOException {
         index.writeVInt(numPending); // num terms
-        compressTerms(termsOut, sparse);
-        index.writeVLong(termsOut.size()); // original term size
-        index.writeVLong(sparse.size()); // compressed terms byte
+        index.writeVLong(termsOut.rawSize()); // original term size
+        termsOut.compress();
+        index.writeVLong(termsOut.compressedSize()); // compressed terms byte
         index.writeVLong(postingsOut.size()); // postings bytes
-        sparse.copyTo(index);
+        termsOut.copyTo(index);
         postingsOut.copyTo(index);
         postingsOut.reset();
-        termsOut.reset();
-        sparse.reset();
     }
 
     private class PostingsWriter {
@@ -414,30 +408,38 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         }
     }
 
-    static void compressTerms(ByteBuffersDataOutput in, ByteBuffersDataOutput out) throws IOException {
-        ZstdOutputStreamNoFinalizer zstream = new ZstdOutputStreamNoFinalizer(new OutputStream() {
-            @Override
-            public void write(int b) {
-                out.writeByte((byte) b);
-            }
+    static final class ZstdDataOutput extends DataOutput {
+        private final BytesRefBuilder raw = new BytesRefBuilder();
+        private final BytesRefBuilder compressed = new BytesRefBuilder();
 
-            @Override
-            public void write(byte[] b, int off, int len) {
-                out.writeBytes(b, off, len);
-            }
-        }, ZSTD_COMPRESSION_LEVEL);
-        in.copyTo(new DataOutput() {
-            @Override
-            public void writeByte(byte b) throws IOException {
-                zstream.write(b);
-            }
+        @Override
+        public void writeByte(byte b) {
+            raw.append(b);
+        }
 
-            @Override
-            public void writeBytes(byte[] b, int offset, int length) throws IOException {
-                zstream.write(b, offset, length);
-            }
-        });
-        zstream.close();
+        @Override
+        public void writeBytes(byte[] b, int offset, int length) throws IOException {
+            raw.append(b, offset, length);
+        }
+
+        void compress() {
+            compressed.setLength(0);
+            Zstd.compress(raw, compressed, ZSTD_COMPRESSION_LEVEL);
+            raw.setLength(0);
+        }
+
+        long rawSize() {
+            return raw.length();
+        }
+
+        long compressedSize() {
+            return compressed.length();
+        }
+
+        void copyTo(DataOutput out) throws IOException {
+            out.writeBytes(compressed.bytes(), 0, compressed.length());
+            compressed.setLength(0);
+        }
     }
 
     @Override
