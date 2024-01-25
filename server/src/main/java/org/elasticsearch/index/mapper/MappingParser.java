@@ -177,8 +177,9 @@ public final class MappingParser {
             checkNoRemainingFields(mappingSource, "Root mapping definition has unsupported parameters: ");
         }
 
+        boolean nonTextFieldsSharedInvertedIndex = mappingParserContext.getIndexSettings().isMappingNonTextFieldsSharedInvertedIndex();
         return new Mapping(
-            rootObjectMapper.build(MapperBuilderContext.root(isSourceSynthetic, isDataStream)),
+            rootObjectMapper.build(MapperBuilderContext.root(isSourceSynthetic, isDataStream, nonTextFieldsSharedInvertedIndex)),
             metadataMappers.values().toArray(new MetadataFieldMapper[0]),
             meta
         );

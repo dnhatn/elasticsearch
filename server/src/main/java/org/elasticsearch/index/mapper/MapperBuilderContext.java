@@ -18,18 +18,20 @@ public class MapperBuilderContext {
     /**
      * The root context, to be used when building a tree of mappers
      */
-    public static MapperBuilderContext root(boolean isSourceSynthetic, boolean isDataStream) {
-        return new MapperBuilderContext(null, isSourceSynthetic, isDataStream);
+    public static MapperBuilderContext root(boolean isSourceSynthetic, boolean isDataStream, boolean nonTextFieldsSharedInvertedIndex) {
+        return new MapperBuilderContext(null, isSourceSynthetic, isDataStream, nonTextFieldsSharedInvertedIndex);
     }
 
     private final String path;
     private final boolean isSourceSynthetic;
     private final boolean isDataStream;
+    private final boolean mappingNonTextFieldsSharedInvertedIndex;
 
-    MapperBuilderContext(String path, boolean isSourceSynthetic, boolean isDataStream) {
+    MapperBuilderContext(String path, boolean isSourceSynthetic, boolean isDataStream, boolean mappingNonTextFieldsSharedInvertedIndex) {
         this.path = path;
         this.isSourceSynthetic = isSourceSynthetic;
         this.isDataStream = isDataStream;
+        this.mappingNonTextFieldsSharedInvertedIndex = mappingNonTextFieldsSharedInvertedIndex;
     }
 
     /**
@@ -38,7 +40,7 @@ public class MapperBuilderContext {
      * @return a new MapperBuilderContext with this context as its parent
      */
     public MapperBuilderContext createChildContext(String name) {
-        return new MapperBuilderContext(buildFullName(name), isSourceSynthetic, isDataStream);
+        return new MapperBuilderContext(buildFullName(name), isSourceSynthetic, isDataStream, mappingNonTextFieldsSharedInvertedIndex);
     }
 
     /**
@@ -63,5 +65,9 @@ public class MapperBuilderContext {
      */
     public boolean isDataStream() {
         return isDataStream;
+    }
+
+    public boolean isMappingNonTextFieldsSharedInvertedIndex() {
+        return mappingNonTextFieldsSharedInvertedIndex;
     }
 }

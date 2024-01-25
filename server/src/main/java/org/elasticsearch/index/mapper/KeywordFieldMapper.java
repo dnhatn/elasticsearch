@@ -306,6 +306,7 @@ public final class KeywordFieldMapper extends FieldMapper {
                 searchAnalyzer,
                 quoteAnalyzer,
                 this,
+                context.isSourceSynthetic(),
                 context.isSourceSynthetic()
             );
         }
@@ -328,7 +329,8 @@ public final class KeywordFieldMapper extends FieldMapper {
                 multiFieldsBuilder.build(this, context),
                 copyTo,
                 context.isSourceSynthetic(),
-                this
+                this,
+                context.isMappingNonTextFieldsSharedInvertedIndex()
             );
         }
     }
@@ -349,6 +351,7 @@ public final class KeywordFieldMapper extends FieldMapper {
         private final FieldValues<String> scriptValues;
         private final boolean isDimension;
         private final boolean isSyntheticSource;
+        private final boolean mappingNonTextFieldsSharedInvertedIndex;
 
         public KeywordFieldType(
             String name,
@@ -357,7 +360,8 @@ public final class KeywordFieldMapper extends FieldMapper {
             NamedAnalyzer searchAnalyzer,
             NamedAnalyzer quoteAnalyzer,
             Builder builder,
-            boolean isSyntheticSource
+            boolean isSyntheticSource,
+            boolean mappingNonTextFieldsSharedInvertedIndex
         ) {
             super(
                 name,
@@ -374,6 +378,7 @@ public final class KeywordFieldMapper extends FieldMapper {
             this.scriptValues = builder.scriptValues();
             this.isDimension = builder.dimension.getValue();
             this.isSyntheticSource = isSyntheticSource;
+            this.mappingNonTextFieldsSharedInvertedIndex = mappingNonTextFieldsSharedInvertedIndex;
         }
 
         public KeywordFieldType(String name, boolean isIndexed, boolean hasDocValues, Map<String, String> meta) {
@@ -385,6 +390,7 @@ public final class KeywordFieldMapper extends FieldMapper {
             this.scriptValues = null;
             this.isDimension = false;
             this.isSyntheticSource = false;
+            this.mappingNonTextFieldsSharedInvertedIndex = false;
         }
 
         public KeywordFieldType(String name) {
@@ -407,6 +413,7 @@ public final class KeywordFieldMapper extends FieldMapper {
             this.scriptValues = null;
             this.isDimension = false;
             this.isSyntheticSource = false;
+            this.mappingNonTextFieldsSharedInvertedIndex = false;
         }
 
         public KeywordFieldType(String name, NamedAnalyzer analyzer) {
@@ -418,6 +425,7 @@ public final class KeywordFieldMapper extends FieldMapper {
             this.scriptValues = null;
             this.isDimension = false;
             this.isSyntheticSource = false;
+            this.mappingNonTextFieldsSharedInvertedIndex = false;
         }
 
         @Override
@@ -851,6 +859,7 @@ public final class KeywordFieldMapper extends FieldMapper {
     private final boolean storeIgnored;
 
     private final IndexAnalyzers indexAnalyzers;
+    private final boolean mappingNonTextFieldsSharedInvertedIndex;
 
     private KeywordFieldMapper(
         String simpleName,
@@ -859,7 +868,8 @@ public final class KeywordFieldMapper extends FieldMapper {
         MultiFields multiFields,
         CopyTo copyTo,
         boolean storeIgnored,
-        Builder builder
+        Builder builder,
+        boolean mappingNonTextFieldsSharedInvertedIndex
     ) {
         super(simpleName, mappedFieldType, multiFields, copyTo, builder.script.get() != null, builder.onScriptError.getValue());
         assert fieldType.indexOptions().compareTo(IndexOptions.DOCS_AND_FREQS) <= 0;
@@ -874,6 +884,7 @@ public final class KeywordFieldMapper extends FieldMapper {
         this.scriptCompiler = builder.scriptCompiler;
         this.indexCreatedVersion = builder.indexCreatedVersion;
         this.storeIgnored = storeIgnored;
+        this.mappingNonTextFieldsSharedInvertedIndex = mappingNonTextFieldsSharedInvertedIndex;
     }
 
     @Override

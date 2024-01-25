@@ -256,7 +256,10 @@ public final class DocumentParser {
         for (RuntimeField runtimeField : context.getDynamicRuntimeFields()) {
             rootBuilder.addRuntimeField(runtimeField);
         }
-        RootObjectMapper root = rootBuilder.build(MapperBuilderContext.root(context.mappingLookup().isSourceSynthetic(), false));
+        boolean nonTextFieldsSharedInvertedIndex = context.indexSettings().isMappingNonTextFieldsSharedInvertedIndex();
+        RootObjectMapper root = rootBuilder.build(
+            MapperBuilderContext.root(context.mappingLookup().isSourceSynthetic(), false, nonTextFieldsSharedInvertedIndex)
+        );
         return context.mappingLookup().getMapping().mappingUpdate(root);
     }
 
