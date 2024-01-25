@@ -26,7 +26,6 @@ import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ChecksumIndexInput;
-import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
@@ -301,7 +300,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         private byte[] zCompressedTerms = new byte[1024];
         private byte[] zDecompressedTerms = new byte[1024];
         private long loadedFrameIndex = -1;
-        private DataInput termsReader;
+        private ByteArrayDataInput termsReader;
 
         InlineTermsEnum(Meta meta) throws IOException {
             this.meta = meta;
@@ -466,6 +465,11 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         private void loadFrame() throws IOException {
             state.termIndexInBlock = 0;
+            if (loadedFrameIndex == state.blockIndex) {
+                termsReader.setPosition(0);
+                index.seek(state.postingsFP);
+                return;
+            }
             state.numTermsInBlock = index.readVInt();
             final long originalTermsBytes = index.readVLong();
             final long termBytes = index.readVLong();
