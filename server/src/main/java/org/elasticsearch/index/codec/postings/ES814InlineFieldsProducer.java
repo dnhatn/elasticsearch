@@ -601,7 +601,15 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                     return doc;
                 }
             }
-            return slowAdvance(target);
+            // This is essentially an inlined version of slowAdvance(target).
+            for (int i = docBufferIndex + 1; i < POSTINGS_BLOCK_SIZE; ++i) {
+                if (docBuffer[i] >= target) {
+                    docIndex += i - docBufferIndex;
+                    docBufferIndex = i;
+                    return doc = (int) docBuffer[i];
+                }
+            }
+            throw new AssertionError();
         }
 
         /**
@@ -638,7 +646,8 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 BinaryInterpolativeCoding.decodeIncreasing(bitIn, docBuffer, 0, remaining - 1, skipDoc + 1, maxDoc - 1);
                 // skip freqs, if any
                 bitIn.done();
-                skipDoc = NO_MORE_DOCS;
+                // Add NO_MORE_DOCS to the docBuffer so that advance() can just scan until it finds a doc >= target
+                docBuffer[remaining] = skipDoc = NO_MORE_DOCS;
             }
         }
 
