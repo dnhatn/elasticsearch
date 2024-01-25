@@ -763,11 +763,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                 return -1;
             }
             if (skippedPositions > 0) {
-                assert posIndex == -1;
-                for (long i = 0; i < skippedPositions; ++i) {
-                    readPosition();
-                }
-                resetProxData();
+                skipPositions(skippedPositions);
                 skippedPositions = 0;
             }
             if (++posIndex >= freq) {
@@ -775,6 +771,51 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             }
             readPosition();
             return pos;
+        }
+
+        private void skipPositions(long skippedPositions) throws IOException {
+            assert skippedPositions > 0;
+            assert posIndex == -1;
+
+            int p = (int) (posIndexInBlock & (ForUtil.BLOCK_SIZE - 1));
+            if (p != 0) {
+                // Read positions from the current block until either the end of the block, or skippedPositions have been skipped
+                final int remainingPositionsInCurrentBlock = ForUtil.BLOCK_SIZE - p;
+                final int toSkip = (int) Math.min(skippedPositions, remainingPositionsInCurrentBlock);
+                skippedPositions -= toSkip;
+                for (int i = 0; i < toSkip; ++i) {
+                    readPosition();
+                }
+            }
+
+            if (skippedPositions > 0) {
+                assert (posIndexInBlock & (ForUtil.BLOCK_SIZE - 1)) == 0;
+
+                while (skippedPositions >= ForUtil.BLOCK_SIZE) {
+                    // We can skip an entire block of positions
+                    pforUtil.skip(prox);
+                    if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0) {
+                        pforUtil.skip(prox);
+                        pforUtil.skip(prox);
+                    }
+                    if (hasPayloads) {
+                        pforUtil.decode(prox, payloadLengthBuffer);
+                        long lengthSum = 0;
+                        for (int i = 0; i < ForUtil.BLOCK_SIZE; ++i) {
+                            lengthSum += Math.max(1, payloadLengthBuffer[i]) - 1;
+                        }
+                        prox.skipBytes(lengthSum);
+                    }
+                    posIndexInBlock += ForUtil.BLOCK_SIZE;
+                    skippedPositions -= ForUtil.BLOCK_SIZE;
+                }
+
+                for (long i = 0; i < skippedPositions; ++i) {
+                    readPosition();
+                }
+            }
+
+            resetProxData();
         }
 
         private void readPosition() throws IOException {
