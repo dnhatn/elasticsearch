@@ -362,13 +362,17 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public SeekStatus seekCeil(BytesRef target) throws IOException {
-            state.blockIndex = Math.toIntExact(findBlockIndex(target));
-            if (state.blockIndex == meta.numBlocks) {
+            final int blockIndex = Math.toIntExact(findBlockIndex(target));
+            if (blockIndex == meta.numBlocks) {
                 return SeekStatus.END;
             }
-            index.seek(blockStartAddress + blockAddresses.get(state.blockIndex));
-            loadFrame();
-
+            state.blockIndex = blockIndex;
+            if (state.blockIndex == loadedFrameIndex) {
+                resetFrame();
+            } else {
+                index.seek(blockStartAddress + blockAddresses.get(state.blockIndex));
+                loadFrame();
+            }
             // TODO: should we support binary search here?
             int cmp;
             do {
@@ -432,14 +436,6 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public BytesRef next() throws IOException {
-            if (state.blockIndex != loadedFrameIndex) {
-                long termIndexInBlock = state.termIndexInBlock;
-                index.seek(blockStartAddress + blockAddresses.get(state.blockIndex));
-                loadFrame();
-                while (termIndexInBlock-- > 0) {
-                    scanNextTermInCurrentFrame();
-                }
-            }
             if (state.termIndexInBlock >= state.numTermsInBlock) {
                 if (++state.blockIndex >= meta.numBlocks) {
                     return null; // exhausted
@@ -448,6 +444,13 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
                     index.seek(state.postingsFP + state.postingsBytes);
                 }
                 loadFrame();
+            } else if (state.blockIndex != loadedFrameIndex) {
+                long termIndexInBlock = state.termIndexInBlock;
+                index.seek(blockStartAddress + blockAddresses.get(state.blockIndex));
+                loadFrame();
+                while (termIndexInBlock-- > 0) {
+                    scanNextTermInCurrentFrame();
+                }
             }
             scanNextTermInCurrentFrame();
             return term.get();
@@ -465,11 +468,6 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         private void loadFrame() throws IOException {
             state.termIndexInBlock = 0;
-            if (loadedFrameIndex == state.blockIndex) {
-                termsReader.setPosition(0);
-                index.seek(state.postingsFP);
-                return;
-            }
             state.numTermsInBlock = index.readVInt();
             final long originalTermsBytes = index.readVLong();
             final long termBytes = index.readVLong();
@@ -478,6 +476,13 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             state.postingsFP = termsFP + termBytes;
             decompressTerms((int) termBytes, (int) originalTermsBytes);
             loadedFrameIndex = state.blockIndex;
+        }
+
+        private void resetFrame() throws IOException {
+            assert loadedFrameIndex == state.blockIndex : loadedFrameIndex + " != " + state.blockIndex;
+            state.termIndexInBlock = 0;
+            termsReader.setPosition(0);
+            index.seek(state.postingsFP);
         }
 
         private void scanNextTermInCurrentFrame() throws IOException {
