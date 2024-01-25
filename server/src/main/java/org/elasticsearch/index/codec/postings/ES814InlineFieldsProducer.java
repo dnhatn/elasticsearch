@@ -442,6 +442,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         }
 
         private void decompressTerms(int compressedBytes, int originalBytes) throws IOException {
+            // TODO: Why ZstdInputStreamNoFinalizer is so slow?
             zCompressedTerms = ArrayUtil.growNoCopy(zCompressedTerms, compressedBytes);
             zDecompressedTerms = ArrayUtil.growNoCopy(zDecompressedTerms, originalBytes);
             index.readBytes(zCompressedTerms, 0, (int) compressedBytes);
