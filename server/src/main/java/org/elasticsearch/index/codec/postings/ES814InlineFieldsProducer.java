@@ -457,7 +457,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             // TODO: Why ZstdInputStreamNoFinalizer is so slow?
             zCompressedTerms = ArrayUtil.growNoCopy(zCompressedTerms, compressedBytes);
             zDecompressedTerms = ArrayUtil.growNoCopy(zDecompressedTerms, originalBytes);
-            index.readBytes(zCompressedTerms, 0, (int) compressedBytes);
+            index.readBytes(zCompressedTerms, 0, compressedBytes);
             long actual = Zstd.decompressByteArray(zDecompressedTerms, 0, originalBytes, zCompressedTerms, 0, compressedBytes);
             assert actual == originalBytes : actual + " != " + originalBytes;
             termsReader = new ByteArrayDataInput(zDecompressedTerms, 0, (int) actual);
