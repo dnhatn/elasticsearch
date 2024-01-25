@@ -500,6 +500,18 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
+            if (flags == PostingsEnum.NONE) {
+                InlineDocsEnum docs;
+                if (reuse != null
+                    && reuse instanceof InlineDocsEnum inlineDocsEnum
+                    && inlineDocsEnum.canReuse(ES814InlineFieldsProducer.this)) {
+                    docs = inlineDocsEnum;
+                } else {
+                    docs = new InlineDocsEnum(ES814InlineFieldsProducer.this, index.clone());
+                }
+                docs.reset(meta.options, meta.hasPayloads, state.docFreq, state.docOffset);
+                return docs;
+            }
             InlinePostingsEnum postings;
             if (reuse != null
                 && reuse instanceof InlinePostingsEnum inlinePostingsEnum
@@ -514,6 +526,151 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             }
             postings.reset(meta.options, meta.hasPayloads, state.docFreq, state.docOffset, state.proxOffset);
             return postings;
+        }
+    }
+
+
+    private static class InlineDocsEnum extends PostingsEnum {
+
+        private final ES814InlineFieldsProducer producer;
+        private final int maxDoc;
+        private IndexOptions options;
+        private boolean hasPayloads;
+        private int docFreq;
+        private final IndexInput index;
+        private int docIndex;
+        private int doc;
+        private final long[] docBuffer = new long[POSTINGS_BLOCK_SIZE];
+        private int docBufferIndex;
+        private int skipDoc; // last doc in the current block
+        private final PForUtil2 pforUtil = new PForUtil2(new ForUtil());
+
+        InlineDocsEnum(ES814InlineFieldsProducer producer, IndexInput index) {
+            this.producer = Objects.requireNonNull(producer);
+            this.maxDoc = producer.state.segmentInfo.maxDoc();
+            this.index = Objects.requireNonNull(index);
+        }
+
+        boolean canReuse(ES814InlineFieldsProducer producer) {
+            return this.producer == producer;
+        }
+
+        void reset(IndexOptions options, boolean hasPayloads, int docFreq, long docOffset) throws IOException {
+            this.options = Objects.requireNonNull(options);
+            this.hasPayloads = hasPayloads;
+            this.docFreq = docFreq;
+            docIndex = -1;
+            docBufferIndex = POSTINGS_BLOCK_SIZE - 1; // Trigger a refill on the next read
+            doc = -1;
+            skipDoc = -1;
+            index.seek(docOffset);
+        }
+
+        @Override
+        public int docID() {
+            return doc;
+        }
+
+        @Override
+        public int nextDoc() throws IOException {
+            if (++docIndex >= docFreq) {
+                return doc = DocIdSetIterator.NO_MORE_DOCS;
+            }
+            if (++docBufferIndex == POSTINGS_BLOCK_SIZE) {
+                refillDocs(0);
+                docBufferIndex = 0;
+            }
+            return doc = (int) docBuffer[docBufferIndex];
+        }
+
+        @Override
+        public int advance(int target) throws IOException {
+            if (target > skipDoc) { // Target is not in the current block
+                // Move to the boundary between this block and the next one
+                docIndex = docIndex - docBufferIndex + POSTINGS_BLOCK_SIZE;
+                docBufferIndex = 0;
+                while (true) {
+                    refillDocs(target);
+                    if (target <= skipDoc) { // Just found the target block, or last block
+                        break;
+                    } else {
+                        docIndex += POSTINGS_BLOCK_SIZE;
+                    }
+                }
+                doc = (int) docBuffer[docBufferIndex];
+                if (doc >= target) {
+                    return doc;
+                }
+            }
+            return slowAdvance(target);
+        }
+
+        /**
+         * Refill blocks of documents, or skip data if none of the documents in the next block may be greater than or equal
+         * to {@code target}.
+         */
+        private void refillDocs(int target) throws IOException {
+            final int remaining = docFreq - docIndex;
+            if (remaining >= POSTINGS_BLOCK_SIZE) {
+                // Full block
+                final int lastDocInPrevBlock = skipDoc;
+                skipDoc += index.readVInt() + POSTINGS_BLOCK_SIZE;
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                    index.readVLong(); // numPositionsInBlock
+                    index.readVLong(); // nextBlockProxOffset delta
+                }
+                if (skipDoc >= target) {
+                    pforUtil.decodeAndPrefixSum(index, lastDocInPrevBlock, docBuffer);
+                    docBuffer[ForUtil.BLOCK_SIZE] = skipDoc;
+                } else {
+                    // Skip block
+                    pforUtil.skip(index);
+                }
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0) {
+                    pforUtil.skip(index);
+                    index.readVLong(); // last freq of the block
+                }
+            } else {
+                // Tail postings
+                if (options.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                    index.readVLong(); // numPositionsInBlock
+                }
+                BitStreamInput bitIn = new BitStreamInput(index);
+                BinaryInterpolativeCoding.decodeIncreasing(bitIn, docBuffer, 0, remaining - 1, skipDoc + 1, maxDoc - 1);
+                // skip freqs, if any
+                bitIn.done();
+                skipDoc = NO_MORE_DOCS;
+            }
+        }
+
+        @Override
+        public int freq() throws IOException {
+            return 1;
+        }
+
+        @Override
+        public int nextPosition() throws IOException {
+            return -1;
+        }
+
+        @Override
+        public int startOffset() throws IOException {
+            return -1;
+        }
+
+        @Override
+        public int endOffset() throws IOException {
+            return -1;
+        }
+
+        @Override
+        public BytesRef getPayload() throws IOException {
+            return null;
+        }
+
+        @Override
+        public long cost() {
+            return docFreq;
         }
     }
 
