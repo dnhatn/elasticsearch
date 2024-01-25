@@ -529,7 +529,6 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         }
     }
 
-
     private static class InlineDocsEnum extends PostingsEnum {
 
         private final ES814InlineFieldsProducer producer;
