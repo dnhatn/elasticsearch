@@ -300,6 +300,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         // term buffers for zstd
         private byte[] zCompressedTerms = new byte[1024];
         private byte[] zDecompressedTerms = new byte[1024];
+        private long loadedFrameIndex = -1;
         private DataInput termsReader;
 
         InlineTermsEnum(Meta meta) throws IOException {
@@ -368,6 +369,7 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             }
             index.seek(blockStartAddress + blockAddresses.get(state.blockIndex));
             loadFrame();
+
             // TODO: should we support binary search here?
             int cmp;
             do {
@@ -396,6 +398,9 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
         @Override
         public void seekExact(BytesRef text, TermState state) throws IOException {
             var other = (ES814InlinePostingsFormat.InlineTermState) state;
+            if (this.state.blockIndex != other.blockIndex || this.state.termIndexInBlock != other.termIndexInBlock) {
+                loadedFrameIndex = -1;
+            }
             this.state.copyFrom(other);
             index.seek(this.state.docOffset);
             term.copyBytes(text);
@@ -428,6 +433,14 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
 
         @Override
         public BytesRef next() throws IOException {
+            if (state.blockIndex != loadedFrameIndex) {
+                long termIndexInBlock = state.termIndexInBlock;
+                index.seek(blockStartAddress + blockAddresses.get(state.blockIndex));
+                loadFrame();
+                while (termIndexInBlock-- > 0) {
+                    scanNextTermInCurrentFrame();
+                }
+            }
             if (state.termIndexInBlock >= state.numTermsInBlock) {
                 if (++state.blockIndex >= meta.numBlocks) {
                     return null; // exhausted
@@ -460,9 +473,11 @@ final class ES814InlineFieldsProducer extends FieldsProducer {
             long termsFP = index.getFilePointer();
             state.postingsFP = termsFP + termBytes;
             decompressTerms((int) termBytes, (int) originalTermsBytes);
+            loadedFrameIndex = state.blockIndex;
         }
 
         private void scanNextTermInCurrentFrame() throws IOException {
+            assert loadedFrameIndex == state.blockIndex : loadedFrameIndex + " != " + state.blockIndex;
             term.setLength(termsReader.readVInt());
             termsReader.readBytes(term.bytes(), 0, term.length());
             state.docFreq = termsReader.readInt();
