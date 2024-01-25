@@ -81,9 +81,9 @@ public class PForUtil2Tests extends ESTestCase {
             for (int j = 0; j < ForUtil.BLOCK_SIZE; ++j) {
                 expected[j] = values[i * ForUtil.BLOCK_SIZE + j];
                 if (j > 0) {
-                    expected[j] += expected[j - 1];
+                    expected[j] += expected[j - 1] + 1;
                 } else {
-                    expected[j] += base;
+                    expected[j] += base + 1;
                 }
             }
             assertArrayEquals(Arrays.toString(restored), expected, restored);
@@ -123,7 +123,7 @@ public class PForUtil2Tests extends ESTestCase {
         for (int i = 0; i < iterations; ++i) {
             long[] source = new long[ForUtil.BLOCK_SIZE];
             for (int j = 0; j < ForUtil.BLOCK_SIZE; ++j) {
-                source[j] = values[i * ForUtil.BLOCK_SIZE + j] - 1;
+                source[j] = values[i * ForUtil.BLOCK_SIZE + j];
             }
             pforUtil.encode(source, out, new ByteBuffersDataOutput());
         }
