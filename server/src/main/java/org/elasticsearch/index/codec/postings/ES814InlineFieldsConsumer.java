@@ -27,8 +27,6 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.packed.MonotonicBlockPackedWriter;
 import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.core.IOUtils;
-import org.elasticsearch.logging.LogManager;
-import org.elasticsearch.logging.Logger;
 import org.elasticsearch.lucene.util.BinaryInterpolativeCoding;
 import org.elasticsearch.lucene.util.BitStreamOutput;
 
@@ -51,7 +49,6 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
     private final IndexOutput meta, index, termIndex, prox;
     private final SegmentWriteState state;
-    public static final Logger LOGGER = LogManager.getLogger(ES814InlineFieldsConsumer.class);
 
     ES814InlineFieldsConsumer(SegmentWriteState state) throws IOException {
         String metaFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, META_EXTENSION);
@@ -87,6 +84,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
     @Override
     public void write(Fields fields, NormsProducer norms) throws IOException {
+        final ZstdDataOutput termsOut = new ZstdDataOutput();
         for (String field : fields) {
             Terms terms = fields.terms(field);
             final boolean hasFreqs = terms.hasFreqs();
@@ -120,7 +118,6 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 flags |= PostingsEnum.OFFSETS;
             }
 
-            final ZstdDataOutput termsOut = new ZstdDataOutput();
             ByteBuffersDataOutput postingsOut = new ByteBuffersDataOutput();
 
             PostingsWriter writer = new PostingsWriter(hasFreqs, hasPositions, hasOffsets, hasPayloads);
@@ -179,8 +176,6 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             meta.writeLong(termIndexWriter.termOffsetPointer);
             meta.writeLong(termIndexWriter.blockAddressPointer);
 
-            long saved = termsOut.totalOutBytes - termsOut.totalInBytes;
-            LOGGER.info("--> field {} in {} out {} saved {}", field, termsOut.totalInBytes, termsOut.totalInBytes, saved);
         }
         meta.writeByte((byte) -1); // no more fields
         CodecUtil.writeFooter(meta);
@@ -189,6 +184,8 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         if (prox != null) {
             CodecUtil.writeFooter(prox);
         }
+        long saved = termsOut.totalInBytes - termsOut.totalOutBytes;
+        System.out.println(state.segmentInfo.name + " in=" + termsOut.totalInBytes + " out=" + termsOut.totalOutBytes + " saved=" + saved);
 
     }
 
