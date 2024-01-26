@@ -27,6 +27,8 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.packed.MonotonicBlockPackedWriter;
 import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 import org.elasticsearch.lucene.util.BinaryInterpolativeCoding;
 import org.elasticsearch.lucene.util.BitStreamOutput;
 
@@ -49,6 +51,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
     private final IndexOutput meta, index, termIndex, prox;
     private final SegmentWriteState state;
+    public static final Logger LOGGER = LogManager.getLogger(ES814InlineFieldsConsumer.class);
 
     ES814InlineFieldsConsumer(SegmentWriteState state) throws IOException {
         String metaFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, META_EXTENSION);
@@ -117,7 +120,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
                 flags |= PostingsEnum.OFFSETS;
             }
 
-            ZstdDataOutput termsOut = new ZstdDataOutput();
+            final ZstdDataOutput termsOut = new ZstdDataOutput();
             ByteBuffersDataOutput postingsOut = new ByteBuffersDataOutput();
 
             PostingsWriter writer = new PostingsWriter(hasFreqs, hasPositions, hasOffsets, hasPayloads);
@@ -175,6 +178,9 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
             meta.writeLong(termIndexWriter.entries);
             meta.writeLong(termIndexWriter.termOffsetPointer);
             meta.writeLong(termIndexWriter.blockAddressPointer);
+
+            long saved = termsOut.totalOutBytes - termsOut.totalInBytes;
+            LOGGER.info("--> field {} in {} out {} saved {}", field, termsOut.totalInBytes, termsOut.totalInBytes, saved);
         }
         meta.writeByte((byte) -1); // no more fields
         CodecUtil.writeFooter(meta);
@@ -183,6 +189,7 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
         if (prox != null) {
             CodecUtil.writeFooter(prox);
         }
+
     }
 
     private void flushBlock(int numPending, ZstdDataOutput termsOut, ByteBuffersDataOutput postingsOut) throws IOException {
@@ -411,6 +418,8 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
     static final class ZstdDataOutput extends DataOutput {
         private final BytesRefBuilder raw = new BytesRefBuilder();
         private final BytesRefBuilder compressed = new BytesRefBuilder();
+        private  long totalInBytes;
+        private  long totalOutBytes;
 
         @Override
         public void writeByte(byte b) {
@@ -424,7 +433,9 @@ final class ES814InlineFieldsConsumer extends FieldsConsumer {
 
         void compress() {
             compressed.setLength(0);
+            totalInBytes += raw.length();
             Zstd.compress(raw, compressed, ZSTD_COMPRESSION_LEVEL);
+            totalOutBytes += compressed.length();
             raw.setLength(0);
         }
 
