@@ -35,7 +35,6 @@ import java.util.Set;
 
 import static org.elasticsearch.test.MapMatcher.assertMap;
 import static org.elasticsearch.test.MapMatcher.matchesMap;
-import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.both;
 import static org.hamcrest.Matchers.either;
 import static org.hamcrest.Matchers.emptyIterable;
@@ -59,7 +58,6 @@ public class EsqlActionTaskIT extends AbstractPausableIntegTestCase {
 
     private String READ_DESCRIPTION;
     private String MERGE_DESCRIPTION;
-    private String REDUCE_DESCRIPTION;
 
     @Before
     public void setup() {
@@ -75,9 +73,6 @@ public class EsqlActionTaskIT extends AbstractPausableIntegTestCase {
             \\_ProjectOperator[projection = [0]]
             \\_LimitOperator[limit = 1000]
             \\_OutputOperator[columns = [sum(pause_me)]]""";
-        REDUCE_DESCRIPTION = """
-            \\_ExchangeSourceOperator[]
-            \\_ExchangeSinkOperator""";
     }
 
     public void testTaskContents() throws Exception {
@@ -141,7 +136,7 @@ public class EsqlActionTaskIT extends AbstractPausableIntegTestCase {
             assertThat(luceneSources, greaterThanOrEqualTo(1));
             assertThat(valuesSourceReaders, equalTo(1));
             assertThat(exchangeSinks, greaterThanOrEqualTo(1));
-            assertThat(exchangeSources, equalTo(2));
+            assertThat(exchangeSources, equalTo(1));
         } finally {
             scriptPermits.release(numberOfDocs());
             try (EsqlQueryResponse esqlResponse = response.get()) {
@@ -238,12 +233,12 @@ public class EsqlActionTaskIT extends AbstractPausableIntegTestCase {
                 .setDetailed(true)
                 .get()
                 .getTasks();
-            assertThat(tasks, hasSize(equalTo(3)));
+            assertThat(tasks, hasSize(equalTo(2)));
             for (TaskInfo task : tasks) {
                 assertThat(task.action(), equalTo(DriverTaskRunner.ACTION_NAME));
                 DriverStatus status = (DriverStatus) task.status();
                 logger.info("task {} {}", task.description(), status);
-                assertThat(task.description(), anyOf(equalTo(READ_DESCRIPTION), equalTo(MERGE_DESCRIPTION), equalTo(REDUCE_DESCRIPTION)));
+                assertThat(task.description(), either(equalTo(READ_DESCRIPTION)).or(equalTo(MERGE_DESCRIPTION)));
                 /*
                  * Accept tasks that are either starting or have gone
                  * immediately async. The coordinating task is likely
@@ -270,11 +265,11 @@ public class EsqlActionTaskIT extends AbstractPausableIntegTestCase {
                 .setDetailed(true)
                 .get()
                 .getTasks();
-            assertThat(tasks, hasSize(equalTo(3)));
+            assertThat(tasks, hasSize(equalTo(2)));
             for (TaskInfo task : tasks) {
                 assertThat(task.action(), equalTo(DriverTaskRunner.ACTION_NAME));
                 DriverStatus status = (DriverStatus) task.status();
-                assertThat(task.description(), anyOf(equalTo(READ_DESCRIPTION), equalTo(MERGE_DESCRIPTION), equalTo(REDUCE_DESCRIPTION)));
+                assertThat(task.description(), either(equalTo(READ_DESCRIPTION)).or(equalTo(MERGE_DESCRIPTION)));
                 if (task.description().equals(READ_DESCRIPTION)) {
                     assertThat(status.status(), equalTo(DriverStatus.Status.RUNNING));
                 } else {
