@@ -39,7 +39,6 @@ import java.util.Objects;
  * will poll pages from this sink. Internally, this compute will trigger sub-computes on data nodes via {@link DataNodeRequest}.
  */
 final class ClusterComputeRequest extends TransportRequest implements IndicesRequest {
-    private static final PlanNameRegistry planNameRegistry = new PlanNameRegistry();
     private final String clusterAlias;
     private final String sessionId;
     private final EsqlConfiguration configuration;
@@ -82,7 +81,7 @@ final class ClusterComputeRequest extends TransportRequest implements IndicesReq
             // TODO make EsqlConfiguration Releasable
             new BlockStreamInput(in, new BlockFactory(new NoopCircuitBreaker(CircuitBreaker.REQUEST), BigArrays.NON_RECYCLING_INSTANCE))
         );
-        this.plan = new PlanStreamInput(in, planNameRegistry, in.namedWriteableRegistry(), configuration).readPhysicalPlanNode();
+        this.plan = new PlanStreamInput(in, PlanNameRegistry.INSTANCE, in.namedWriteableRegistry(), configuration).readPhysicalPlanNode();
         this.indices = in.readStringArray();
         this.originalIndices = in.readStringArray();
     }
@@ -93,7 +92,7 @@ final class ClusterComputeRequest extends TransportRequest implements IndicesReq
         out.writeString(clusterAlias);
         out.writeString(sessionId);
         configuration.writeTo(out);
-        new PlanStreamOutput(out, planNameRegistry, configuration).writePhysicalPlanNode(plan);
+        new PlanStreamOutput(out, PlanNameRegistry.INSTANCE, configuration).writePhysicalPlanNode(plan);
         out.writeStringArray(indices);
         out.writeStringArray(originalIndices);
     }

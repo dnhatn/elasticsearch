@@ -61,8 +61,9 @@ public final class ExchangeService extends AbstractLifecycleComponent {
      * The time interval for an exchange sink handler to be considered inactive and subsequently
      * removed from the exchange service if no sinks are attached (i.e., no computation uses that sink handler).
      */
-    public static final String INACTIVE_SINKS_INTERVAL_SETTING = "esql.exchange.sink_inactive_interval";
-    public static final TimeValue INACTIVE_SINKS_INTERVAL_DEFAULT = TimeValue.timeValueMinutes(5);
+    public static final String KEEP_ALIVE_INTERVAL_SETTING = "esql.exchange.keep_alive_interval";
+    public static final TimeValue KEEP_ALIVE_DEFAULT_INTERVAL = TimeValue.timeValueSeconds(30);
+    private final TimeValue keepAliveInterval;
 
     private static final Logger LOGGER = LogManager.getLogger(ExchangeService.class);
 
@@ -76,11 +77,11 @@ public final class ExchangeService extends AbstractLifecycleComponent {
         this.threadPool = threadPool;
         this.executor = threadPool.executor(executorName);
         this.blockFactory = blockFactory;
-        final var inactiveInterval = settings.getAsTime(INACTIVE_SINKS_INTERVAL_SETTING, INACTIVE_SINKS_INTERVAL_DEFAULT);
+        this.keepAliveInterval = settings.getAsTime(KEEP_ALIVE_INTERVAL_SETTING, KEEP_ALIVE_DEFAULT_INTERVAL);
         // Run the reaper every half of the keep_alive interval
         this.threadPool.scheduleWithFixedDelay(
-            new InactiveSinksReaper(LOGGER, threadPool, inactiveInterval),
-            TimeValue.timeValueMillis(Math.max(1, inactiveInterval.millis() / 2)),
+            new InactiveSinksReaper(LOGGER, threadPool, keepAliveInterval),
+            TimeValue.timeValueMillis(Math.max(1, keepAliveInterval.millis() / 2)),
             executor
         );
     }
@@ -107,6 +108,14 @@ public final class ExchangeService extends AbstractLifecycleComponent {
             OpenExchangeRequest::new,
             new OpenExchangeRequestHandler()
         );
+    }
+
+    /**
+     * Creates an {@link ExchangeSourceHandler}
+     */
+    public ExchangeSourceHandler createSourceHandler(int maxBufferSize) {
+        final TimeValue maxPausedInterval = TimeValue.timeValueMillis(keepAliveInterval.millis() / 2);
+        return new ExchangeSourceHandler(maxBufferSize, threadPool, executor, maxPausedInterval);
     }
 
     /**
@@ -209,7 +218,7 @@ public final class ExchangeService extends AbstractLifecycleComponent {
             } else {
                 final CancellableTask task = (CancellableTask) exchangeTask;
                 task.addListener(() -> sinkHandler.onFailure(new TaskCancelledException("request cancelled " + task.getReasonCancelled())));
-                sinkHandler.fetchPageAsync(request.sourcesFinished(), listener);
+                sinkHandler.fetchPageAsync(request.fetchOptions(), listener);
             }
         }
     }
@@ -310,7 +319,7 @@ public final class ExchangeService extends AbstractLifecycleComponent {
         }
 
         @Override
-        public void fetchPageAsync(boolean allSourcesFinished, ActionListener<ExchangeResponse> listener) {
+        public void fetchPageAsync(FetchOptions fetchOptions, ActionListener<ExchangeResponse> listener) {
             final long reservedBytes = estimatedPageSizeInBytes.get();
             if (reservedBytes > 0) {
                 // This doesn't fully protect ESQL from OOM, but reduces the likelihood.
@@ -320,7 +329,7 @@ public final class ExchangeService extends AbstractLifecycleComponent {
             transportService.sendChildRequest(
                 connection,
                 EXCHANGE_ACTION_NAME,
-                new ExchangeRequest(exchangeId, allSourcesFinished),
+                new ExchangeRequest(exchangeId, fetchOptions),
                 parentTask,
                 TransportRequestOptions.EMPTY,
                 new ActionListenerResponseHandler<>(listener, in -> {

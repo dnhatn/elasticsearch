@@ -195,10 +195,7 @@ public class ComputeService {
         listener = ActionListener.runBefore(listener, responseHeadersCollector::finish);
         final AtomicBoolean cancelled = new AtomicBoolean();
         final List<DriverProfile> collectedProfiles = configuration.profile() ? Collections.synchronizedList(new ArrayList<>()) : List.of();
-        final var exchangeSource = new ExchangeSourceHandler(
-            queryPragmas.exchangeBufferSize(),
-            transportService.getThreadPool().executor(ThreadPool.Names.SEARCH)
-        );
+        final var exchangeSource = exchangeService.createSourceHandler(queryPragmas.exchangeBufferSize());
         try (
             Releasable ignored = exchangeSource.addEmptySink();
             RefCountingListener refs = new RefCountingListener(listener.map(unused -> new Result(collectedPages, collectedProfiles)))
@@ -713,7 +710,7 @@ public class ComputeService {
             // run the node-level reduction
             var externalSink = exchangeService.getSinkHandler(externalId);
             task.addListener(() -> exchangeService.finishSinkHandler(externalId, new TaskCancelledException(task.getReasonCancelled())));
-            var exchangeSource = new ExchangeSourceHandler(1, esqlExecutor);
+            var exchangeSource = exchangeService.createSourceHandler(1);
             exchangeSource.addCompletionListener(listenerRefs.acquire());
             exchangeSource.addRemoteSink(internalSink::fetchPageAsync, 1);
             ActionListener<Void> reductionListener = cancelOnFailure(task, cancelled, listenerRefs.acquire());
@@ -840,10 +837,7 @@ public class ComputeService {
         final AtomicBoolean cancelled = new AtomicBoolean();
         final List<DriverProfile> collectedProfiles = configuration.profile() ? Collections.synchronizedList(new ArrayList<>()) : List.of();
         final String localSessionId = clusterAlias + ":" + globalSessionId;
-        var exchangeSource = new ExchangeSourceHandler(
-            configuration.pragmas().exchangeBufferSize(),
-            transportService.getThreadPool().executor(ThreadPool.Names.SEARCH)
-        );
+        var exchangeSource = exchangeService.createSourceHandler(configuration.pragmas().exchangeBufferSize());
         try (
             Releasable ignored = exchangeSource.addEmptySink();
             RefCountingListener refs = new RefCountingListener(listener.map(unused -> new ComputeResponse(collectedProfiles)))

@@ -14,7 +14,6 @@ import org.elasticsearch.cluster.coordination.Coordinator;
 import org.elasticsearch.cluster.coordination.FollowersChecker;
 import org.elasticsearch.cluster.coordination.LeaderChecker;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.health.node.selection.HealthNode;
 import org.elasticsearch.plugins.Plugin;
@@ -49,11 +48,7 @@ public class EsqlDisruptionIT extends EsqlActionIT {
 
     @Override
     protected Settings nodeSettings(int nodeOrdinal, Settings otherSettings) {
-        Settings settings = Settings.builder()
-            .put(super.nodeSettings(nodeOrdinal, otherSettings))
-            .put(DEFAULT_SETTINGS)
-            .put(ExchangeService.INACTIVE_SINKS_INTERVAL_SETTING, TimeValue.timeValueMillis(between(1000, 2000)))
-            .build();
+        Settings settings = Settings.builder().put(super.nodeSettings(nodeOrdinal, otherSettings)).put(DEFAULT_SETTINGS).build();
         logger.info("settings {}", settings);
         return settings;
     }

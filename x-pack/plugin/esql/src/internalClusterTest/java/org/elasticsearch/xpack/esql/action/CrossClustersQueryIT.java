@@ -62,11 +62,7 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
         @Override
         public List<Setting<?>> getSettings() {
             return List.of(
-                Setting.timeSetting(
-                    ExchangeService.INACTIVE_SINKS_INTERVAL_SETTING,
-                    TimeValue.timeValueSeconds(30),
-                    Setting.Property.NodeScope
-                )
+                Setting.timeSetting(ExchangeService.KEEP_ALIVE_INTERVAL_SETTING, TimeValue.timeValueSeconds(3), Setting.Property.NodeScope)
             );
         }
     }

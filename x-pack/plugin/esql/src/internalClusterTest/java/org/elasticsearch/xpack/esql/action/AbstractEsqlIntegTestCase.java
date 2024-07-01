@@ -81,11 +81,7 @@ public abstract class AbstractEsqlIntegTestCase extends ESIntegTestCase {
         @Override
         public List<Setting<?>> getSettings() {
             return List.of(
-                Setting.timeSetting(
-                    ExchangeService.INACTIVE_SINKS_INTERVAL_SETTING,
-                    TimeValue.timeValueSeconds(5),
-                    Setting.Property.NodeScope
-                ),
+                Setting.timeSetting(ExchangeService.KEEP_ALIVE_INTERVAL_SETTING, TimeValue.timeValueSeconds(3), Setting.Property.NodeScope),
                 Setting.byteSizeSetting(
                     BlockFactory.LOCAL_BREAKER_OVER_RESERVED_SIZE_SETTING,
                     ByteSizeValue.ofBytes(randomIntBetween(0, 4096)),

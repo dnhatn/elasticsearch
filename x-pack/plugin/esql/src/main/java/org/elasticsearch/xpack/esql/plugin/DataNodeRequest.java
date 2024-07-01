@@ -37,7 +37,6 @@ import java.util.Map;
 import java.util.Objects;
 
 final class DataNodeRequest extends TransportRequest implements IndicesRequest {
-    private static final PlanNameRegistry planNameRegistry = new PlanNameRegistry();
     private final String sessionId;
     private final EsqlConfiguration configuration;
     private final String clusterAlias;
@@ -77,7 +76,7 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest {
         }
         this.shardIds = in.readCollectionAsList(ShardId::new);
         this.aliasFilters = in.readMap(Index::new, AliasFilter::readFrom);
-        this.plan = new PlanStreamInput(in, planNameRegistry, in.namedWriteableRegistry(), configuration).readPhysicalPlanNode();
+        this.plan = new PlanStreamInput(in, PlanNameRegistry.INSTANCE, in.namedWriteableRegistry(), configuration).readPhysicalPlanNode();
     }
 
     @Override
@@ -90,7 +89,7 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest {
         }
         out.writeCollection(shardIds);
         out.writeMap(aliasFilters);
-        new PlanStreamOutput(out, planNameRegistry, configuration).writePhysicalPlanNode(plan);
+        new PlanStreamOutput(out, PlanNameRegistry.INSTANCE, configuration).writePhysicalPlanNode(plan);
     }
 
     @Override

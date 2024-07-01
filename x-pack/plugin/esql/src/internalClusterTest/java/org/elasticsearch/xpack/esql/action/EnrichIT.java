@@ -20,8 +20,6 @@ import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.compute.operator.DriverStatus;
-import org.elasticsearch.compute.operator.exchange.ExchangeService;
-import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.indices.breaker.HierarchyCircuitBreakerService;
 import org.elasticsearch.ingest.common.IngestCommonPlugin;
 import org.elasticsearch.license.LicenseService;
@@ -111,7 +109,6 @@ public class EnrichIT extends AbstractEsqlIntegTestCase {
                 HierarchyCircuitBreakerService.REQUEST_CIRCUIT_BREAKER_TYPE_SETTING.getKey(),
                 HierarchyCircuitBreakerService.REQUEST_CIRCUIT_BREAKER_TYPE_SETTING.getDefault(Settings.EMPTY)
             )
-            .put(ExchangeService.INACTIVE_SINKS_INTERVAL_SETTING, TimeValue.timeValueMillis(between(500, 2000)))
             .put(BlockFactory.LOCAL_BREAKER_OVER_RESERVED_SIZE_SETTING, ByteSizeValue.ofBytes(between(0, 256)))
             .put(BlockFactory.LOCAL_BREAKER_OVER_RESERVED_MAX_SIZE_SETTING, ByteSizeValue.ofBytes(between(0, 1024)))
             // allow reading pages from network can trip the circuit breaker

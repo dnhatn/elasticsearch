@@ -20,32 +20,31 @@ import java.util.Objects;
 
 public final class ExchangeRequest extends TransportRequest {
     private final String exchangeId;
-    private final boolean sourcesFinished;
+    private final FetchOptions fetchOptions;
 
-    public ExchangeRequest(String exchangeId, boolean sourcesFinished) {
+    public ExchangeRequest(String exchangeId, FetchOptions fetchOptions) {
         this.exchangeId = exchangeId;
-        this.sourcesFinished = sourcesFinished;
+        this.fetchOptions = fetchOptions;
     }
 
     public ExchangeRequest(StreamInput in) throws IOException {
         super(in);
         this.exchangeId = in.readString();
-        this.sourcesFinished = in.readBoolean();
+        this.fetchOptions = new FetchOptions(in);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeString(exchangeId);
-        out.writeBoolean(sourcesFinished);
+        fetchOptions.writeTo(out);
     }
 
     /**
-     * True if the {@link ExchangeSourceHandler} has enough input.
-     * The corresponding {@link ExchangeSinkHandler} can drain pages and finish itself.
+     * Returns the fetch options of this exchange request
      */
-    public boolean sourcesFinished() {
-        return sourcesFinished;
+    public FetchOptions fetchOptions() {
+        return fetchOptions;
     }
 
     /**
@@ -60,12 +59,12 @@ public final class ExchangeRequest extends TransportRequest {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         ExchangeRequest that = (ExchangeRequest) o;
-        return sourcesFinished == that.sourcesFinished && exchangeId.equals(that.exchangeId);
+        return fetchOptions.equals(that.fetchOptions) && exchangeId.equals(that.exchangeId);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(exchangeId, sourcesFinished);
+        return Objects.hash(exchangeId, fetchOptions);
     }
 
     @Override

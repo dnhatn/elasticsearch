@@ -15,11 +15,15 @@ import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.core.Releasable;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.tasks.TaskCancelledException;
+import org.elasticsearch.threadpool.Scheduler;
+import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportException;
 
 import java.util.List;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -33,15 +37,19 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class ExchangeSourceHandler {
     private final ExchangeBuffer buffer;
+    private final ThreadPool threadPool;
     private final Executor fetchExecutor;
+    private final TimeValue maxPausedInterval;
 
     private final PendingInstances outstandingSinks;
     private final PendingInstances outstandingSources;
     private final AtomicReference<Exception> failure = new AtomicReference<>();
 
-    public ExchangeSourceHandler(int maxBufferSize, Executor fetchExecutor) {
+    public ExchangeSourceHandler(int maxBufferSize, ThreadPool threadPool, Executor fetchExecutor, TimeValue maxPausedInterval) {
         this.buffer = new ExchangeBuffer(maxBufferSize);
+        this.threadPool = threadPool;
         this.fetchExecutor = fetchExecutor;
+        this.maxPausedInterval = maxPausedInterval;
         this.outstandingSinks = new PendingInstances(() -> buffer.finish(false));
         this.outstandingSources = new PendingInstances(() -> buffer.finish(true));
     }
@@ -158,48 +166,18 @@ public final class ExchangeSourceHandler {
     /**
      * Wraps {@link RemoteSink} with a fetch loop and error handling
      */
-    private final class RemoteSinkFetcher {
-        private volatile boolean finished = false;
+    private final class RemoteSinkFetcher extends AbstractRunnable {
+        private final AtomicBoolean finished = new AtomicBoolean();
         private final RemoteSink remoteSink;
+        private volatile Scheduler.ScheduledCancellable keepAlive;
 
         RemoteSinkFetcher(RemoteSink remoteSink) {
             outstandingSinks.trackNewInstance();
             this.remoteSink = remoteSink;
         }
 
-        void fetchPage() {
-            final LoopControl loopControl = new LoopControl();
-            while (loopControl.isRunning()) {
-                loopControl.exiting();
-                // finish other sinks if one of them failed or source no longer need pages.
-                boolean toFinishSinks = buffer.noMoreInputs() || failure.get() != null;
-                remoteSink.fetchPageAsync(toFinishSinks, ActionListener.wrap(resp -> {
-                    Page page = resp.takePage();
-                    if (page != null) {
-                        buffer.addPage(page);
-                    }
-                    if (resp.finished()) {
-                        onSinkComplete();
-                    } else {
-                        SubscribableListener<Void> future = buffer.waitForWriting();
-                        if (future.isDone()) {
-                            if (loopControl.tryResume() == false) {
-                                fetchPage();
-                            }
-                        } else {
-                            future.addListener(ActionListener.wrap(unused -> {
-                                if (loopControl.tryResume() == false) {
-                                    fetchPage();
-                                }
-                            }, this::onSinkFailed));
-                        }
-                    }
-                }, this::onSinkFailed));
-            }
-            loopControl.exited();
-        }
-
-        void onSinkFailed(Exception originEx) {
+        @Override
+        public void onFailure(Exception originEx) {
             final Exception e = originEx instanceof TransportException
                 ? (originEx.getCause() instanceof Exception cause ? cause : new ElasticsearchException(originEx.getCause()))
                 : originEx;
@@ -219,13 +197,89 @@ public final class ExchangeSourceHandler {
                 }
                 return first;
             });
-            buffer.waitForReading().onResponse(null); // resume the Driver if it is being blocked on reading
             onSinkComplete();
         }
 
+        @Override
+        protected void doRun() {
+            final LoopControl loopControl = new LoopControl();
+            while (loopControl.isRunning()) {
+                loopControl.exiting();
+                if (finished.get()) {
+                    onSinkComplete();
+                    return;
+                }
+                remoteSink.fetchPageAsync(new FetchOptions(toFinishRemoteSinks(), false), ActionListener.wrap(resp -> {
+                    Page page = resp.takePage();
+                    if (page != null) {
+                        buffer.addPage(page);
+                    }
+                    if (resp.finished()) {
+                        onSinkComplete();
+                    } else {
+                        SubscribableListener<Void> future = buffer.waitForWriting();
+                        if (future.isDone()) {
+                            if (loopControl.tryResume() == false) {
+                                run();
+                            }
+                        } else {
+                            future.addListener(ActionListener.wrap(unused -> {
+                                var keepAlive = this.keepAlive;
+                                if (keepAlive != null) {
+                                    keepAlive.cancel();
+                                    this.keepAlive = null;
+                                }
+                                if (loopControl.tryResume() == false) {
+                                    run();
+                                }
+                            }, this::onFailure));
+                            scheduleKeepAlive(future);
+                        }
+                    }
+                }, this::onFailure));
+            }
+            loopControl.exited();
+        }
+
+        void scheduleKeepAlive(SubscribableListener<Void> blockingFuture) {
+
+            keepAlive = threadPool.schedule(new AbstractRunnable() {
+                @Override
+                public void onFailure(Exception e) {
+                    RemoteSinkFetcher.this.onFailure(e);
+                }
+
+                @Override
+                public void onRejection(Exception e) {
+                    // waits for the backpressure resumes the execution
+                }
+
+                @Override
+                protected void doRun() {
+                    remoteSink.fetchPageAsync(new FetchOptions(toFinishRemoteSinks(), true), ActionListener.wrap(resp -> {
+                        Page page = resp.takePage();
+                        if (page != null) {
+                            buffer.addPage(page);
+                        }
+                        if (resp.finished()) {
+                            onSinkComplete();
+                        } else if (blockingFuture.isDone() == false) {
+                            scheduleKeepAlive(blockingFuture);
+                        }
+                    }, RemoteSinkFetcher.this::onFailure));
+                }
+            }, maxPausedInterval, fetchExecutor);
+        }
+
+        boolean toFinishRemoteSinks() {
+            // finish other sinks if one of them failed or source no longer need pages.
+            return buffer.noMoreInputs() || failure.get() != null;
+        }
+
         void onSinkComplete() {
-            if (finished == false) {
-                finished = true;
+            buffer.waitForReading().onResponse(null);
+            buffer.waitForWriting().onResponse(null);
+            if (finished.compareAndSet(false, true)) {
                 outstandingSinks.finishInstance();
             }
         }
@@ -237,22 +291,12 @@ public final class ExchangeSourceHandler {
      * @param remoteSink the remote sink
      * @param instances  the number of concurrent ``clients`` that this handler should use to fetch pages. More clients reduce latency,
      *                   but add overhead.
-     * @see ExchangeSinkHandler#fetchPageAsync(boolean, ActionListener)
+     * @see ExchangeSinkHandler#fetchPageAsync(FetchOptions, ActionListener)
      */
     public void addRemoteSink(RemoteSink remoteSink, int instances) {
         for (int i = 0; i < instances; i++) {
-            var fetcher = new RemoteSinkFetcher(remoteSink);
-            fetchExecutor.execute(new AbstractRunnable() {
-                @Override
-                public void onFailure(Exception e) {
-                    fetcher.onSinkFailed(e);
-                }
-
-                @Override
-                protected void doRun() {
-                    fetcher.fetchPage();
-                }
-            });
+            RemoteSinkFetcher fetcher = new RemoteSinkFetcher(remoteSink);
+            fetchExecutor.execute(fetcher);
         }
     }
 

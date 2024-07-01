@@ -11,5 +11,5 @@ import org.elasticsearch.action.ActionListener;
 
 public interface RemoteSink {
 
-    void fetchPageAsync(boolean allSourcesFinished, ActionListener<ExchangeResponse> listener);
+    void fetchPageAsync(FetchOptions fetchOptions, ActionListener<ExchangeResponse> listener);
 }

@@ -22,10 +22,10 @@ import java.util.function.LongSupplier;
 /**
  * An {@link ExchangeSinkHandler} receives pages and status from its {@link ExchangeSink}s, which are created using
  * {@link #createExchangeSink()}} method. Pages and status can then be retrieved asynchronously by {@link ExchangeSourceHandler}s
- * using the {@link #fetchPageAsync(boolean, ActionListener)} method.
+ * using the {@link #fetchPageAsync(FetchOptions, ActionListener)} method.
  *
  * @see #createExchangeSink()
- * @see #fetchPageAsync(boolean, ActionListener)
+ * @see #fetchPageAsync(FetchOptions, ActionListener)
  * @see ExchangeSourceHandler
  */
 public final class ExchangeSinkHandler {
@@ -34,7 +34,7 @@ public final class ExchangeSinkHandler {
     private final Queue<ActionListener<ExchangeResponse>> listeners = new ConcurrentLinkedQueue<>();
     private final AtomicInteger outstandingSinks = new AtomicInteger();
     // listeners are notified by only one thread.
-    private final Semaphore promised = new Semaphore(1);
+    private final Semaphore notifyPromised = new Semaphore(1);
 
     private final SubscribableListener<Void> completionFuture;
     private final LongSupplier nowInMillis;
@@ -89,18 +89,22 @@ public final class ExchangeSinkHandler {
     /**
      * Fetches pages and the sink status asynchronously.
      *
-     * @param sourceFinished if true, then this handler can finish as sources have enough pages.
-     * @param listener       the listener that will be notified when pages are ready or this handler is finished
+     * @param fetchOptions the fetch options
+     * @param listener     the listener that will be notified when pages are ready or this handler is finished
      * @see RemoteSink
      * @see ExchangeSourceHandler#addRemoteSink(RemoteSink, int)
      */
-    public void fetchPageAsync(boolean sourceFinished, ActionListener<ExchangeResponse> listener) {
-        if (sourceFinished) {
+    public void fetchPageAsync(FetchOptions fetchOptions, ActionListener<ExchangeResponse> listener) {
+        if (fetchOptions.toFinishSink()) {
             buffer.finish(true);
         }
-        listeners.add(listener);
         onChanged();
-        notifyListeners();
+        if (fetchOptions.keepAliveOnly()) {
+            listener.onResponse(new ExchangeResponse(blockFactory, null, buffer.isFinished()));
+        } else {
+            listeners.add(listener);
+            notifyListeners();
+        }
     }
 
     /**
@@ -129,7 +133,7 @@ public final class ExchangeSinkHandler {
 
     private void notifyListeners() {
         while (listeners.isEmpty() == false && (buffer.size() > 0 || buffer.noMoreInputs())) {
-            if (promised.tryAcquire() == false) {
+            if (notifyPromised.tryAcquire() == false) {
                 break;
             }
             final ActionListener<ExchangeResponse> listener;
@@ -142,10 +146,10 @@ public final class ExchangeSinkHandler {
                 }
                 response = new ExchangeResponse(blockFactory, buffer.pollPage(), buffer.isFinished());
             } finally {
-                promised.release();
+                notifyPromised.release();
             }
-            onChanged();
             ActionListener.respondAndRelease(listener, response);
+            onChanged();
         }
     }
 
@@ -166,10 +170,19 @@ public final class ExchangeSinkHandler {
     }
 
     /**
-     * Whether this sink handler has listeners waiting for data
+     * Checks whether this sink handler has listeners waiting for data.
      */
     boolean hasListeners() {
-        return listeners.isEmpty() == false;
+        if (notifyPromised.tryAcquire()) {
+            try {
+                return listeners.isEmpty() == false;
+            } finally {
+                notifyPromised.release();
+            }
+        } else {
+            // If another thread is holding the notify semaphore, it's safe to return true for having listeners
+            return true;
+        }
     }
 
     private void onChanged() {
@@ -179,7 +192,7 @@ public final class ExchangeSinkHandler {
     /**
      * The time in millis when this sink handler was updated. This timestamp is used to prune idle sinks.
      *
-     * @see ExchangeService#INACTIVE_SINKS_INTERVAL_SETTING
+     * @see ExchangeService#KEEP_ALIVE_INTERVAL_SETTING
      */
     long lastUpdatedTimeInMillis() {
         return lastUpdatedInMillis.get();
