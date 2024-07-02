@@ -38,7 +38,8 @@ public final class ExchangeSinkHandler {
 
     private final SubscribableListener<Void> completionFuture;
     private final LongSupplier nowInMillis;
-    private final AtomicLong lastUpdatedInMillis;
+    private final long createdTimeInMillis;
+    private final AtomicLong lastFetchedTimeInMillis;
     private final BlockFactory blockFactory;
 
     public ExchangeSinkHandler(BlockFactory blockFactory, int maxBufferSize, LongSupplier nowInMillis) {
@@ -46,14 +47,14 @@ public final class ExchangeSinkHandler {
         this.buffer = new ExchangeBuffer(maxBufferSize);
         this.completionFuture = SubscribableListener.newForked(buffer::addCompletionListener);
         this.nowInMillis = nowInMillis;
-        this.lastUpdatedInMillis = new AtomicLong(nowInMillis.getAsLong());
+        this.createdTimeInMillis = nowInMillis.getAsLong();
+        this.lastFetchedTimeInMillis = new AtomicLong(nowInMillis.getAsLong());
     }
 
     private class ExchangeSinkImpl implements ExchangeSink {
         boolean finished;
 
         ExchangeSinkImpl() {
-            onChanged();
             outstandingSinks.incrementAndGet();
         }
 
@@ -67,7 +68,6 @@ public final class ExchangeSinkHandler {
         public void finish() {
             if (finished == false) {
                 finished = true;
-                onChanged();
                 if (outstandingSinks.decrementAndGet() == 0) {
                     buffer.finish(false);
                     notifyListeners();
@@ -95,10 +95,10 @@ public final class ExchangeSinkHandler {
      * @see ExchangeSourceHandler#addRemoteSink(RemoteSink, int)
      */
     public void fetchPageAsync(FetchOptions fetchOptions, ActionListener<ExchangeResponse> listener) {
+        updateListenersAccessTime();
         if (fetchOptions.toFinishSink()) {
             buffer.finish(true);
         }
-        onChanged();
         if (fetchOptions.keepAliveOnly()) {
             listener.onResponse(new ExchangeResponse(blockFactory, null, buffer.isFinished()));
         } else {
@@ -149,7 +149,6 @@ public final class ExchangeSinkHandler {
                 notifyPromised.release();
             }
             ActionListener.respondAndRelease(listener, response);
-            onChanged();
         }
     }
 
@@ -162,17 +161,11 @@ public final class ExchangeSinkHandler {
         return new ExchangeSinkImpl();
     }
 
-    /**
-     * Whether this sink handler has sinks attached or available pages
-     */
-    boolean hasData() {
-        return outstandingSinks.get() > 0 || buffer.size() > 0;
+    private void updateListenersAccessTime() {
+        lastFetchedTimeInMillis.accumulateAndGet(nowInMillis.getAsLong(), Math::max);
     }
 
-    /**
-     * Checks whether this sink handler has listeners waiting for data.
-     */
-    boolean hasListeners() {
+    private boolean hasListeners() {
         if (notifyPromised.tryAcquire()) {
             try {
                 return listeners.isEmpty() == false;
@@ -185,17 +178,25 @@ public final class ExchangeSinkHandler {
         }
     }
 
-    private void onChanged() {
-        lastUpdatedInMillis.accumulateAndGet(nowInMillis.getAsLong(), Math::max);
-    }
-
     /**
-     * The time in millis when this sink handler was updated. This timestamp is used to prune idle sinks.
+     * The time in millis when this sink handler was accessed. This timestamp is used to prune idle sinks.
      *
      * @see ExchangeService#KEEP_ALIVE_INTERVAL_SETTING
      */
-    long lastUpdatedTimeInMillis() {
-        return lastUpdatedInMillis.get();
+    boolean isInactive(long keepAliveMillis) {
+        final boolean hasSinks = outstandingSinks.get() > 0 || buffer.size() > 0 || buffer.isFinished();
+        final long lastAccessedTimeInMillis;
+        if (hasSinks) {
+            if (hasListeners()) {
+                System.err.println("--> has listeners and sink mark as active ");
+                return false;
+            }
+            lastAccessedTimeInMillis = lastFetchedTimeInMillis.get();
+        } else {
+            lastAccessedTimeInMillis = createdTimeInMillis;
+        }
+        final long elapsed = nowInMillis.getAsLong() - lastAccessedTimeInMillis;
+        return elapsed > keepAliveMillis;
     }
 
     /**

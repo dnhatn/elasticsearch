@@ -62,7 +62,7 @@ public final class ExchangeService extends AbstractLifecycleComponent {
      * removed from the exchange service if no sinks are attached (i.e., no computation uses that sink handler).
      */
     public static final String KEEP_ALIVE_INTERVAL_SETTING = "esql.exchange.keep_alive_interval";
-    public static final TimeValue KEEP_ALIVE_DEFAULT_INTERVAL = TimeValue.timeValueSeconds(30);
+    public static final TimeValue KEEP_ALIVE_DEFAULT_INTERVAL = TimeValue.timeValueSeconds(10);
     private final TimeValue keepAliveInterval;
 
     private static final Logger LOGGER = LogManager.getLogger(ExchangeService.class);
@@ -79,6 +79,7 @@ public final class ExchangeService extends AbstractLifecycleComponent {
         this.blockFactory = blockFactory;
         this.keepAliveInterval = settings.getAsTime(KEEP_ALIVE_INTERVAL_SETTING, KEEP_ALIVE_DEFAULT_INTERVAL);
         // Run the reaper every half of the keep_alive interval
+        System.err.println("--> keep alive interval: " + keepAliveInterval);
         this.threadPool.scheduleWithFixedDelay(
             new InactiveSinksReaper(LOGGER, threadPool, keepAliveInterval),
             TimeValue.timeValueMillis(Math.max(1, keepAliveInterval.millis() / 2)),
@@ -259,21 +260,12 @@ public final class ExchangeService extends AbstractLifecycleComponent {
         protected void doRun() {
             assert Transports.assertNotTransportThread("reaping inactive exchanges can be expensive");
             assert ThreadPool.assertNotScheduleThread("reaping inactive exchanges can be expensive");
-            final long nowInMillis = threadPool.relativeTimeInMillis();
             for (Map.Entry<String, ExchangeSinkHandler> e : sinks.entrySet()) {
                 ExchangeSinkHandler sink = e.getValue();
-                if (sink.hasData() && sink.hasListeners()) {
-                    continue;
-                }
-                long elapsed = nowInMillis - sink.lastUpdatedTimeInMillis();
-                if (elapsed > keepAlive.millis()) {
+                if (sink.isInactive(keepAlive.millis())) {
                     finishSinkHandler(
                         e.getKey(),
-                        new ElasticsearchTimeoutException(
-                            "Exchange sink {} has been inactive for {}",
-                            e.getKey(),
-                            TimeValue.timeValueMillis(elapsed)
-                        )
+                        new ElasticsearchTimeoutException("Exchange sink {} has been inactive more than {}", e.getKey(), keepAlive)
                     );
                 }
             }

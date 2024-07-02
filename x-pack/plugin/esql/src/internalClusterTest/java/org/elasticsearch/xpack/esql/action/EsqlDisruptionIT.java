@@ -14,6 +14,9 @@ import org.elasticsearch.cluster.coordination.Coordinator;
 import org.elasticsearch.cluster.coordination.FollowersChecker;
 import org.elasticsearch.cluster.coordination.LeaderChecker;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.compute.data.BlockFactory;
+import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.health.node.selection.HealthNode;
 import org.elasticsearch.plugins.Plugin;
@@ -48,7 +51,13 @@ public class EsqlDisruptionIT extends EsqlActionIT {
 
     @Override
     protected Settings nodeSettings(int nodeOrdinal, Settings otherSettings) {
-        Settings settings = Settings.builder().put(super.nodeSettings(nodeOrdinal, otherSettings)).put(DEFAULT_SETTINGS).build();
+        Settings settings = Settings.builder()
+            .put(super.nodeSettings(nodeOrdinal, otherSettings))
+            .put(DEFAULT_SETTINGS)
+            .put(ExchangeService.KEEP_ALIVE_INTERVAL_SETTING, TimeValue.timeValueMillis(between(3000,5000)))
+            .put(BlockFactory.LOCAL_BREAKER_OVER_RESERVED_SIZE_SETTING, ByteSizeValue.ofBytes(between(0, 256)))
+            .put(BlockFactory.LOCAL_BREAKER_OVER_RESERVED_MAX_SIZE_SETTING, ByteSizeValue.ofBytes(between(0, 1024)))
+            .build();
         logger.info("settings {}", settings);
         return settings;
     }
