@@ -268,7 +268,10 @@ public final class ExchangeService extends AbstractLifecycleComponent {
             final long nowInMillis = threadPool.relativeTimeInMillis();
             for (Map.Entry<String, ExchangeSinkHandler> e : sinks.entrySet()) {
                 ExchangeSinkHandler sink = e.getValue();
-                long elapsed = nowInMillis - sink.lastAccessedTimeInMillis();
+                if (sink.hasData() && sink.hasListeners()) {
+                    continue;
+                }
+                long elapsed = nowInMillis - sink.lastUpdatedTimeInMillis();
                 if (elapsed > keepAlive.millis()) {
                     finishSinkHandler(
                         e.getKey(),

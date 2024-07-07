@@ -34,12 +34,11 @@ public final class ExchangeSinkHandler {
     private final Queue<ActionListener<ExchangeResponse>> listeners = new ConcurrentLinkedQueue<>();
     private final AtomicInteger outstandingSinks = new AtomicInteger();
     // listeners are notified by only one thread.
-    private final Semaphore listenerPromised = new Semaphore(1);
+    private final Semaphore promised = new Semaphore(1);
 
     private final SubscribableListener<Void> completionFuture;
     private final LongSupplier nowInMillis;
-    private final long createdTimeInMillis;
-    private final AtomicLong lastFetchedInMillis;
+    private final AtomicLong lastUpdatedInMillis;
     private final BlockFactory blockFactory;
 
     public ExchangeSinkHandler(BlockFactory blockFactory, int maxBufferSize, LongSupplier nowInMillis) {
@@ -47,14 +46,14 @@ public final class ExchangeSinkHandler {
         this.buffer = new ExchangeBuffer(maxBufferSize);
         this.completionFuture = SubscribableListener.newForked(buffer::addCompletionListener);
         this.nowInMillis = nowInMillis;
-        this.createdTimeInMillis = nowInMillis.getAsLong();
-        this.lastFetchedInMillis = new AtomicLong(createdTimeInMillis);
+        this.lastUpdatedInMillis = new AtomicLong(nowInMillis.getAsLong());
     }
 
     private class ExchangeSinkImpl implements ExchangeSink {
         boolean finished;
 
         ExchangeSinkImpl() {
+            onChanged();
             outstandingSinks.incrementAndGet();
         }
 
@@ -68,6 +67,7 @@ public final class ExchangeSinkHandler {
         public void finish() {
             if (finished == false) {
                 finished = true;
+                onChanged();
                 if (outstandingSinks.decrementAndGet() == 0) {
                     buffer.finish(false);
                     notifyListeners();
@@ -98,8 +98,8 @@ public final class ExchangeSinkHandler {
         if (sourceFinished) {
             buffer.finish(true);
         }
-        updateLastFetchedInMillis();
         listeners.add(listener);
+        onChanged();
         notifyListeners();
     }
 
@@ -129,12 +129,14 @@ public final class ExchangeSinkHandler {
 
     private void notifyListeners() {
         while (listeners.isEmpty() == false && (buffer.size() > 0 || buffer.noMoreInputs())) {
-            if (listenerPromised.tryAcquire() == false) {
+            if (promised.tryAcquire() == false) {
                 break;
             }
             final ActionListener<ExchangeResponse> listener;
             final ExchangeResponse response;
             try {
+                // Update the last updated timestamp before polling the listener to avoid a race condition with hasListeners()
+                onChanged();
                 // Use `poll` and recheck because `listeners.isEmpty()` might return true, while a listener is being added
                 listener = listeners.poll();
                 if (listener == null) {
@@ -142,9 +144,8 @@ public final class ExchangeSinkHandler {
                 }
                 response = new ExchangeResponse(blockFactory, buffer.pollPage(), buffer.isFinished());
             } finally {
-                listenerPromised.release();
+                promised.release();
             }
-            updateLastFetchedInMillis();
             ActionListener.respondAndRelease(listener, response);
         }
     }
@@ -161,34 +162,28 @@ public final class ExchangeSinkHandler {
     /**
      * Whether this sink handler has sinks attached or available pages
      */
-    private boolean hasData() {
-        return outstandingSinks.get() > 0 || buffer.size() > 0 || buffer.isFinished();
-    }
-
-    private void updateLastFetchedInMillis() {
-        lastFetchedInMillis.accumulateAndGet(nowInMillis.getAsLong(), Math::max);
+    boolean hasData() {
+        return outstandingSinks.get() > 0 || buffer.size() > 0;
     }
 
     /**
-     * Returns the time in milliseconds when this sink handler was last accessed.
-     * This timestamp is used to prune idle sinks.
+     * Whether this sink handler has listeners waiting for data
      */
-    long lastAccessedTimeInMillis() {
-        // No data, use the created timestamp so that we can prune sinks when compute requests don't arrive
-        if (hasData() == false) {
-            return createdTimeInMillis;
-        }
-        // Use the last fetched timestamp so that we can prune sinks when fetch requests don't arrive
-        if (listenerPromised.tryAcquire()) {
-            try {
-                if (listeners.isEmpty()) {
-                    return lastFetchedInMillis.get();
-                }
-            } finally {
-                listenerPromised.release();
-            }
-        }
-        return Long.MAX_VALUE;
+    boolean hasListeners() {
+        return listeners.isEmpty() == false;
+    }
+
+    private void onChanged() {
+        lastUpdatedInMillis.accumulateAndGet(nowInMillis.getAsLong(), Math::max);
+    }
+
+    /**
+     * The time in millis when this sink handler was updated. This timestamp is used to prune idle sinks.
+     *
+     * @see ExchangeService#SINKS_KEEP_ALIVE_DEFAULT_INTERVAL
+     */
+    long lastUpdatedTimeInMillis() {
+        return lastUpdatedInMillis.get();
     }
 
     /**
