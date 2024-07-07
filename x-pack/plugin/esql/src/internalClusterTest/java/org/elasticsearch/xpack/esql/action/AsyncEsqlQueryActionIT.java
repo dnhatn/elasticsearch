@@ -10,6 +10,7 @@ package org.elasticsearch.xpack.esql.action;
 import org.elasticsearch.ResourceNotFoundException;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.tasks.TaskInfo;
@@ -48,6 +49,15 @@ public class AsyncEsqlQueryActionIT extends AbstractPausableIntegTestCase {
         actions.add(EsqlAsyncActionIT.LocalStateEsqlAsync.class);
         actions.add(InternalExchangePlugin.class);
         return Collections.unmodifiableList(actions);
+    }
+
+    @Override
+    protected Settings nodeSettings(int nodeOrdinal, Settings otherSettings) {
+        return Settings.builder()
+            .put(super.nodeSettings(nodeOrdinal, otherSettings))
+            .put(ExchangeService.SINKS_KEEP_ALIVE_INTERVAL_SETTING, TimeValue.timeValueMillis(between(3000, 5000)))
+            .put(ExchangeService.SOURCES_MAX_PAUSED_INTERVAL_SETTING, TimeValue.timeValueMillis(between(1000, 2000)))
+            .build();
     }
 
     public void testBasicAsyncExecution() throws Exception {
