@@ -10,6 +10,5 @@ package org.elasticsearch.compute.operator.exchange;
 import org.elasticsearch.action.ActionListener;
 
 public interface RemoteSink {
-
     void fetchPageAsync(boolean allSourcesFinished, ActionListener<ExchangeResponse> listener);
 }

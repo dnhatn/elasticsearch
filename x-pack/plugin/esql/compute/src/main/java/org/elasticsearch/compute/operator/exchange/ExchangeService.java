@@ -58,17 +58,26 @@ public final class ExchangeService extends AbstractLifecycleComponent {
     private static final String OPEN_EXCHANGE_ACTION_NAME_FOR_CCS = "cluster:internal:data/read/esql/open_exchange";
 
     /**
-     * The time interval for an exchange sink handler to be considered inactive and subsequently
-     * removed from the exchange service if no sinks are attached (i.e., no computation uses that sink handler).
+     * The time interval to keep an exchange sink handler active without receiving fetching requests.
+     * This is important to release resources quickly in case cancellation requests can't reach the node.
      */
-    public static final String INACTIVE_SINKS_INTERVAL_SETTING = "esql.exchange.sink_inactive_interval";
-    public static final TimeValue INACTIVE_SINKS_INTERVAL_DEFAULT = TimeValue.timeValueMinutes(5);
+    public static final String SINKS_KEEP_ALIVE_INTERVAL_SETTING = "esql.exchange.sinks.keep_alive_interval";
+    public static final TimeValue SINKS_KEEP_ALIVE_DEFAULT_INTERVAL = TimeValue.timeValueSeconds(30);
+
+    /**
+     * The maximum time interval that an exchange source should pause fetching when its buffer is full.
+     * This interval should be shorter than {@link #SINKS_KEEP_ALIVE_DEFAULT_INTERVAL} to ensure that
+     * remote sinks remain active and are not removed.
+     */
+    public static final String SOURCES_MAX_PAUSED_INTERVAL_SETTING = "esql.exchange.sources.max_paused_interval";
+    public static final TimeValue SOURCES_MAX_PAUSED_DEFAULT_INTERVAL = TimeValue.timeValueSeconds(10);
 
     private static final Logger LOGGER = LogManager.getLogger(ExchangeService.class);
 
     private final ThreadPool threadPool;
     private final Executor executor;
     private final BlockFactory blockFactory;
+    private final Settings settings;
 
     private final Map<String, ExchangeSinkHandler> sinks = ConcurrentCollections.newConcurrentMap();
 
@@ -76,11 +85,12 @@ public final class ExchangeService extends AbstractLifecycleComponent {
         this.threadPool = threadPool;
         this.executor = threadPool.executor(executorName);
         this.blockFactory = blockFactory;
-        final var inactiveInterval = settings.getAsTime(INACTIVE_SINKS_INTERVAL_SETTING, INACTIVE_SINKS_INTERVAL_DEFAULT);
+        this.settings = settings;
+        var sinksKeepAliveInterval = settings.getAsTime(SINKS_KEEP_ALIVE_INTERVAL_SETTING, SINKS_KEEP_ALIVE_DEFAULT_INTERVAL);
         // Run the reaper every half of the keep_alive interval
         this.threadPool.scheduleWithFixedDelay(
-            new InactiveSinksReaper(LOGGER, threadPool, inactiveInterval),
-            TimeValue.timeValueMillis(Math.max(1, inactiveInterval.millis() / 2)),
+            new InactiveSinksReaper(LOGGER, threadPool, sinksKeepAliveInterval),
+            TimeValue.timeValueMillis(Math.max(1, sinksKeepAliveInterval.millis() / 2)),
             executor
         );
     }
@@ -107,6 +117,11 @@ public final class ExchangeService extends AbstractLifecycleComponent {
             OpenExchangeRequest::new,
             new OpenExchangeRequestHandler()
         );
+    }
+
+    public ExchangeSourceHandler createSourceHandler(int maxBufferSize) {
+        var maxPausedInterval = settings.getAsTime(SOURCES_MAX_PAUSED_INTERVAL_SETTING, SOURCES_MAX_PAUSED_DEFAULT_INTERVAL);
+        return new ExchangeSourceHandler(maxBufferSize, threadPool, executor, maxPausedInterval);
     }
 
     /**
@@ -253,10 +268,7 @@ public final class ExchangeService extends AbstractLifecycleComponent {
             final long nowInMillis = threadPool.relativeTimeInMillis();
             for (Map.Entry<String, ExchangeSinkHandler> e : sinks.entrySet()) {
                 ExchangeSinkHandler sink = e.getValue();
-                if (sink.hasData() && sink.hasListeners()) {
-                    continue;
-                }
-                long elapsed = nowInMillis - sink.lastUpdatedTimeInMillis();
+                long elapsed = nowInMillis - sink.lastAccessedTimeInMillis();
                 if (elapsed > keepAlive.millis()) {
                     finishSinkHandler(
                         e.getKey(),

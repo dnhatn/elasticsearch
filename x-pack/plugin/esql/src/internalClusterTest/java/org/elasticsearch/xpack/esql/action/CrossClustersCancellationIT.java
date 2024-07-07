@@ -13,11 +13,8 @@ import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.action.support.WriteRequest;
-import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.compute.operator.DriverTaskRunner;
-import org.elasticsearch.compute.operator.exchange.ExchangeService;
-import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.mapper.OnScriptError;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.plugins.ScriptPlugin;
@@ -57,22 +54,8 @@ public class CrossClustersCancellationIT extends AbstractMultiClustersTestCase {
     protected Collection<Class<? extends Plugin>> nodePlugins(String clusterAlias) {
         List<Class<? extends Plugin>> plugins = new ArrayList<>(super.nodePlugins(clusterAlias));
         plugins.add(EsqlPlugin.class);
-        plugins.add(InternalExchangePlugin.class);
         plugins.add(PauseFieldPlugin.class);
         return plugins;
-    }
-
-    public static class InternalExchangePlugin extends Plugin {
-        @Override
-        public List<Setting<?>> getSettings() {
-            return List.of(
-                Setting.timeSetting(
-                    ExchangeService.INACTIVE_SINKS_INTERVAL_SETTING,
-                    TimeValue.timeValueMillis(between(1000, 3000)),
-                    Setting.Property.NodeScope
-                )
-            );
-        }
     }
 
     @Before

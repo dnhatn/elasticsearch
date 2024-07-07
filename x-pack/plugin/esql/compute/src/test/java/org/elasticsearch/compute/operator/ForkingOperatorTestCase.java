@@ -205,7 +205,12 @@ public abstract class ForkingOperatorTestCase extends OperatorTestCase {
         Collection<List<Page>> splitInput = randomSplits(input, randomIntBetween(2, 4));
         BlockFactory factory = blockFactory();
         ExchangeSinkHandler sinkExchanger = new ExchangeSinkHandler(factory, randomIntBetween(2, 10), threadPool::relativeTimeInMillis);
-        ExchangeSourceHandler sourceExchanger = new ExchangeSourceHandler(randomIntBetween(1, 4), threadPool.executor(ESQL_TEST_EXECUTOR));
+        ExchangeSourceHandler sourceExchanger = new ExchangeSourceHandler(
+            randomIntBetween(1, 4),
+            threadPool,
+            threadPool.executor(ESQL_TEST_EXECUTOR),
+            TimeValue.timeValueMillis(between(1, 1000))
+        );
         sourceExchanger.addRemoteSink(sinkExchanger::fetchPageAsync, 1);
 
         Iterator<? extends Operator> intermediateOperatorItr;

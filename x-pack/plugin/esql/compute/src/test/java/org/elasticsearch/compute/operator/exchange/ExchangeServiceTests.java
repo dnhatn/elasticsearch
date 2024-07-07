@@ -49,6 +49,7 @@ import org.elasticsearch.transport.TransportRequestHandler;
 import org.elasticsearch.transport.TransportResponse;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Test;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -94,7 +95,12 @@ public class ExchangeServiceTests extends ESTestCase {
         ExchangeSinkHandler sinkExchanger = new ExchangeSinkHandler(blockFactory, 2, threadPool::relativeTimeInMillis);
         ExchangeSink sink1 = sinkExchanger.createExchangeSink();
         ExchangeSink sink2 = sinkExchanger.createExchangeSink();
-        ExchangeSourceHandler sourceExchanger = new ExchangeSourceHandler(3, threadPool.executor(ESQL_TEST_EXECUTOR));
+        ExchangeSourceHandler sourceExchanger = new ExchangeSourceHandler(
+            3,
+            threadPool,
+            threadPool.executor(ESQL_TEST_EXECUTOR),
+            TimeValue.timeValueMillis(between(1, 1000))
+        );
         PlainActionFuture<Void> sourceCompletion = new PlainActionFuture<>();
         sourceExchanger.addCompletionListener(sourceCompletion);
         ExchangeSource source = sourceExchanger.createExchangeSource();
@@ -326,7 +332,12 @@ public class ExchangeServiceTests extends ESTestCase {
     public void testConcurrentWithHandlers() {
         BlockFactory blockFactory = blockFactory();
         PlainActionFuture<Void> sourceCompletionFuture = new PlainActionFuture<>();
-        var sourceExchanger = new ExchangeSourceHandler(randomExchangeBuffer(), threadPool.executor(ESQL_TEST_EXECUTOR));
+        var sourceExchanger = new ExchangeSourceHandler(
+            randomExchangeBuffer(),
+            threadPool,
+            threadPool.executor(ESQL_TEST_EXECUTOR),
+            TimeValue.timeValueMillis(between(1, 100))
+        );
         sourceExchanger.addCompletionListener(sourceCompletionFuture);
         List<ExchangeSinkHandler> sinkHandlers = new ArrayList<>();
         Supplier<ExchangeSink> exchangeSink = () -> {
@@ -378,7 +389,7 @@ public class ExchangeServiceTests extends ESTestCase {
         try (exchange0; exchange1; node0; node1) {
             String exchangeId = "exchange";
             Task task = new Task(1, "", "", "", null, Collections.emptyMap());
-            var sourceHandler = new ExchangeSourceHandler(randomExchangeBuffer(), threadPool.executor(ESQL_TEST_EXECUTOR));
+            var sourceHandler = exchange0.createSourceHandler(randomExchangeBuffer());
             PlainActionFuture<Void> sourceCompletionFuture = new PlainActionFuture<>();
             sourceHandler.addCompletionListener(sourceCompletionFuture);
             ExchangeSinkHandler sinkHandler = exchange1.createSinkHandler(exchangeId, randomExchangeBuffer());
@@ -437,7 +448,7 @@ public class ExchangeServiceTests extends ESTestCase {
         try (exchange0; exchange1; node0; node1) {
             String exchangeId = "exchange";
             Task task = new Task(1, "", "", "", null, Collections.emptyMap());
-            var sourceHandler = new ExchangeSourceHandler(randomIntBetween(1, 128), threadPool.executor(ESQL_TEST_EXECUTOR));
+            var sourceHandler = exchange0.createSourceHandler(randomIntBetween(1, 128));
             PlainActionFuture<Void> sourceCompletionFuture = new PlainActionFuture<>();
             sourceHandler.addCompletionListener(sourceCompletionFuture);
             ExchangeSinkHandler sinkHandler = exchange1.createSinkHandler(exchangeId, randomIntBetween(1, 128));
@@ -453,6 +464,10 @@ public class ExchangeServiceTests extends ESTestCase {
             sinkHandler.onFailure(new RuntimeException(cause));
             sourceCompletionFuture.actionGet(10, TimeUnit.SECONDS);
         }
+    }
+
+    public void testKeepAlive() {
+
     }
 
     private MockTransportService newTransportService() {

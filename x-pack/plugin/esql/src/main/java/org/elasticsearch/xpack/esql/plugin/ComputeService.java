@@ -190,10 +190,7 @@ public class ComputeService {
             .groupIndices(SearchRequest.DEFAULT_INDICES_OPTIONS, PlannerUtils.planOriginalIndices(physicalPlan));
         var localOriginalIndices = clusterToOriginalIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
         var localConcreteIndices = clusterToConcreteIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
-        final var exchangeSource = new ExchangeSourceHandler(
-            queryPragmas.exchangeBufferSize(),
-            transportService.getThreadPool().executor(ThreadPool.Names.SEARCH)
-        );
+        final var exchangeSource = exchangeService.createSourceHandler(queryPragmas.exchangeBufferSize());
         try (
             Releasable ignored = exchangeSource.addEmptySink();
             var computeListener = new ComputeListener(
@@ -680,7 +677,7 @@ public class ComputeService {
             // run the node-level reduction
             var externalSink = exchangeService.getSinkHandler(externalId);
             task.addListener(() -> exchangeService.finishSinkHandler(externalId, new TaskCancelledException(task.getReasonCancelled())));
-            var exchangeSource = new ExchangeSourceHandler(1, esqlExecutor);
+            var exchangeSource = exchangeService.createSourceHandler(1);
             exchangeSource.addCompletionListener(computeListener.acquireAvoid());
             exchangeSource.addRemoteSink(internalSink::fetchPageAsync, 1);
             ActionListener<ComputeResponse> reductionListener = computeListener.acquireCompute();
@@ -802,10 +799,7 @@ public class ComputeService {
             () -> exchangeService.finishSinkHandler(globalSessionId, new TaskCancelledException(parentTask.getReasonCancelled()))
         );
         final String localSessionId = clusterAlias + ":" + globalSessionId;
-        var exchangeSource = new ExchangeSourceHandler(
-            configuration.pragmas().exchangeBufferSize(),
-            transportService.getThreadPool().executor(ThreadPool.Names.SEARCH)
-        );
+        var exchangeSource = exchangeService.createSourceHandler(configuration.pragmas().exchangeBufferSize());
         try (Releasable ignored = exchangeSource.addEmptySink()) {
             exchangeSink.addCompletionListener(computeListener.acquireAvoid());
             exchangeSource.addCompletionListener(computeListener.acquireAvoid());

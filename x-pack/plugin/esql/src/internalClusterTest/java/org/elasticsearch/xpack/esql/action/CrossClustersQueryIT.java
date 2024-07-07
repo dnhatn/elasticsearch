@@ -15,11 +15,9 @@ import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.compute.lucene.DataPartitioning;
 import org.elasticsearch.compute.operator.DriverProfile;
-import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.AbstractMultiClustersTestCase;
@@ -54,21 +52,7 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
     protected Collection<Class<? extends Plugin>> nodePlugins(String clusterAlias) {
         List<Class<? extends Plugin>> plugins = new ArrayList<>(super.nodePlugins(clusterAlias));
         plugins.add(EsqlPlugin.class);
-        plugins.add(InternalExchangePlugin.class);
         return plugins;
-    }
-
-    public static class InternalExchangePlugin extends Plugin {
-        @Override
-        public List<Setting<?>> getSettings() {
-            return List.of(
-                Setting.timeSetting(
-                    ExchangeService.INACTIVE_SINKS_INTERVAL_SETTING,
-                    TimeValue.timeValueSeconds(30),
-                    Setting.Property.NodeScope
-                )
-            );
-        }
     }
 
     @Before

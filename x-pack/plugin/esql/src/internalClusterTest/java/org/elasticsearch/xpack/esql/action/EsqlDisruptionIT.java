@@ -52,7 +52,8 @@ public class EsqlDisruptionIT extends EsqlActionIT {
         Settings settings = Settings.builder()
             .put(super.nodeSettings(nodeOrdinal, otherSettings))
             .put(DEFAULT_SETTINGS)
-            .put(ExchangeService.INACTIVE_SINKS_INTERVAL_SETTING, TimeValue.timeValueMillis(between(1000, 2000)))
+            .put(ExchangeService.SINKS_KEEP_ALIVE_INTERVAL_SETTING, TimeValue.timeValueMillis(between(3000, 5000)))
+            .put(ExchangeService.SOURCES_MAX_PAUSED_INTERVAL_SETTING, TimeValue.timeValueMillis(between(1000, 2000)))
             .build();
         logger.info("settings {}", settings);
         return settings;

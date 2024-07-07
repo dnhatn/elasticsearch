@@ -9,12 +9,15 @@ package org.elasticsearch.compute.operator.exchange;
 
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.support.RefCountingListener;
 import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.FailureCollector;
 import org.elasticsearch.core.Releasable;
+import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.threadpool.ThreadPool;
 
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -35,10 +38,14 @@ public final class ExchangeSourceHandler {
     private final PendingInstances outstandingSinks;
     private final PendingInstances outstandingSources;
     private final FailureCollector failure = new FailureCollector();
+    private final ThreadPool threadPool;
+    private final TimeValue maxPausedInterval;
 
-    public ExchangeSourceHandler(int maxBufferSize, Executor fetchExecutor) {
+    public ExchangeSourceHandler(int maxBufferSize, ThreadPool threadPool, Executor fetchExecutor, TimeValue maxPausedInterval) {
         this.buffer = new ExchangeBuffer(maxBufferSize);
+        this.threadPool = threadPool;
         this.fetchExecutor = fetchExecutor;
+        this.maxPausedInterval = maxPausedInterval;
         this.outstandingSinks = new PendingInstances(() -> buffer.finish(false));
         this.outstandingSources = new PendingInstances(() -> buffer.finish(true));
     }
@@ -158,10 +165,12 @@ public final class ExchangeSourceHandler {
     private final class RemoteSinkFetcher {
         private volatile boolean finished = false;
         private final RemoteSink remoteSink;
+        private final AtomicInteger pendingRequests;
 
-        RemoteSinkFetcher(RemoteSink remoteSink) {
+        RemoteSinkFetcher(RemoteSink remoteSink, AtomicInteger pendingRequests) {
             outstandingSinks.trackNewInstance();
             this.remoteSink = remoteSink;
+            this.pendingRequests = pendingRequests;
         }
 
         void fetchPage() {
@@ -170,7 +179,9 @@ public final class ExchangeSourceHandler {
                 loopControl.exiting();
                 // finish other sinks if one of them failed or source no longer need pages.
                 boolean toFinishSinks = buffer.noMoreInputs() || failure.hasFailure();
+                pendingRequests.incrementAndGet();
                 remoteSink.fetchPageAsync(toFinishSinks, ActionListener.wrap(resp -> {
+                    int pending = pendingRequests.decrementAndGet();
                     Page page = resp.takePage();
                     if (page != null) {
                         buffer.addPage(page);
@@ -184,6 +195,9 @@ public final class ExchangeSourceHandler {
                                 fetchPage();
                             }
                         } else {
+                            if (pending == 0) {
+                                future = scheduleKeepAlive(future);
+                            }
                             future.addListener(ActionListener.wrap(unused -> {
                                 if (loopControl.tryResume() == false) {
                                     fetchPage();
@@ -191,9 +205,30 @@ public final class ExchangeSourceHandler {
                             }, this::onSinkFailed));
                         }
                     }
-                }, this::onSinkFailed));
+                }, e -> {
+                    pendingRequests.decrementAndGet();
+                    onSinkFailed(e);
+                }));
             }
             loopControl.exited();
+        }
+
+        private SubscribableListener<Void> scheduleKeepAlive(SubscribableListener<Void> blockingFuture) {
+            final SubscribableListener<Void> eitherFuture = new SubscribableListener<>();
+            var cancellable = threadPool.schedule(new ActionRunnable<>(eitherFuture) {
+                @Override
+                public void onRejection(Exception e) {
+                    // We can ignore the rejection and wait to resume when the pages are processed.
+                }
+
+                @Override
+                protected void doRun() {
+                    listener.onResponse(null);
+                }
+            }, maxPausedInterval, fetchExecutor);
+            // cancel the keep_alive schedule when resumed
+            blockingFuture.addListener(ActionListener.runBefore(eitherFuture, cancellable::cancel));
+            return eitherFuture;
         }
 
         void onSinkFailed(Exception e) {
@@ -219,8 +254,10 @@ public final class ExchangeSourceHandler {
      * @see ExchangeSinkHandler#fetchPageAsync(boolean, ActionListener)
      */
     public void addRemoteSink(RemoteSink remoteSink, int instances) {
+        // Add the max pause interval
+        AtomicInteger pendingRequests = new AtomicInteger();
         for (int i = 0; i < instances; i++) {
-            var fetcher = new RemoteSinkFetcher(remoteSink);
+            var fetcher = new RemoteSinkFetcher(remoteSink, pendingRequests);
             fetchExecutor.execute(new AbstractRunnable() {
                 @Override
                 public void onFailure(Exception e) {

@@ -111,7 +111,8 @@ public class EnrichIT extends AbstractEsqlIntegTestCase {
                 HierarchyCircuitBreakerService.REQUEST_CIRCUIT_BREAKER_TYPE_SETTING.getKey(),
                 HierarchyCircuitBreakerService.REQUEST_CIRCUIT_BREAKER_TYPE_SETTING.getDefault(Settings.EMPTY)
             )
-            .put(ExchangeService.INACTIVE_SINKS_INTERVAL_SETTING, TimeValue.timeValueMillis(between(500, 2000)))
+            .put(ExchangeService.SINKS_KEEP_ALIVE_INTERVAL_SETTING, TimeValue.timeValueMillis(between(3000, 5000)))
+            .put(ExchangeService.SOURCES_MAX_PAUSED_INTERVAL_SETTING, TimeValue.timeValueMillis(between(1000, 2000)))
             .put(BlockFactory.LOCAL_BREAKER_OVER_RESERVED_SIZE_SETTING, ByteSizeValue.ofBytes(between(0, 256)))
             .put(BlockFactory.LOCAL_BREAKER_OVER_RESERVED_MAX_SIZE_SETTING, ByteSizeValue.ofBytes(between(0, 1024)))
             // allow reading pages from network can trip the circuit breaker
