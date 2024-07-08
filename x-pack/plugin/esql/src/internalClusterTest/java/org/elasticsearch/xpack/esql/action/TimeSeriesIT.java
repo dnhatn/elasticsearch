@@ -744,9 +744,4 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             assertThat((double) values.get(0).get(0), closeTo(rates.stream().mapToDouble(d -> 20. * d + 10.0 * Math.floor(d)).sum(), 0.1));
         }
     }
-
-    @Test
-    public void testTsidField() {
-        run("FROM hosts METADATA")
-    }
 }
