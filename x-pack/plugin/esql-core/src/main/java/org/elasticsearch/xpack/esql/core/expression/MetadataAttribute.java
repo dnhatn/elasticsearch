@@ -45,7 +45,9 @@ public class MetadataAttribute extends TypedAttribute {
         IgnoredFieldMapper.NAME,
         tuple(DataType.KEYWORD, true),
         SourceFieldMapper.NAME,
-        tuple(DataType.SOURCE, false)
+        tuple(DataType.SOURCE, false),
+        TSID_FIELD,
+        tuple(DataType.KEYWORD, false)
     );
 
     private final boolean searchable;

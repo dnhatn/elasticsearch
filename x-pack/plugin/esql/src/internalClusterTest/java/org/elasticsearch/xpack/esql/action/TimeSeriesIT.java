@@ -14,6 +14,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.xpack.esql.EsqlTestUtils;
 import org.junit.Before;
+import org.junit.Test;
 
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -742,5 +743,10 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             assertThat(values.get(0), hasSize(1));
             assertThat((double) values.get(0).get(0), closeTo(rates.stream().mapToDouble(d -> 20. * d + 10.0 * Math.floor(d)).sum(), 0.1));
         }
+    }
+
+    @Test
+    public void testTsidField() {
+        run("FROM hosts METADATA")
     }
 }
