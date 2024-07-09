@@ -100,6 +100,11 @@ public class TimeSeriesIdFieldMapper extends MetadataFieldMapper {
         }
 
         @Override
+        public BlockLoader blockLoader(BlockLoaderContext blContext) {
+            return new BlockDocValuesReader.BytesRefsFromOrdsBlockLoader(name());
+        }
+
+        @Override
         public DocValueFormat docValueFormat(String format, ZoneId timeZone) {
             if (format != null) {
                 throw new IllegalArgumentException("Field [" + name() + "] of type [" + typeName() + "] doesn't support formats.");

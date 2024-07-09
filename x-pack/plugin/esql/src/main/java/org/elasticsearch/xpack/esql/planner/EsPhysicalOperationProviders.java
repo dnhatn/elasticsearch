@@ -234,7 +234,11 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         // Costin: why are they ready and not already exposed in the layout?
         boolean isUnsupported = attrSource.dataType() == DataType.UNSUPPORTED;
         return new OrdinalsGroupingOperator.OrdinalsGroupingOperatorFactory(
-            shardIdx -> shardContexts.get(shardIdx).blockLoader(attrSource.name(), isUnsupported, NONE),
+            shardIdx -> {
+                ShardContext shardContext = shardContexts.get(shardIdx);
+                BlockLoader blockLoader = shardContext.blockLoader(attrSource.name(), isUnsupported, NONE);
+                return blockLoader;
+            },
             vsShardContexts,
             groupElementType,
             docChannel,

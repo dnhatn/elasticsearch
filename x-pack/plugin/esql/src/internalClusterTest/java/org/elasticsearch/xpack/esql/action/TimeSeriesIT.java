@@ -744,4 +744,10 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             assertThat((double) values.get(0).get(0), closeTo(rates.stream().mapToDouble(d -> 20. * d + 10.0 * Math.floor(d)).sum(), 0.1));
         }
     }
+
+    public void testTsidField() {
+        try (EsqlQueryResponse resp = run("FROM hosts METADATA _tsid | STATS COUNT(*) BY _tsid | EVAL _tsid=to_base64(_tsid) |  LIMIT 10")) {
+            System.err.println("--> response " + resp);
+        }
+    }
 }
