@@ -11,13 +11,20 @@ import org.elasticsearch.Build;
 import org.elasticsearch.common.Randomness;
 import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.plugins.Plugin;
+import org.elasticsearch.xcontent.XContentBuilder;
+import org.elasticsearch.xcontent.XContentFactory;
+import org.elasticsearch.xpack.aggregatemetric.AggregateMetricMapperPlugin;
 import org.elasticsearch.xpack.esql.EsqlTestUtils;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.junit.Before;
+import org.junit.Test;
 
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -35,6 +42,11 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
     protected EsqlQueryResponse run(EsqlQueryRequest request) {
         assumeTrue("time series available in snapshot builds only", Build.current().isSnapshot());
         return super.run(request);
+    }
+
+    @Override
+    protected Collection<Class<? extends Plugin>> nodePlugins() {
+        return CollectionUtils.appendToCopy(super.nodePlugins(), AggregateMetricMapperPlugin.class);
     }
 
     public void testEmpty() {
@@ -785,6 +797,37 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             List<List<Object>> values = EsqlTestUtils.getValuesList(resp);
             assertThat(values, hasSize(2));
             assertThat(values, equalTo(List.of(List.of("events", "standard"), List.of("hosts", "time_series"))));
+        }
+    }
+
+    public void testAggregateMetricDouble() throws Exception {
+        Settings settings = Settings.builder().build();
+        XContentBuilder mapping = XContentFactory.jsonBuilder()
+            .startObject()
+            .startObject("_doc")
+            .startObject("properties")
+            .startObject("@timestamp")
+            .field("type", "date")
+            .endObject()
+            .startObject("requests")
+            .field("type", "aggregate_metric_double")
+            .field("metrics", List.of("min", "max", "sum", "value_count"))
+            .field("default_metric", "max")
+            .endObject()
+            .endObject()
+            .endObject()
+            .endObject();
+        client().admin()
+            .indices()
+            .prepareCreate("metrics")
+            .setSettings(settings)
+            .setMapping(mapping)
+            .get();
+        index("metrics", "1", Map.of("requests", Map.of("min", 0.2, "max", 0.4, "value_count", 3, "sum", 0.9)));
+        refresh("metrics");
+        //FROM metrics | STATS avg(requests), sum(requests), count(requests), max(requests), min(requests)
+        try(EsqlQueryResponse resp = run("FROM metrics | STATS max(requests), min(requests), sum(requests), count(requests), avg(requests)")){
+            System.err.println("--> resp " + resp);
         }
     }
 }
