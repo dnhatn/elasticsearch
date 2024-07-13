@@ -146,6 +146,11 @@ public class TestBlock implements BlockLoader.Block {
                 }
                 return new SingletonOrdsBuilder();
             }
+
+            @Override
+            public BlockLoader.Block compositeBlock(BlockLoader.Block[] blocks) {
+                throw new UnsupportedOperationException();
+            }
         };
     }
 

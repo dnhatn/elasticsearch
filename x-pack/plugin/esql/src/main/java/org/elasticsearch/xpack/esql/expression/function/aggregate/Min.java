@@ -24,6 +24,7 @@ import org.elasticsearch.xpack.esql.expression.SurrogateExpression;
 import org.elasticsearch.xpack.esql.expression.function.Example;
 import org.elasticsearch.xpack.esql.expression.function.FunctionInfo;
 import org.elasticsearch.xpack.esql.expression.function.Param;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.FromAggregateMetricDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvMin;
 import org.elasticsearch.xpack.esql.planner.ToAggregator;
 
@@ -36,7 +37,7 @@ public class Min extends AggregateFunction implements ToAggregator, SurrogateExp
     public static final NamedWriteableRegistry.Entry ENTRY = new NamedWriteableRegistry.Entry(Expression.class, "Min", Min::new);
 
     @FunctionInfo(
-        returnType = { "boolean", "double", "integer", "long", "date" },
+        returnType = { "boolean", "double", "integer", "long", "date", "aggregate_metric_double" },
         description = "The minimum value of a field.",
         isAggregation = true,
         examples = {
@@ -76,7 +77,10 @@ public class Min extends AggregateFunction implements ToAggregator, SurrogateExp
     protected TypeResolution resolveType() {
         return TypeResolutions.isType(
             this,
-            e -> e == DataType.BOOLEAN || e == DataType.DATETIME || (e.isNumeric() && e != DataType.UNSIGNED_LONG),
+            e -> e == DataType.BOOLEAN
+                || e == DataType.DATETIME
+                || (e.isNumeric() && e != DataType.UNSIGNED_LONG)
+                || e == DataType.AGGREGATE_METRIC_DOUBLE,
             sourceText(),
             DEFAULT,
             "boolean",
@@ -87,7 +91,8 @@ public class Min extends AggregateFunction implements ToAggregator, SurrogateExp
 
     @Override
     public DataType dataType() {
-        return field().dataType();
+        DataType dataType = field().dataType();
+        return dataType == DataType.AGGREGATE_METRIC_DOUBLE ? DataType.DOUBLE : dataType;
     }
 
     @Override
@@ -110,6 +115,10 @@ public class Min extends AggregateFunction implements ToAggregator, SurrogateExp
 
     @Override
     public Expression surrogate() {
-        return field().foldable() ? new MvMin(source(), field()) : null;
+        Expression field = field();
+        if (field.dataType() == DataType.AGGREGATE_METRIC_DOUBLE) {
+            return new Min(source(), new FromAggregateMetricDouble(source(), field, FromAggregateMetricDouble.Metric.MIN));
+        }
+        return field.foldable() ? new MvMin(source(), field) : null;
     }
 }

@@ -21,6 +21,7 @@ import org.elasticsearch.xpack.esql.core.util.StringUtils;
 import org.elasticsearch.xpack.esql.expression.SurrogateExpression;
 import org.elasticsearch.xpack.esql.expression.function.FunctionInfo;
 import org.elasticsearch.xpack.esql.expression.function.Param;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.FromAggregateMetricDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvCount;
 import org.elasticsearch.xpack.esql.expression.function.scalar.nulls.Coalesce;
 import org.elasticsearch.xpack.esql.expression.predicate.operator.arithmetic.Mul;
@@ -42,6 +43,7 @@ public class Count extends AggregateFunction implements EnclosedAgg, ToAggregato
             optional = true,
             name = "field",
             type = {
+                "aggregate_metric_double",
                 "boolean",
                 "cartesian_point",
                 "date",
@@ -108,7 +110,9 @@ public class Count extends AggregateFunction implements EnclosedAgg, ToAggregato
     public Expression surrogate() {
         var s = source();
         var field = field();
-
+        if (field.dataType() == DataType.AGGREGATE_METRIC_DOUBLE) {
+            return new Sum(source(), new FromAggregateMetricDouble(source(), field, FromAggregateMetricDouble.Metric.VALUE_COUNT));
+        }
         if (field.foldable()) {
             if (field instanceof Literal l) {
                 if (l.value() != null && (l.value() instanceof List<?>) == false) {

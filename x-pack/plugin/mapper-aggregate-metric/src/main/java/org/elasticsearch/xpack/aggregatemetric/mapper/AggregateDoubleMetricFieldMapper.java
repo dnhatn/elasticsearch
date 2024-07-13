@@ -11,6 +11,7 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortedNumericSortField;
@@ -19,6 +20,7 @@ import org.elasticsearch.common.logging.DeprecationCategory;
 import org.elasticsearch.common.logging.DeprecationLogger;
 import org.elasticsearch.common.time.DateMathParser;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.core.Releasables;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexVersion;
 import org.elasticsearch.index.fielddata.FieldDataContext;
@@ -27,6 +29,7 @@ import org.elasticsearch.index.fielddata.ScriptDocValues;
 import org.elasticsearch.index.fielddata.ScriptDocValues.DoublesSupplier;
 import org.elasticsearch.index.fielddata.SortedBinaryDocValues;
 import org.elasticsearch.index.fielddata.SortedNumericDoubleValues;
+import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.CompositeSyntheticFieldLoader;
 import org.elasticsearch.index.mapper.DocumentParserContext;
 import org.elasticsearch.index.mapper.FieldMapper;
@@ -50,6 +53,7 @@ import org.elasticsearch.script.field.DelegateDocValuesField;
 import org.elasticsearch.script.field.DocValuesScriptFieldFactory;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.MultiValueMode;
+import org.elasticsearch.search.fetch.StoredFieldsSpec;
 import org.elasticsearch.search.sort.BucketedSort;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.xcontent.CopyingXContentParser;
@@ -61,7 +65,9 @@ import org.elasticsearch.xpack.aggregatemetric.fielddata.IndexAggregateDoubleMet
 import org.elasticsearch.xpack.aggregatemetric.fielddata.LeafAggregateDoubleMetricFieldData;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.time.ZoneId;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -512,6 +518,20 @@ public class AggregateDoubleMetricFieldMapper extends FieldMapper {
             return SourceValueFetcher.identity(name(), context, format);
         }
 
+        @Override
+        public BlockLoader blockLoader(BlockLoaderContext blContext) {
+            List<Metric> metricTypes = List.of(Metric.min, Metric.max, Metric.sum, Metric.value_count);
+            final BlockLoader[] loaders = new BlockLoader[metricTypes.size()];
+            try {
+                for (int i = 0; i < metricTypes.size(); i++) {
+                    loaders[i] = metricFields.get(metricTypes.get(i)).blockLoader(blContext);
+                }
+                return new CompositeBlockLoader(loaders);
+            } finally {
+                // TODO:
+            }
+        }
+
         /**
          * If field is a time series metric field, returns its metric type
          * @return the metric type or null
@@ -812,6 +832,134 @@ public class AggregateDoubleMetricFieldMapper extends FieldMapper {
 
                 return metricHasValue.isEmpty() == false;
             }
+        }
+    }
+
+    private record CompositeBuilder(BlockLoader.BlockFactory factory, BlockLoader.Builder[] builders) implements BlockLoader.Builder {
+        @Override
+        public BlockLoader.Block build() {
+            BlockLoader.Block[] blocks = new BlockLoader.Block[builders.length];
+            try {
+                for (int i = 0; i < builders.length; i++) {
+                    blocks[i] = builders[i].build();
+                }
+                return factory.compositeBlock(blocks);
+            } finally {
+
+            }
+        }
+
+        @Override
+        public BlockLoader.Builder appendNull() {
+            assert false : "CompositeBuilder";
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public BlockLoader.Builder beginPositionEntry() {
+            assert false : "CompositeBuilder";
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public BlockLoader.Builder endPositionEntry() {
+            assert false : "CompositeBuilder";
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
+            Releasables.close(builders);
+        }
+    }
+
+    static class CompositeBlockLoader implements BlockLoader {
+        private final BlockLoader[] blockLoaders;
+
+        CompositeBlockLoader(BlockLoader[] blockLoaders) {
+            this.blockLoaders = blockLoaders;
+        }
+
+        @Override
+        public Builder builder(BlockFactory factory, int expectedCount) {
+            final Builder[] builders = new Builder[blockLoaders.length];
+            try {
+                for (int i = 0; i < blockLoaders.length; i++) {
+                    builders[i] = blockLoaders[i].builder(factory, expectedCount);
+                }
+                return new CompositeBuilder(factory, builders);
+            } finally {
+
+            }
+        }
+
+        @Override
+        public ColumnAtATimeReader columnAtATimeReader(LeafReaderContext context) throws IOException {
+            var readers = new ColumnAtATimeReader[blockLoaders.length];
+            for (int i = 0; i < blockLoaders.length; i++) {
+                readers[i] = blockLoaders[i].columnAtATimeReader(context);
+            }
+            return new ColumnAtATimeReader() {
+                @Override
+                public Block read(BlockFactory factory, Docs docs) throws IOException {
+                    Block[] blocks = new Block[readers.length];
+                    try {
+                        for (int i = 0; i < readers.length; i++) {
+                            blocks[i] = readers[i].read(factory, docs);
+                        }
+                        return factory.compositeBlock(blocks);
+                    } finally {
+
+                    }
+                }
+
+                @Override
+                public boolean canReuse(int startingDocID) {
+                    return Arrays.stream(readers).allMatch(r -> r.canReuse(startingDocID));
+                }
+            };
+        }
+
+        @Override
+        public RowStrideReader rowStrideReader(LeafReaderContext context) throws IOException {
+            var readers = new RowStrideReader[blockLoaders.length];
+            for (int i = 0; i < readers.length; i++) {
+                readers[i] = blockLoaders[i].rowStrideReader(context);
+            }
+            return new RowStrideReader() {
+                @Override
+                public void read(int docId, StoredFields storedFields, Builder builder) throws IOException {
+                    final CompositeBuilder compositeBuilder = (CompositeBuilder) builder;
+                    for (int i = 0; i < readers.length; i++) {
+                        readers[i].read(docId, storedFields, compositeBuilder.builders[i]);
+                    }
+                }
+
+                @Override
+                public boolean canReuse(int startingDocID) {
+                    return Arrays.stream(readers).allMatch(r -> r.canReuse(startingDocID));
+                }
+            };
+        }
+
+        @Override
+        public StoredFieldsSpec rowStrideStoredFieldSpec() {
+            StoredFieldsSpec spec = blockLoaders[0].rowStrideStoredFieldSpec();
+            for (int i = 1; i < blockLoaders.length; i++) {
+                spec = spec.merge(blockLoaders[i].rowStrideStoredFieldSpec());
+            }
+            return spec;
+        }
+
+        @Override
+        public boolean supportsOrdinals() {
+            return false;
+        }
+
+        @Override
+        public SortedSetDocValues ordinals(LeafReaderContext context) throws IOException {
+            assert false : "CompositeBuilder";
+            throw new UnsupportedOperationException();
         }
     }
 }

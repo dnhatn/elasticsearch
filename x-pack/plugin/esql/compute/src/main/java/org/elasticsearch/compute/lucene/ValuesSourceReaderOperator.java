@@ -18,6 +18,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefBlock;
+import org.elasticsearch.compute.data.CompositeBlock;
 import org.elasticsearch.compute.data.DocBlock;
 import org.elasticsearch.compute.data.DocVector;
 import org.elasticsearch.compute.data.ElementType;
@@ -686,6 +687,15 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
         @Override
         public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count) {
             return new SingletonOrdinalsBuilder(factory, ordinals, count);
+        }
+
+        @Override
+        public BlockLoader.Block compositeBlock(BlockLoader.Block[] blocks) {
+            Block[] castingBlocks = new Block[blocks.length];
+            for (int i = 0; i < blocks.length; i++) {
+                castingBlocks[i] = (Block) blocks[i];
+            }
+            return new CompositeBlock(castingBlocks);
         }
     }
 

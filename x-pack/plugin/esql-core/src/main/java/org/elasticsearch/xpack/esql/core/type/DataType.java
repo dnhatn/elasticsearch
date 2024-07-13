@@ -69,7 +69,8 @@ public enum DataType {
 
     DOC_DATA_TYPE(builder().esType("_doc").size(Integer.BYTES * 3)),
     TSID_DATA_TYPE(builder().esType("_tsid").unknownSize().docValues()),
-    PARTIAL_AGG(builder().esType("partial_agg").unknownSize());
+    PARTIAL_AGG(builder().esType("partial_agg").unknownSize()),
+    AGGREGATE_METRIC_DOUBLE(builder().esType("aggregate_metric_double").size(Double.BYTES * 4));
 
     private final String typeName;
 

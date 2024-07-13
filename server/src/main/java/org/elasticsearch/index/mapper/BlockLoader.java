@@ -416,6 +416,7 @@ public interface BlockLoader {
         SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count);
 
         // TODO support non-singleton ords
+        Block compositeBlock(Block[] blocks);
     }
 
     /**

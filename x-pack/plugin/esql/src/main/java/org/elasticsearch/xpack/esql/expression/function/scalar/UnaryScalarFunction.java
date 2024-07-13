@@ -17,6 +17,7 @@ import org.elasticsearch.xpack.esql.core.expression.predicate.nulls.IsNotNull;
 import org.elasticsearch.xpack.esql.core.expression.predicate.nulls.IsNull;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 import org.elasticsearch.xpack.esql.core.type.DataType;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.FromAggregateMetricDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.FromBase64;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToBase64;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToBoolean;
@@ -117,6 +118,7 @@ public abstract class UnaryScalarFunction extends EsqlScalarFunction {
         entries.add(ToVersion.ENTRY);
         entries.add(Trim.ENTRY);
         entries.add(WildcardLike.ENTRY);
+        entries.add(FromAggregateMetricDouble.ENTRY);
         entries.addAll(AbstractMultivalueFunction.getNamedWriteables());
         return entries;
     }

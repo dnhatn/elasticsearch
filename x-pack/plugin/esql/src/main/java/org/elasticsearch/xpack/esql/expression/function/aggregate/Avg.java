@@ -17,6 +17,7 @@ import org.elasticsearch.xpack.esql.expression.SurrogateExpression;
 import org.elasticsearch.xpack.esql.expression.function.Example;
 import org.elasticsearch.xpack.esql.expression.function.FunctionInfo;
 import org.elasticsearch.xpack.esql.expression.function.Param;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.FromAggregateMetricDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvAvg;
 import org.elasticsearch.xpack.esql.expression.predicate.operator.arithmetic.Div;
 
@@ -43,7 +44,7 @@ public class Avg extends AggregateFunction implements SurrogateExpression {
                 tag = "docsStatsAvgNestedExpression"
             ) }
     )
-    public Avg(Source source, @Param(name = "number", type = { "double", "integer", "long" }) Expression field) {
+    public Avg(Source source, @Param(name = "number", type = { "aggregate_metric_double", "double", "integer", "long" }) Expression field) {
         super(source, field);
     }
 
@@ -51,7 +52,7 @@ public class Avg extends AggregateFunction implements SurrogateExpression {
     protected Expression.TypeResolution resolveType() {
         return isType(
             field(),
-            dt -> dt.isNumeric() && dt != DataType.UNSIGNED_LONG,
+            dt -> dt == DataType.AGGREGATE_METRIC_DOUBLE || (dt.isNumeric() && dt != DataType.UNSIGNED_LONG),
             sourceText(),
             DEFAULT,
             "numeric except unsigned_long or counter types"
@@ -86,7 +87,15 @@ public class Avg extends AggregateFunction implements SurrogateExpression {
     public Expression surrogate() {
         var s = source();
         var field = field();
-
-        return field().foldable() ? new MvAvg(s, field) : new Div(s, new Sum(s, field), new Count(s, field), dataType());
+        if (field.foldable()) {
+            return new MvAvg(s, field);
+        }
+        if (field.dataType() == DataType.AGGREGATE_METRIC_DOUBLE) {
+            var sum = new Sum(source(), new FromAggregateMetricDouble(source(), field, FromAggregateMetricDouble.Metric.SUM));
+            var count = new Sum(source(), new FromAggregateMetricDouble(source(), field, FromAggregateMetricDouble.Metric.VALUE_COUNT));
+            return new Div(source(), sum, count);
+        } else {
+            return new Div(s, new Sum(s, field), new Count(s, field), dataType());
+        }
     }
 }

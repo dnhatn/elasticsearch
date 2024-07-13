@@ -21,12 +21,16 @@ import org.elasticsearch.xpack.esql.core.util.StringUtils;
 import org.elasticsearch.xpack.esql.expression.SurrogateExpression;
 import org.elasticsearch.xpack.esql.expression.function.FunctionInfo;
 import org.elasticsearch.xpack.esql.expression.function.Param;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.FromAggregateMetricDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvSum;
 import org.elasticsearch.xpack.esql.expression.predicate.operator.arithmetic.Mul;
 
 import java.io.IOException;
 import java.util.List;
 
+import static org.elasticsearch.xpack.esql.core.expression.TypeResolutions.ParamOrdinal.DEFAULT;
+import static org.elasticsearch.xpack.esql.core.expression.TypeResolutions.isType;
+import static org.elasticsearch.xpack.esql.core.type.DataType.AGGREGATE_METRIC_DOUBLE;
 import static org.elasticsearch.xpack.esql.core.type.DataType.DOUBLE;
 import static org.elasticsearch.xpack.esql.core.type.DataType.LONG;
 import static org.elasticsearch.xpack.esql.core.type.DataType.UNSIGNED_LONG;
@@ -38,7 +42,7 @@ public class Sum extends NumericAggregate implements SurrogateExpression {
     public static final NamedWriteableRegistry.Entry ENTRY = new NamedWriteableRegistry.Entry(Expression.class, "Sum", Sum::new);
 
     @FunctionInfo(returnType = "long", description = "The sum of a numeric field.", isAggregation = true)
-    public Sum(Source source, @Param(name = "number", type = { "double", "integer", "long" }) Expression field) {
+    public Sum(Source source, @Param(name = "number", type = { "double", "integer", "long", "aggregate_metric_double" }) Expression field) {
         super(source, field);
     }
 
@@ -62,8 +66,22 @@ public class Sum extends NumericAggregate implements SurrogateExpression {
     }
 
     @Override
+    protected TypeResolution resolveType() {
+        return isType(
+            field(),
+            dt -> (dt.isNumeric() && dt != DataType.UNSIGNED_LONG) || dt == AGGREGATE_METRIC_DOUBLE,
+            sourceText(),
+            DEFAULT,
+            "numeric except unsigned_long or counter types"
+        );
+    }
+
+    @Override
     public DataType dataType() {
         DataType dt = field().dataType();
+        if (dt == AGGREGATE_METRIC_DOUBLE) {
+            return DOUBLE;
+        }
         return dt.isWholeNumber() == false || dt == UNSIGNED_LONG ? DOUBLE : LONG;
     }
 
@@ -86,7 +104,9 @@ public class Sum extends NumericAggregate implements SurrogateExpression {
     public Expression surrogate() {
         var s = source();
         var field = field();
-
+        if (field.dataType() == AGGREGATE_METRIC_DOUBLE) {
+            return new Sum(source(), new FromAggregateMetricDouble(source(), field, FromAggregateMetricDouble.Metric.SUM));
+        }
         // SUM(const) is equivalent to MV_SUM(const)*COUNT(*).
         return field.foldable()
             ? new Mul(s, new MvSum(s, field), new Count(s, new Literal(s, StringUtils.WILDCARD, DataType.KEYWORD)))

@@ -354,7 +354,9 @@ public class LocalExecutionPlanner {
                     TopNEncoder.DEFAULT_UNSORTABLE;
                 // unsupported fields are encoded as BytesRef, we'll use the same encoder; all values should be null at this point
                 case PARTIAL_AGG, UNSUPPORTED -> TopNEncoder.UNSUPPORTED;
-                case SOURCE -> throw new EsqlIllegalArgumentException("No TopN sorting encoder for type " + inverse.get(channel).type());
+                case SOURCE, AGGREGATE_METRIC_DOUBLE -> throw new EsqlIllegalArgumentException(
+                    "No TopN sorting encoder for type " + inverse.get(channel).type()
+                );
             };
         }
         List<TopNOperator.SortOrder> orders = topNExec.order().stream().map(order -> {

@@ -361,6 +361,10 @@ public class EsqlActionIT extends AbstractEsqlIntegTestCase {
         }
     }
 
+    public void testStats() {
+        try (EsqlQueryResponse results = run("from test | stats avg(count), sum(count), count(count)")) {}
+    }
+
     public void testFromSortWithTieBreakerLimit() {
         try (EsqlQueryResponse results = run("from test | sort data, count desc, time | limit 5 | keep data, count, time")) {
             logger.info(results);

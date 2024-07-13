@@ -20,7 +20,6 @@ import org.elasticsearch.xpack.aggregatemetric.AggregateMetricMapperPlugin;
 import org.elasticsearch.xpack.esql.EsqlTestUtils;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.junit.Before;
-import org.junit.Test;
 
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -817,16 +816,13 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             .endObject()
             .endObject()
             .endObject();
-        client().admin()
-            .indices()
-            .prepareCreate("metrics")
-            .setSettings(settings)
-            .setMapping(mapping)
-            .get();
+        client().admin().indices().prepareCreate("metrics").setSettings(settings).setMapping(mapping).get();
         index("metrics", "1", Map.of("requests", Map.of("min", 0.2, "max", 0.4, "value_count", 3, "sum", 0.9)));
         refresh("metrics");
-        //FROM metrics | STATS avg(requests), sum(requests), count(requests), max(requests), min(requests)
-        try(EsqlQueryResponse resp = run("FROM metrics | STATS max(requests), min(requests), sum(requests), count(requests), avg(requests)")){
+        try (EsqlQueryResponse resp = run("FROM metrics |  STATS avg(requests), sum(requests), max(requests), min(requests)")) {
+            System.err.println("--> resp " + resp);
+        }
+        try (EsqlQueryResponse resp = run("FROM metrics |  STATS sum(requests), avg(requests), max(requests), min(requests)")) {
             System.err.println("--> resp " + resp);
         }
     }

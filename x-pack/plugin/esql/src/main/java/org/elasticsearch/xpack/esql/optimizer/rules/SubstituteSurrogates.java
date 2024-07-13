@@ -27,7 +27,6 @@ import org.elasticsearch.xpack.esql.plan.logical.local.LocalSupplier;
 import org.elasticsearch.xpack.esql.planner.PlannerUtils;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,31 +42,52 @@ public final class SubstituteSurrogates extends OptimizerRules.OptimizerRule<Agg
     protected LogicalPlan rule(Aggregate aggregate) {
         var aggs = aggregate.aggregates();
         List<NamedExpression> newAggs = new ArrayList<>(aggs.size());
-        // existing aggregate and their respective attributes
-        Map<AggregateFunction, Attribute> aggFuncToAttr = new HashMap<>();
-        // surrogate functions eval
+        // existing aggregate and their respective attributes surrogate functions eval
+        class AggFuncToAttribute {
+            final Map<AggregateFunction, Attribute> maps = new HashMap<>();
+            int counter = 0;
+
+            Attribute getOrCreate(NamedExpression agg, AggregateFunction af) {
+                Attribute attr = maps.get(af);
+                if (attr == null) {
+                    var temporaryName = temporaryName(af, agg, counter++);
+                    // create a synthetic alias (so it doesn't clash with a user defined name)
+                    var newAlias = new Alias(agg.source(), temporaryName, null, af, null, true);
+                    attr = newAlias.toAttribute();
+                    maps.put(af, attr);
+                    newAggs.add(newAlias);
+                }
+                return attr;
+            }
+        }
+
         List<Alias> transientEval = new ArrayList<>();
         boolean changed = false;
+
+        AggFuncToAttribute aggFuncToAttribute = new AggFuncToAttribute();
 
         // first pass to check existing aggregates (to avoid duplication and alias waste)
         for (NamedExpression agg : aggs) {
             if (Alias.unwrap(agg) instanceof AggregateFunction af) {
                 if ((af instanceof SurrogateExpression se && se.surrogate() != null) == false) {
-                    aggFuncToAttr.put(af, agg.toAttribute());
+                    aggFuncToAttribute.maps.put(af, agg.toAttribute());
                 }
             }
         }
-
-        int[] counter = new int[] { 0 };
         // 0. check list of surrogate expressions
         for (NamedExpression agg : aggs) {
             Expression e = Alias.unwrap(agg);
             if (e instanceof SurrogateExpression sf && sf.surrogate() != null) {
                 changed = true;
                 Expression s = sf.surrogate();
-
+                // the replacement is another aggregate function, so replace it in place
+                if (s instanceof AggregateFunction af) {
+                    var attr = aggFuncToAttribute.getOrCreate(agg, af);
+                    var aliased = new Alias(agg.source(), agg.name(), null, attr, agg.toAttribute().id());
+                    transientEval.add(aliased);
+                }
                 // if the expression is NOT a 1:1 replacement need to add an eval
-                if (s instanceof AggregateFunction == false) {
+                else {
                     // 1. collect all aggregate functions from the expression
                     var surrogateWithRefs = s.transformUp(AggregateFunction.class, af -> {
                         // TODO: more generic than this?
@@ -76,27 +96,13 @@ public final class SubstituteSurrogates extends OptimizerRules.OptimizerRule<Agg
                         }
                         // 2. check if they are already use otherwise add them to the Aggregate with some made-up aliases
                         // 3. replace them inside the expression using the given alias
-                        var attr = aggFuncToAttr.get(af);
-                        // the agg doesn't exist in the Aggregate, create an alias for it and save its attribute
-                        if (attr == null) {
-                            var temporaryName = temporaryName(af, agg, counter[0]++);
-                            // create a synthetic alias (so it doesn't clash with a user defined name)
-                            var newAlias = new Alias(agg.source(), temporaryName, null, af, null, true);
-                            attr = newAlias.toAttribute();
-                            aggFuncToAttr.put(af, attr);
-                            newAggs.add(newAlias);
-                        }
-                        return attr;
+                        return aggFuncToAttribute.getOrCreate(agg, af);
                     });
                     // 4. move the expression as an eval using the original alias
                     // copy the original alias id so that other nodes using it down stream (e.g. eval referring to the original agg)
                     // don't have to updated
                     var aliased = new Alias(agg.source(), agg.name(), null, surrogateWithRefs, agg.toAttribute().id());
                     transientEval.add(aliased);
-                }
-                // the replacement is another aggregate function, so replace it in place
-                else {
-                    newAggs.add((NamedExpression) agg.replaceChildren(Collections.singletonList(s)));
                 }
             } else {
                 newAggs.add(agg);

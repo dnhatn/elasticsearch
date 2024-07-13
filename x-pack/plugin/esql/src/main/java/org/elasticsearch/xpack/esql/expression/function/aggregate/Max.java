@@ -24,6 +24,7 @@ import org.elasticsearch.xpack.esql.expression.SurrogateExpression;
 import org.elasticsearch.xpack.esql.expression.function.Example;
 import org.elasticsearch.xpack.esql.expression.function.FunctionInfo;
 import org.elasticsearch.xpack.esql.expression.function.Param;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.FromAggregateMetricDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvMax;
 import org.elasticsearch.xpack.esql.planner.ToAggregator;
 
@@ -49,7 +50,10 @@ public class Max extends AggregateFunction implements ToAggregator, SurrogateExp
                 tag = "docsStatsMaxNestedExpression"
             ) }
     )
-    public Max(Source source, @Param(name = "field", type = { "boolean", "double", "integer", "long", "date" }) Expression field) {
+    public Max(
+        Source source,
+        @Param(name = "field", type = { "aggregate_metric_double", "boolean", "double", "integer", "long", "date" }) Expression field
+    ) {
         super(source, field);
     }
 
@@ -76,7 +80,10 @@ public class Max extends AggregateFunction implements ToAggregator, SurrogateExp
     protected TypeResolution resolveType() {
         return TypeResolutions.isType(
             this,
-            e -> e == DataType.BOOLEAN || e == DataType.DATETIME || (e.isNumeric() && e != DataType.UNSIGNED_LONG),
+            e -> e == DataType.BOOLEAN
+                || e == DataType.DATETIME
+                || (e.isNumeric() && e != DataType.UNSIGNED_LONG)
+                || e == DataType.AGGREGATE_METRIC_DOUBLE,
             sourceText(),
             DEFAULT,
             "boolean",
@@ -87,7 +94,8 @@ public class Max extends AggregateFunction implements ToAggregator, SurrogateExp
 
     @Override
     public DataType dataType() {
-        return field().dataType();
+        DataType dataType = field().dataType();
+        return dataType == DataType.AGGREGATE_METRIC_DOUBLE ? DataType.DOUBLE : dataType;
     }
 
     @Override
@@ -110,6 +118,10 @@ public class Max extends AggregateFunction implements ToAggregator, SurrogateExp
 
     @Override
     public Expression surrogate() {
-        return field().foldable() ? new MvMax(source(), field()) : null;
+        Expression field = field();
+        if (field.dataType() == DataType.AGGREGATE_METRIC_DOUBLE) {
+            return new Max(source(), new FromAggregateMetricDouble(source(), field, FromAggregateMetricDouble.Metric.MAX));
+        }
+        return field.foldable() ? new MvMax(source(), field) : null;
     }
 }
