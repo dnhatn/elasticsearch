@@ -243,6 +243,13 @@ public class EsqlBaseParserBaseVisitor<T> extends AbstractParseTreeVisitor<T> im
    * <p>The default implementation returns the result of calling
    * {@link #visitChildren} on {@code ctx}.</p>
    */
+  @Override public T visitMetricsCommand(EsqlBaseParser.MetricsCommandContext ctx) { return visitChildren(ctx); }
+  /**
+   * {@inheritDoc}
+   *
+   * <p>The default implementation returns the result of calling
+   * {@link #visitChildren} on {@code ctx}.</p>
+   */
   @Override public T visitIndexPattern(EsqlBaseParser.IndexPatternContext ctx) { return visitChildren(ctx); }
   /**
    * {@inheritDoc}
@@ -279,13 +286,6 @@ public class EsqlBaseParserBaseVisitor<T> extends AbstractParseTreeVisitor<T> im
    * {@link #visitChildren} on {@code ctx}.</p>
    */
   @Override public T visitDeprecated_metadata(EsqlBaseParser.Deprecated_metadataContext ctx) { return visitChildren(ctx); }
-  /**
-   * {@inheritDoc}
-   *
-   * <p>The default implementation returns the result of calling
-   * {@link #visitChildren} on {@code ctx}.</p>
-   */
-  @Override public T visitMetricsCommand(EsqlBaseParser.MetricsCommandContext ctx) { return visitChildren(ctx); }
   /**
    * {@inheritDoc}
    *

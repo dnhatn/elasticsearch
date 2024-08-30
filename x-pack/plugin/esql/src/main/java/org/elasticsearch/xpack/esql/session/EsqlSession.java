@@ -14,6 +14,9 @@ import org.elasticsearch.common.collect.Iterators;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.index.IndexMode;
+import org.elasticsearch.index.mapper.IndexModeFieldMapper;
+import org.elasticsearch.index.query.MatchQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
@@ -55,6 +58,7 @@ import org.elasticsearch.xpack.esql.plan.logical.Phased;
 import org.elasticsearch.xpack.esql.plan.logical.Project;
 import org.elasticsearch.xpack.esql.plan.logical.RegexExtract;
 import org.elasticsearch.xpack.esql.plan.logical.Stats;
+import org.elasticsearch.xpack.esql.plan.logical.UnresolvedRelation;
 import org.elasticsearch.xpack.esql.plan.physical.EstimatesRowSize;
 import org.elasticsearch.xpack.esql.plan.physical.FragmentExec;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
@@ -250,7 +254,7 @@ public class EsqlSession {
             TableInfo tableInfo = preAnalysis.indices.get(0);
             TableIdentifier table = tableInfo.id();
             var fieldNames = fieldNames(parsed, enrichPolicyMatchFields);
-            indexResolver.resolveAsMergedMapping(table.index(), fieldNames, listener);
+            indexResolver.resolveAsMergedMapping(table.index(), indexFilter(parsed), fieldNames, listener);
         } else {
             try {
                 // occurs when dealing with local relations (row a = 1)
@@ -352,6 +356,16 @@ public class EsqlSession {
             fieldNames.addAll(subfields(enrichPolicyMatchFields));
             return fieldNames;
         }
+    }
+
+    static QueryBuilder indexFilter(LogicalPlan parsed){
+        Holder<QueryBuilder> filter = new Holder<>();
+        parsed.forEachDown(UnresolvedRelation.class, r -> {
+            if (r.indexMode() != IndexMode.STANDARD) {
+                filter.set(new MatchQueryBuilder(IndexModeFieldMapper.NAME, r.indexMode().getName()));
+            }
+        });
+        return filter.get();
     }
 
     private static boolean matchByName(Attribute attr, String other, boolean skipIfPattern) {

@@ -254,10 +254,10 @@ public class LogicalPlanBuilder extends ExpressionBuilder {
     public LogicalPlan visitFromCommand(EsqlBaseParser.FromCommandContext ctx) {
         Source source = source(ctx);
         TableIdentifier table = new TableIdentifier(source, null, visitIndexPattern(ctx.indexPattern()));
-        Map<String, Attribute> metadataMap = new LinkedHashMap<>();
+        final List<Attribute> metadataFields;
         if (ctx.metadata() != null) {
             var deprecatedContext = ctx.metadata().deprecated_metadata();
-            MetadataOptionContext metadataOptionContext = null;
+            final MetadataOptionContext metadataOptionContext;
             if (deprecatedContext != null) {
                 var s = source(deprecatedContext).source();
                 addWarning(
@@ -268,28 +268,28 @@ public class LogicalPlanBuilder extends ExpressionBuilder {
                 metadataOptionContext = deprecatedContext.metadataOption();
             } else {
                 metadataOptionContext = ctx.metadata().metadataOption();
-
             }
-            for (var c : metadataOptionContext.UNQUOTED_SOURCE()) {
-                String id = c.getText();
-                Source src = source(c);
-                if (MetadataAttribute.isSupported(id) == false) {
-                    throw new ParsingException(src, "unsupported metadata field [" + id + "]");
-                }
-                Attribute a = metadataMap.put(id, MetadataAttribute.create(src, id));
-                if (a != null) {
-                    throw new ParsingException(src, "metadata field [" + id + "] already declared [" + a.source().source() + "]");
-                }
+            metadataFields = visitMetadataFields(metadataOptionContext);
+        } else {
+            metadataFields = List.of();
+        }
+        return new UnresolvedRelation(source, table, false, metadataFields, IndexMode.STANDARD, null);
+    }
+
+    private List<Attribute> visitMetadataFields(MetadataOptionContext ctx) {
+        Map<String, Attribute> metadataMap = new LinkedHashMap<>();
+        for (var c : ctx.UNQUOTED_SOURCE()) {
+            String id = c.getText();
+            Source src = source(c);
+            if (MetadataAttribute.isSupported(id) == false) {
+                throw new ParsingException(src, "unsupported metadata field [" + id + "]");
+            }
+            Attribute a = metadataMap.put(id, MetadataAttribute.create(src, id));
+            if (a != null) {
+                throw new ParsingException(src, "metadata field [" + id + "] already declared [" + a.source().source() + "]");
             }
         }
-        return new UnresolvedRelation(
-            source,
-            table,
-            false,
-            List.of(metadataMap.values().toArray(Attribute[]::new)),
-            IndexMode.STANDARD,
-            null
-        );
+        return metadataMap.values().stream().toList();
     }
 
     @Override
@@ -495,13 +495,8 @@ public class LogicalPlanBuilder extends ExpressionBuilder {
         }
         Source source = source(ctx);
         TableIdentifier table = new TableIdentifier(source, null, visitIndexPattern(ctx.indexPattern()));
-
-        if (ctx.aggregates == null && ctx.grouping == null) {
-            return new UnresolvedRelation(source, table, false, List.of(), IndexMode.STANDARD, null);
-        }
-        final Stats stats = stats(source, ctx.grouping, ctx.aggregates);
-        var relation = new UnresolvedRelation(source, table, false, List.of(), IndexMode.STANDARD, null);
-        return new Aggregate(source, relation, Aggregate.AggregateType.METRICS, stats.groupings, stats.aggregates);
+        List<Attribute> metadataFields = ctx.metadataOption() != null ? visitMetadataFields(ctx.metadataOption()) : List.of();
+        return new UnresolvedRelation(source, table, false, metadataFields, IndexMode.TIME_SERIES, null);
     }
 
     @Override

@@ -127,6 +127,10 @@ fromCommand
     : FROM indexPattern (COMMA indexPattern)* metadata?
     ;
 
+metricsCommand
+    : DEV_METRICS indexPattern (COMMA indexPattern)* metadataOption?
+    ;
+
 indexPattern
     : clusterString COLON indexString
     | indexString
@@ -152,10 +156,6 @@ metadataOption
 
 deprecated_metadata
     : OPENING_BRACKET metadataOption CLOSING_BRACKET
-    ;
-
-metricsCommand
-    : DEV_METRICS indexPattern (COMMA indexPattern)* aggregates=fields? (BY grouping=fields)?
     ;
 
 evalCommand
