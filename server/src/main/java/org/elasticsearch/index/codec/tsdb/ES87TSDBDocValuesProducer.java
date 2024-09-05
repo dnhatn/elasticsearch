@@ -27,7 +27,6 @@ import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.ByteArrayDataInput;
-import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.RandomAccessInput;
@@ -51,6 +50,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
     private final Map<String, SortedSetEntry> sortedSets = new HashMap<>();
     private final Map<String, SortedNumericEntry> sortedNumerics = new HashMap<>();
     private final IndexInput data;
+    private final IndexInput meta;
     private final int maxDoc;
 
     ES87TSDBDocValuesProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension)
@@ -60,25 +60,23 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
         // read in the entries from the metadata file.
         int version = -1;
-        try (ChecksumIndexInput in = state.directory.openChecksumInput(metaName, state.context)) {
-            Throwable priorE = null;
-
-            try {
-                version = CodecUtil.checkIndexHeader(
-                    in,
-                    metaCodec,
-                    ES87TSDBDocValuesFormat.VERSION_START,
-                    ES87TSDBDocValuesFormat.VERSION_CURRENT,
-                    state.segmentInfo.getId(),
-                    state.segmentSuffix
-                );
-
-                readFields(in, state.fieldInfos);
-
-            } catch (Throwable exception) {
-                priorE = exception;
-            } finally {
-                CodecUtil.checkFooter(in, priorE);
+        IndexInput metaIn = state.directory.openInput(metaName, state.context);
+        try {
+            version = CodecUtil.checkIndexHeader(
+                metaIn,
+                metaCodec,
+                ES87TSDBDocValuesFormat.VERSION_START,
+                ES87TSDBDocValuesFormat.VERSION_CURRENT,
+                state.segmentInfo.getId(),
+                state.segmentSuffix
+            );
+            readFields(metaIn, state.fieldInfos);
+            CodecUtil.retrieveChecksum(metaIn);
+            this.meta = metaIn;
+            metaIn = null;
+        } finally {
+            if (metaIn != null) {
+                IOUtils.closeWhileHandlingException(metaIn);
             }
         }
 
@@ -145,7 +143,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
             } else {
                 // variable length
                 final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-                final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
+                final LongValues addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesData);
                 return new DenseBinaryDocValues(maxDoc) {
                     final BytesRef bytes = new BytesRef(new byte[entry.maxLength], 0, entry.maxLength);
 
@@ -185,7 +183,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
             } else {
                 // variable length
                 final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-                final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
+                final LongValues addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesData);
                 return new SparseBinaryDocValues(disi) {
                     final BytesRef bytes = new BytesRef(new byte[entry.maxLength], 0, entry.maxLength);
 
@@ -350,7 +348,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
         @Override
         public TermsEnum termsEnum() throws IOException {
-            return new TermsDict(entry.termsDictEntry, data);
+            return new TermsDict(entry.termsDictEntry, data, meta);
         }
     }
 
@@ -388,7 +386,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
         @Override
         public TermsEnum termsEnum() throws IOException {
-            return new TermsDict(entry.termsDictEntry, data);
+            return new TermsDict(entry.termsDictEntry, data, meta);
         }
     }
 
@@ -409,17 +407,17 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         long currentCompressedBlockStart = -1;
         long currentCompressedBlockEnd = -1;
 
-        TermsDict(TermsDictEntry entry, IndexInput data) throws IOException {
+        TermsDict(TermsDictEntry entry, IndexInput data, IndexInput meta) throws IOException {
             this.entry = entry;
             RandomAccessInput addressesSlice = data.randomAccessSlice(entry.termsAddressesOffset, entry.termsAddressesLength);
-            blockAddresses = DirectMonotonicReader.getInstance(entry.termsAddressesMeta, addressesSlice);
+            blockAddresses = DirectMonotonicReader.getInstance(entry.getOrLoadTermAddressesMeta(meta), addressesSlice);
             bytes = data.slice("terms", entry.termsDataOffset, entry.termsDataLength);
             blockMask = (1L << TERMS_DICT_BLOCK_LZ4_SHIFT) - 1;
             RandomAccessInput indexAddressesSlice = data.randomAccessSlice(
                 entry.termsIndexAddressesOffset,
                 entry.termsIndexAddressesLength
             );
-            indexAddresses = DirectMonotonicReader.getInstance(entry.termsIndexAddressesMeta, indexAddressesSlice);
+            indexAddresses = DirectMonotonicReader.getInstance(entry.getOrLoadTermIndexAddressesMeta(meta), indexAddressesSlice);
             indexBytes = data.slice("terms-index", entry.termsIndexOffset, entry.termsIndexLength);
             term = new BytesRef(entry.maxTermLength);
 
@@ -706,7 +704,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
     @Override
     public void close() throws IOException {
-        data.close();
+        IOUtils.close(meta, data);
     }
 
     private void readFields(IndexInput meta, FieldInfos infos) throws IOException {
@@ -745,11 +743,14 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         entry.denseRankPower = meta.readByte();
         entry.numValues = meta.readLong();
         if (entry.numValues > 0) {
+            entry.indexMeta = meta.getFilePointer();
             final int indexBlockShift = meta.readInt();
             // Special case, -1 means there are no blocks, so no need to load the metadata for it
             // -1 is written when there the cardinality of a field is exactly one.
-            if (indexBlockShift != -1) {
-                entry.indexMeta = DirectMonotonicReader.loadMeta(
+            if (indexBlockShift == -1) {
+                entry.indexMeta = null;
+            } else {
+                DirectMonotonicReader.loadMeta(
                     meta,
                     1 + ((entry.numValues - 1) >>> ES87TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT),
                     indexBlockShift
@@ -779,9 +780,11 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
             // Old count of uncompressed addresses
             long numAddresses = entry.numDocsWithField + 1L;
 
-            final int blockShift = meta.readVInt();
-            entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, numAddresses, blockShift);
+            entry.addressesMeta = meta.getFilePointer();
+            DirectMonotonicReader.loadMeta(meta, numAddresses, meta.readVInt());
             entry.addressesLength = meta.readLong();
+        } else {
+            entry.addressesMeta = null;
         }
         return entry;
     }
@@ -797,8 +800,8 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         entry.numDocsWithField = meta.readInt();
         if (entry.numDocsWithField != entry.numValues) {
             entry.addressesOffset = meta.readLong();
-            final int blockShift = meta.readVInt();
-            entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, entry.numDocsWithField + 1, blockShift);
+            entry.addressesMeta = meta.getFilePointer();
+            DirectMonotonicReader.loadMeta(meta, entry.numDocsWithField + 1, meta.readVInt());
             entry.addressesLength = meta.readLong();
         }
         return entry;
@@ -834,9 +837,10 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
     private static void readTermDict(IndexInput meta, TermsDictEntry entry) throws IOException {
         entry.termsDictSize = meta.readVLong();
-        final int blockShift = meta.readInt();
+        entry.blockShift = meta.readInt();
+        entry.termsAddressesMeta = meta.getFilePointer();
         final long addressesSize = (entry.termsDictSize + (1L << TERMS_DICT_BLOCK_LZ4_SHIFT) - 1) >>> TERMS_DICT_BLOCK_LZ4_SHIFT;
-        entry.termsAddressesMeta = DirectMonotonicReader.loadMeta(meta, addressesSize, blockShift);
+        DirectMonotonicReader.loadMeta(meta, addressesSize, entry.blockShift);
         entry.maxTermLength = meta.readInt();
         entry.maxBlockLength = meta.readInt();
         entry.termsDataOffset = meta.readLong();
@@ -844,8 +848,9 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         entry.termsAddressesOffset = meta.readLong();
         entry.termsAddressesLength = meta.readLong();
         entry.termsDictIndexShift = meta.readInt();
+        entry.termsIndexAddressesMeta = meta.getFilePointer();
         final long indexSize = (entry.termsDictSize + (1L << entry.termsDictIndexShift) - 1) >>> entry.termsDictIndexShift;
-        entry.termsIndexAddressesMeta = DirectMonotonicReader.loadMeta(meta, 1 + indexSize, blockShift);
+        DirectMonotonicReader.loadMeta(meta, 1 + indexSize, entry.blockShift);
         entry.termsIndexOffset = meta.readLong();
         entry.termsIndexLength = meta.readLong();
         entry.termsIndexAddressesOffset = meta.readLong();
@@ -954,7 +959,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         // makes things slower.
 
         final RandomAccessInput indexSlice = data.randomAccessSlice(entry.indexOffset, entry.indexLength);
-        final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.indexMeta, indexSlice);
+        final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.getOrLoadIndexMeta(meta), indexSlice);
         final IndexInput valuesData = data.slice("values", entry.valuesOffset, entry.valuesLength);
 
         final int bitsPerOrd = maxOrd >= 0 ? PackedInts.bitsRequired(maxOrd - 1) : -1;
@@ -1085,7 +1090,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
     private NumericValues getValues(NumericEntry entry, final long maxOrd) throws IOException {
         assert entry.numValues > 0;
         final RandomAccessInput indexSlice = data.randomAccessSlice(entry.indexOffset, entry.indexLength);
-        final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.indexMeta, indexSlice);
+        final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.getOrLoadIndexMeta(meta), indexSlice);
 
         final IndexInput valuesData = data.slice("values", entry.valuesOffset, entry.valuesLength);
         final int bitsPerOrd = maxOrd >= 0 ? PackedInts.bitsRequired(maxOrd - 1) : -1;
@@ -1122,7 +1127,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         final RandomAccessInput addressesInput = data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-        final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesInput);
+        final LongValues addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesInput);
 
         final NumericValues values = getValues(entry, maxOrd);
 
@@ -1256,9 +1261,29 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         long numValues;
         long indexOffset;
         long indexLength;
-        DirectMonotonicReader.Meta indexMeta;
+        Object indexMeta; // prefer reloading instead volatile
         long valuesOffset;
         long valuesLength;
+
+        DirectMonotonicReader.Meta getOrLoadIndexMeta(IndexInput meta) throws IOException {
+            Object curr = indexMeta;
+            if (curr instanceof DirectMonotonicReader.Meta loaded) {
+                return loaded;
+            } else if (curr instanceof Long address) {
+                meta = meta.clone();
+                meta.seek(address);
+                final var loaded = DirectMonotonicReader.loadMeta(
+                    meta,
+                    1 + ((numValues - 1) >>> ES87TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT),
+                    meta.readInt()
+                );
+                this.indexMeta = loaded;
+                return loaded;
+            } else {
+                assert false : "expected either an address or loaded meta; but got " + curr;
+                throw new IllegalStateException("expected either an address or loaded meta; but got " + curr);
+            }
+        }
     }
 
     private static class BinaryEntry {
@@ -1273,14 +1298,46 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         int maxLength;
         long addressesOffset;
         long addressesLength;
-        DirectMonotonicReader.Meta addressesMeta;
+        Object addressesMeta;
+
+        DirectMonotonicReader.Meta getOrLoadAddressesMeta(IndexInput meta) throws IOException {
+            Object curr = addressesMeta;
+            if (curr instanceof DirectMonotonicReader.Meta loaded) {
+                return loaded;
+            } else if (curr instanceof Long address) {
+                meta = meta.clone();
+                meta.seek(address);
+                final var loaded = DirectMonotonicReader.loadMeta(meta, numDocsWithField + 1, meta.readVInt());
+                this.addressesMeta = loaded;
+                return loaded;
+            } else {
+                assert false : "expected either an address or loaded meta; but got " + curr;
+                throw new IllegalStateException("expected either an address or loaded meta; but got " + curr);
+            }
+        }
     }
 
     private static class SortedNumericEntry extends NumericEntry {
         int numDocsWithField;
-        DirectMonotonicReader.Meta addressesMeta;
+        Object addressesMeta;
         long addressesOffset;
         long addressesLength;
+
+        DirectMonotonicReader.Meta getOrLoadAddressesMeta(IndexInput meta) throws IOException {
+            Object curr = addressesMeta;
+            if (curr instanceof DirectMonotonicReader.Meta loaded) {
+                return loaded;
+            } else if (curr instanceof Long address) {
+                meta = meta.clone();
+                meta.seek(address);
+                final var loaded = DirectMonotonicReader.loadMeta(meta, numDocsWithField + 1, meta.readVInt());
+                this.addressesMeta = loaded;
+                return loaded;
+            } else {
+                assert false : "expected either an address or loaded meta; but got " + curr;
+                throw new IllegalStateException("expected either an address or loaded meta; but got " + curr);
+            }
+        }
     }
 
     private static class SortedEntry {
@@ -1296,20 +1353,54 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
     private static class TermsDictEntry {
         long termsDictSize;
-        DirectMonotonicReader.Meta termsAddressesMeta;
+        int blockShift;
+        Object termsAddressesMeta;
         int maxTermLength;
         long termsDataOffset;
         long termsDataLength;
         long termsAddressesOffset;
         long termsAddressesLength;
         int termsDictIndexShift;
-        DirectMonotonicReader.Meta termsIndexAddressesMeta;
+        Object termsIndexAddressesMeta;
         long termsIndexOffset;
         long termsIndexLength;
         long termsIndexAddressesOffset;
         long termsIndexAddressesLength;
-
         int maxBlockLength;
+
+        DirectMonotonicReader.Meta getOrLoadTermAddressesMeta(IndexInput meta) throws IOException {
+            Object curr = termsAddressesMeta;
+            if (curr instanceof DirectMonotonicReader.Meta loaded) {
+                return loaded;
+            } else if (curr instanceof Long address) {
+                meta = meta.clone();
+                meta.seek(address);
+                final long addressesSize = (termsDictSize + (1L << TERMS_DICT_BLOCK_LZ4_SHIFT) - 1) >>> TERMS_DICT_BLOCK_LZ4_SHIFT;
+                final var loaded = DirectMonotonicReader.loadMeta(meta, addressesSize, blockShift);
+                this.termsAddressesMeta = loaded;
+                return loaded;
+            } else {
+                assert false : "expected either an address or loaded meta; but got " + curr;
+                throw new IllegalStateException("expected either an address or loaded meta; but got " + curr);
+            }
+        }
+
+        DirectMonotonicReader.Meta getOrLoadTermIndexAddressesMeta(IndexInput meta) throws IOException {
+            Object curr = this.termsIndexAddressesMeta;
+            if (curr instanceof DirectMonotonicReader.Meta loaded) {
+                return loaded;
+            } else if (curr instanceof Long address) {
+                meta = meta.clone();
+                meta.seek(address);
+                final long indexSize = (termsDictSize + (1L << termsDictIndexShift) - 1) >>> termsDictIndexShift;
+                final var loaded = DirectMonotonicReader.loadMeta(meta, 1 + indexSize, blockShift);
+                this.termsIndexAddressesMeta = loaded;
+                return loaded;
+            } else {
+                assert false : "expected either an address or loaded meta; but got " + curr;
+                throw new IllegalStateException("expected either an address or loaded meta; but got " + curr);
+            }
+        }
     }
 
 }
