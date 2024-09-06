@@ -44,11 +44,11 @@ import java.util.Map;
 import static org.elasticsearch.index.codec.tsdb.ES87TSDBDocValuesFormat.TERMS_DICT_BLOCK_LZ4_SHIFT;
 
 public class ES87TSDBDocValuesProducer extends DocValuesProducer {
-    private final Map<String, NumericEntry> numerics = new HashMap<>();
-    private final Map<String, BinaryEntry> binaries = new HashMap<>();
-    private final Map<String, SortedEntry> sorted = new HashMap<>();
-    private final Map<String, SortedSetEntry> sortedSets = new HashMap<>();
-    private final Map<String, SortedNumericEntry> sortedNumerics = new HashMap<>();
+    private final Map<Integer, NumericEntry> numerics = new HashMap<>();
+    private final Map<Integer, BinaryEntry> binaries = new HashMap<>();
+    private final Map<Integer, SortedEntry> sorted = new HashMap<>();
+    private final Map<Integer, SortedSetEntry> sortedSets = new HashMap<>();
+    private final Map<Integer, SortedNumericEntry> sortedNumerics = new HashMap<>();
     private final IndexInput data;
     private final IndexInput meta;
     private final int maxDoc;
@@ -112,13 +112,13 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
     @Override
     public NumericDocValues getNumeric(FieldInfo field) throws IOException {
-        NumericEntry entry = numerics.get(field.name);
+        NumericEntry entry = numerics.get(field.number);
         return getNumeric(entry, -1);
     }
 
     @Override
     public BinaryDocValues getBinary(FieldInfo field) throws IOException {
-        BinaryEntry entry = binaries.get(field.name);
+        BinaryEntry entry = binaries.get(field.number);
         if (entry.docsWithFieldOffset == -2) {
             return DocValues.emptyBinary();
         }
@@ -276,7 +276,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
     @Override
     public SortedDocValues getSorted(FieldInfo field) throws IOException {
-        SortedEntry entry = sorted.get(field.name);
+        SortedEntry entry = sorted.get(field.number);
         return getSorted(entry);
     }
 
@@ -630,13 +630,13 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
     @Override
     public SortedNumericDocValues getSortedNumeric(FieldInfo field) throws IOException {
-        SortedNumericEntry entry = sortedNumerics.get(field.name);
+        SortedNumericEntry entry = sortedNumerics.get(field.number);
         return getSortedNumeric(entry, -1);
     }
 
     @Override
     public SortedSetDocValues getSortedSet(FieldInfo field) throws IOException {
-        SortedSetEntry entry = sortedSets.get(field.name);
+        SortedSetEntry entry = sortedSets.get(field.number);
         if (entry.singleValueEntry != null) {
             return DocValues.singleton(getSorted(entry.singleValueEntry));
         }
@@ -715,15 +715,15 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
             }
             byte type = meta.readByte();
             if (type == ES87TSDBDocValuesFormat.NUMERIC) {
-                numerics.put(info.name, readNumeric(meta));
+                numerics.put(fieldNumber, readNumeric(meta));
             } else if (type == ES87TSDBDocValuesFormat.BINARY) {
-                binaries.put(info.name, readBinary(meta));
+                binaries.put(fieldNumber, readBinary(meta));
             } else if (type == ES87TSDBDocValuesFormat.SORTED) {
-                sorted.put(info.name, readSorted(meta));
+                sorted.put(fieldNumber, readSorted(meta));
             } else if (type == ES87TSDBDocValuesFormat.SORTED_SET) {
-                sortedSets.put(info.name, readSortedSet(meta));
+                sortedSets.put(fieldNumber, readSortedSet(meta));
             } else if (type == ES87TSDBDocValuesFormat.SORTED_NUMERIC) {
-                sortedNumerics.put(info.name, readSortedNumeric(meta));
+                sortedNumerics.put(fieldNumber, readSortedNumeric(meta));
             } else {
                 throw new CorruptIndexException("invalid type: " + type, meta);
             }
