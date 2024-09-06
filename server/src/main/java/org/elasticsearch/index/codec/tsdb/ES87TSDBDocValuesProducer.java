@@ -44,20 +44,26 @@ import java.util.Map;
 import static org.elasticsearch.index.codec.tsdb.ES87TSDBDocValuesFormat.TERMS_DICT_BLOCK_LZ4_SHIFT;
 
 public class ES87TSDBDocValuesProducer extends DocValuesProducer {
-    private final Map<Integer, NumericEntry> numerics = new HashMap<>();
-    private final Map<Integer, BinaryEntry> binaries = new HashMap<>();
-    private final Map<Integer, SortedEntry> sorted = new HashMap<>();
-    private final Map<Integer, SortedSetEntry> sortedSets = new HashMap<>();
-    private final Map<Integer, SortedNumericEntry> sortedNumerics = new HashMap<>();
+    private final Map<Integer, NumericEntry> numerics;
+    private final Map<Integer, BinaryEntry> binaries;
+    private final Map<Integer, SortedEntry> sorted;
+    private final Map<Integer, SortedSetEntry> sortedSets;
+    private final Map<Integer, SortedNumericEntry> sortedNumerics;
     private final IndexInput data;
     private final IndexInput meta;
     private final int maxDoc;
+    private final boolean merging;
 
     ES87TSDBDocValuesProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension)
         throws IOException {
         String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
         this.maxDoc = state.segmentInfo.maxDoc();
-
+        this.numerics = new HashMap<>();
+        this.binaries = new HashMap<>();
+        this.sorted = new HashMap<>();
+        this.sortedSets = new HashMap<>();
+        this.sortedNumerics = new HashMap<>();
+        this.merging = false;
         // read in the entries from the metadata file.
         int version = -1;
         IndexInput metaIn = state.directory.openInput(metaName, state.context);
@@ -110,6 +116,30 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         }
     }
 
+    private ES87TSDBDocValuesProducer(IndexInput data, IndexInput meta,
+                                      Map<Integer, NumericEntry> numerics,
+                                      Map<Integer, BinaryEntry> binaries,
+                                      Map<Integer, SortedEntry> sorted,
+                                      Map<Integer, SortedSetEntry> sortedSets,
+                                      Map<Integer, SortedNumericEntry> sortedNumerics,
+                                      int maxDoc,
+                                      boolean merging) {
+        this.data = data;
+        this.meta = meta;
+        this.numerics = numerics;
+        this.binaries = binaries;
+        this.sorted = sorted;
+        this.sortedSets = sortedSets;
+        this.sortedNumerics = sortedNumerics;
+        this.maxDoc = maxDoc;
+        this.merging = merging;
+    }
+
+    @Override
+    public DocValuesProducer getMergeInstance() {
+        return new ES87TSDBDocValuesProducer(data, meta, numerics, binaries, sorted, sortedSets, sortedNumerics, maxDoc, true);
+    }
+
     @Override
     public NumericDocValues getNumeric(FieldInfo field) throws IOException {
         NumericEntry entry = numerics.get(field.number);
@@ -143,7 +173,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
             } else {
                 // variable length
                 final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-                final LongValues addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesData);
+                final var addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesData, merging);
                 return new DenseBinaryDocValues(maxDoc) {
                     final BytesRef bytes = new BytesRef(new byte[entry.maxLength], 0, entry.maxLength);
 
@@ -183,7 +213,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
             } else {
                 // variable length
                 final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-                final LongValues addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesData);
+                final var addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesData, merging);
                 return new SparseBinaryDocValues(disi) {
                     final BytesRef bytes = new BytesRef(new byte[entry.maxLength], 0, entry.maxLength);
 
@@ -348,7 +378,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
         @Override
         public TermsEnum termsEnum() throws IOException {
-            return new TermsDict(entry.termsDictEntry, data, meta);
+            return new TermsDict(entry.termsDictEntry, data, meta, merging);
         }
     }
 
@@ -386,7 +416,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
         @Override
         public TermsEnum termsEnum() throws IOException {
-            return new TermsDict(entry.termsDictEntry, data, meta);
+            return new TermsDict(entry.termsDictEntry, data, meta, merging);
         }
     }
 
@@ -407,17 +437,17 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         long currentCompressedBlockStart = -1;
         long currentCompressedBlockEnd = -1;
 
-        TermsDict(TermsDictEntry entry, IndexInput data, IndexInput meta) throws IOException {
+        TermsDict(TermsDictEntry entry, IndexInput data, IndexInput meta, boolean merging) throws IOException {
             this.entry = entry;
             RandomAccessInput addressesSlice = data.randomAccessSlice(entry.termsAddressesOffset, entry.termsAddressesLength);
-            blockAddresses = DirectMonotonicReader.getInstance(entry.getOrLoadTermAddressesMeta(meta), addressesSlice);
+            blockAddresses = DirectMonotonicReader.getInstance(entry.getOrLoadTermAddressesMeta(meta), addressesSlice, merging);
             bytes = data.slice("terms", entry.termsDataOffset, entry.termsDataLength);
             blockMask = (1L << TERMS_DICT_BLOCK_LZ4_SHIFT) - 1;
             RandomAccessInput indexAddressesSlice = data.randomAccessSlice(
                 entry.termsIndexAddressesOffset,
                 entry.termsIndexAddressesLength
             );
-            indexAddresses = DirectMonotonicReader.getInstance(entry.getOrLoadTermIndexAddressesMeta(meta), indexAddressesSlice);
+            indexAddresses = DirectMonotonicReader.getInstance(entry.getOrLoadTermIndexAddressesMeta(meta), indexAddressesSlice, merging);
             indexBytes = data.slice("terms-index", entry.termsIndexOffset, entry.termsIndexLength);
             term = new BytesRef(entry.maxTermLength);
 
@@ -959,7 +989,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         // makes things slower.
 
         final RandomAccessInput indexSlice = data.randomAccessSlice(entry.indexOffset, entry.indexLength);
-        final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.getOrLoadIndexMeta(meta), indexSlice);
+        final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.getOrLoadIndexMeta(meta), indexSlice, merging);
         final IndexInput valuesData = data.slice("values", entry.valuesOffset, entry.valuesLength);
 
         final int bitsPerOrd = maxOrd >= 0 ? PackedInts.bitsRequired(maxOrd - 1) : -1;
@@ -1090,7 +1120,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
     private NumericValues getValues(NumericEntry entry, final long maxOrd) throws IOException {
         assert entry.numValues > 0;
         final RandomAccessInput indexSlice = data.randomAccessSlice(entry.indexOffset, entry.indexLength);
-        final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.getOrLoadIndexMeta(meta), indexSlice);
+        final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.getOrLoadIndexMeta(meta), indexSlice, merging);
 
         final IndexInput valuesData = data.slice("values", entry.valuesOffset, entry.valuesLength);
         final int bitsPerOrd = maxOrd >= 0 ? PackedInts.bitsRequired(maxOrd - 1) : -1;
@@ -1127,7 +1157,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         final RandomAccessInput addressesInput = data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-        final LongValues addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesInput);
+        final LongValues addresses = DirectMonotonicReader.getInstance(entry.getOrLoadAddressesMeta(meta), addressesInput, merging);
 
         final NumericValues values = getValues(entry, maxOrd);
 
