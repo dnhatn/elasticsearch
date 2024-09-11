@@ -664,7 +664,7 @@ public final class IndexSettings {
     public static final Setting<IndexMode> MODE = Setting.enumSetting(
         IndexMode.class,
         "index.mode",
-        IndexMode.STANDARD,
+        IndexMode.LOGSDB,
         new Setting.Validator<>() {
             @Override
             public void validate(IndexMode value) {}
