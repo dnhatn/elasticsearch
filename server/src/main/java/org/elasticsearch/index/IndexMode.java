@@ -303,7 +303,7 @@ public enum IndexMode {
 
         @Override
         public String getDefaultCodec() {
-            return CodecService.BEST_COMPRESSION_CODEC;
+            return CodecService.DEFAULT_CODEC;
         }
     };
 
