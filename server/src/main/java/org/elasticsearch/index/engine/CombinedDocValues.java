@@ -8,6 +8,7 @@
 
 package org.elasticsearch.index.engine;
 
+import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.NumericDocValues;
 import org.elasticsearch.index.mapper.SeqNoFieldMapper;
@@ -22,7 +23,7 @@ final class CombinedDocValues {
     private final NumericDocValues seqNoDV;
     private final NumericDocValues primaryTermDV;
     private final NumericDocValues tombstoneDV;
-    private final NumericDocValues recoverySource;
+    private final BinaryDocValues recoverySource;
 
     CombinedDocValues(LeafReader leafReader) throws IOException {
         this.versionDV = Objects.requireNonNull(leafReader.getNumericDocValues(VersionFieldMapper.NAME), "VersionDV is missing");
@@ -32,7 +33,7 @@ final class CombinedDocValues {
             "PrimaryTermDV is missing"
         );
         this.tombstoneDV = leafReader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
-        this.recoverySource = leafReader.getNumericDocValues(SourceFieldMapper.RECOVERY_SOURCE_NAME);
+        this.recoverySource = leafReader.getBinaryDocValues(SourceFieldMapper.RECOVERY_SOURCE_NAME);
     }
 
     long docVersion(int segmentDocId) throws IOException {

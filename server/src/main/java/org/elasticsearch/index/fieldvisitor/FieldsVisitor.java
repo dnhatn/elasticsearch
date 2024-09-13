@@ -110,6 +110,11 @@ public class FieldsVisitor extends FieldNamesProvidingStoredFieldsVisitor {
         }
     }
 
+
+    public void loadSource(BytesRef source) {
+        this.source = new BytesArray(source, true);
+    }
+
     @Override
     public void stringField(FieldInfo fieldInfo, String value) {
         assert sourceFieldName.equals(fieldInfo.name) == false : "source field must go through binaryField";

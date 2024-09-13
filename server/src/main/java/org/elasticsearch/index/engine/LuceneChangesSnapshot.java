@@ -8,11 +8,13 @@
 
 package org.elasticsearch.index.engine;
 
-import org.apache.lucene.codecs.StoredFieldsReader;
 import org.apache.lucene.document.LongPoint;
+import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
+import org.apache.lucene.index.StoredFieldVisitor;
+import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.FieldDoc;
@@ -66,7 +68,7 @@ final class LuceneChangesSnapshot implements Translog.Snapshot {
     private final IndexVersion indexVersionCreated;
 
     private int storedFieldsReaderOrd = -1;
-    private StoredFieldsReader storedFieldsReader = null;
+    private StoredFields storedFieldsReader = null;
 
     private final Thread creationThread; // for assertion
 
@@ -305,6 +307,27 @@ final class LuceneChangesSnapshot implements Translog.Snapshot {
         return indexSearcher.search(rangeQuery, topFieldCollectorManager);
     }
 
+    private static class MixedSourceAndDocValues extends StoredFields {
+        private final StoredFields storedFields;
+        private final BinaryDocValues binaryDV;
+
+        MixedSourceAndDocValues(StoredFields storedFields, BinaryDocValues binaryDV) {
+            this.storedFields = storedFields;
+            this.binaryDV = binaryDV;
+        }
+
+        @Override
+        public void document(int docID, StoredFieldVisitor visitor) throws IOException {
+            if (binaryDV != null) {
+                if (binaryDV.advanceExact(docID)) {
+                    FieldsVisitor fieldsVisitor = (FieldsVisitor) visitor;
+                    fieldsVisitor.loadSource(binaryDV.binaryValue());
+                }
+            }
+            storedFields.document(docID, visitor);
+        }
+    }
+
     private Translog.Operation readDocAsOp(int docIndex) throws IOException {
         final LeafReaderContext leaf = parallelArray.leafReaderContexts[docIndex];
         final int segmentDocID = scoreDocs[docIndex].doc - leaf.docBase;
@@ -317,16 +340,17 @@ final class LuceneChangesSnapshot implements Translog.Snapshot {
             return null;
         }
         final long version = parallelArray.version[docIndex];
-        final String sourceField = parallelArray.hasRecoverySource[docIndex]
-            ? SourceFieldMapper.RECOVERY_SOURCE_NAME
-            : SourceFieldMapper.NAME;
-        final FieldsVisitor fields = new FieldsVisitor(true, sourceField);
+        final FieldsVisitor fields = new FieldsVisitor(true, SourceFieldMapper.NAME);
 
         if (parallelArray.useSequentialStoredFieldsReader) {
             if (storedFieldsReaderOrd != leaf.ord) {
                 if (leaf.reader() instanceof SequentialStoredFieldsLeafReader) {
                     storedFieldsReader = ((SequentialStoredFieldsLeafReader) leaf.reader()).getSequentialStoredFieldsReader();
                     storedFieldsReaderOrd = leaf.ord;
+                    if(parallelArray.hasRecoverySource[docIndex]){
+                        BinaryDocValues binaryDocValues = leaf.reader().getBinaryDocValues(SourceFieldMapper.RECOVERY_SOURCE_NAME);
+                        storedFieldsReader = new MixedSourceAndDocValues(storedFieldsReader, binaryDocValues);
+                    }
                 } else {
                     storedFieldsReader = null;
                     storedFieldsReaderOrd = -1;
@@ -339,7 +363,12 @@ final class LuceneChangesSnapshot implements Translog.Snapshot {
             assert storedFieldsReaderOrd == leaf.ord : storedFieldsReaderOrd + " != " + leaf.ord;
             storedFieldsReader.document(segmentDocID, fields);
         } else {
-            leaf.reader().document(segmentDocID, fields);
+            StoredFields storedFields = leaf.reader().storedFields();
+            if(parallelArray.hasRecoverySource[docIndex]){
+                BinaryDocValues binaryDocValues = leaf.reader().getBinaryDocValues(SourceFieldMapper.RECOVERY_SOURCE_NAME);
+                storedFields = new MixedSourceAndDocValues(storedFields, binaryDocValues);
+            }
+            storedFields.document(segmentDocID, fields);
         }
 
         final Translog.Operation op;
