@@ -48,7 +48,7 @@ public class ES87TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValuesF
 
     @Override
     public DocValuesConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
-        return new ES87TSDBDocValuesConsumer(state, DATA_CODEC, DATA_EXTENSION, META_CODEC, META_EXTENSION);
+        return new ES87TSDBDocValuesMerger(state, DATA_CODEC, DATA_EXTENSION, META_CODEC, META_EXTENSION);
     }
 
     @Override

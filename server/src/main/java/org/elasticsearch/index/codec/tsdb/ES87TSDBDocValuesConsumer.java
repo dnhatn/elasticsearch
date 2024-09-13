@@ -45,7 +45,7 @@ import java.util.Arrays;
 import static org.elasticsearch.index.codec.tsdb.ES87TSDBDocValuesFormat.DIRECT_MONOTONIC_BLOCK_SHIFT;
 import static org.elasticsearch.index.codec.tsdb.ES87TSDBDocValuesFormat.SORTED_SET;
 
-final class ES87TSDBDocValuesConsumer extends DocValuesConsumer {
+class ES87TSDBDocValuesConsumer extends DocValuesConsumer {
 
     IndexOutput data, meta;
     final int maxDoc;
@@ -98,14 +98,19 @@ final class ES87TSDBDocValuesConsumer extends DocValuesConsumer {
     private long[] writeField(FieldInfo field, DocValuesProducer valuesProducer, long maxOrd) throws IOException {
         int numDocsWithValue = 0;
         long numValues = 0;
-
         SortedNumericDocValues values = valuesProducer.getSortedNumeric(field);
-        for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
-            numDocsWithValue++;
-            final int count = values.docValueCount();
-            numValues += count;
+        if (values instanceof WithDocValuesCount wc) {
+            numDocsWithValue = wc.numDocsWithValues();
+            numValues = wc.totalValuesCount();
+        } else if (DocValues.unwrapSingleton(values) instanceof WithDocValuesCount wc) {
+            numDocsWithValue = wc.numDocsWithValues();
+            numValues = wc.totalValuesCount();
+        } else {
+            for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
+                numDocsWithValue++;
+                numValues += values.docValueCount();
+            }
         }
-
         if (numDocsWithValue == 0) { // meta[-2, 0]: No documents with values
             meta.writeLong(-2); // docsWithFieldOffset
             meta.writeLong(0L); // docsWithFieldLength

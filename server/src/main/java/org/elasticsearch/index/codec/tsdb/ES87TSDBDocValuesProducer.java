@@ -284,7 +284,18 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
     private SortedDocValues getSorted(SortedEntry entry) throws IOException {
         final NumericDocValues ords = getNumeric(entry.ordsEntry, entry.termsDictEntry.termsDictSize);
+        long numValues = entry.ordsEntry.numValues;
+
         return new BaseSortedDocValues(entry) {
+            @Override
+            public int numDocsWithValues() throws IOException {
+                return Math.toIntExact(numValues);
+            }
+
+            @Override
+            public long totalValuesCount() throws IOException {
+                return numValues;
+            }
 
             @Override
             public int ordValue() throws IOException {
@@ -318,7 +329,7 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
         };
     }
 
-    private abstract class BaseSortedDocValues extends SortedDocValues {
+    private abstract class BaseSortedDocValues extends SortedDocValues implements WithDocValuesCount {
 
         final SortedEntry entry;
         final TermsEnum termsEnum;
@@ -858,7 +869,6 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
 
     private NumericDocValues getNumeric(NumericEntry entry, long maxOrd) throws IOException {
         if (entry.docsWithFieldOffset == -2) {
-            // empty
             return DocValues.emptyNumeric();
         }
 
@@ -1080,6 +1090,10 @@ public class ES87TSDBDocValuesProducer extends DocValuesProducer {
                 }
             };
         }
+    }
+
+    abstract class NumericDocValuesWithCount extends NumericDocValues implements WithDocValuesCount {
+
     }
 
     private NumericValues getValues(NumericEntry entry, final long maxOrd) throws IOException {
