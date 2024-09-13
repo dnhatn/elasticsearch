@@ -12,6 +12,7 @@ import org.apache.lucene.codecs.DocValuesProducer;
 import org.apache.lucene.codecs.StoredFieldsReader;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.CodecReader;
+import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FilterCodecReader;
 import org.apache.lucene.index.FilterNumericDocValues;
@@ -69,28 +70,20 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
         s.setQueryCache(null);
         Weight weight = s.createWeight(s.rewrite(retainSourceQuerySupplier.get()), ScoreMode.COMPLETE_NO_SCORES, 1.0f);
         Scorer scorer = weight.scorer(reader.getContext());
-        if (scorer != null) {
-            BitSet recoverySourceToKeep = BitSet.of(scorer.iterator(), reader.maxDoc());
-            // calculating the cardinality is significantly cheaper than skipping all bulk-merging we might do
-            // if retentions are high we keep most of it
-            if (recoverySourceToKeep.cardinality() == reader.maxDoc()) {
-                return reader; // keep all source
-            }
-            return new SourcePruningFilterCodecReader(recoverySourceField, pruneIdField, reader, recoverySourceToKeep);
+        if (scorer != null && scorer.iterator().nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
+            return reader;
         } else {
-            return new SourcePruningFilterCodecReader(recoverySourceField, pruneIdField, reader, null);
+            return new SourcePruningFilterCodecReader(recoverySourceField, pruneIdField, reader);
         }
     }
 
     private static class SourcePruningFilterCodecReader extends FilterCodecReader {
-        private final BitSet recoverySourceToKeep;
         private final String recoverySourceField;
         private final boolean pruneIdField;
 
-        SourcePruningFilterCodecReader(String recoverySourceField, boolean pruneIdField, CodecReader reader, BitSet recoverySourceToKeep) {
+        SourcePruningFilterCodecReader(String recoverySourceField, boolean pruneIdField, CodecReader reader) {
             super(reader);
             this.recoverySourceField = recoverySourceField;
-            this.recoverySourceToKeep = recoverySourceToKeep;
             this.pruneIdField = pruneIdField;
         }
 
@@ -100,37 +93,11 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
             return new FilterDocValuesProducer(docValuesReader) {
                 @Override
                 public NumericDocValues getNumeric(FieldInfo field) throws IOException {
-                    NumericDocValues numeric = super.getNumeric(field);
                     if (recoverySourceField.equals(field.name)) {
-                        assert numeric != null : recoverySourceField + " must have numeric DV but was null";
-                        final DocIdSetIterator intersection;
-                        if (recoverySourceToKeep == null) {
-                            // we can't return null here lucenes DocIdMerger expects an instance
-                            intersection = DocIdSetIterator.empty();
-                        } else {
-                            intersection = ConjunctionUtils.intersectIterators(
-                                Arrays.asList(numeric, new BitSetIterator(recoverySourceToKeep, recoverySourceToKeep.length()))
-                            );
-                        }
-                        return new FilterNumericDocValues(numeric) {
-                            @Override
-                            public int nextDoc() throws IOException {
-                                return intersection.nextDoc();
-                            }
-
-                            @Override
-                            public int advance(int target) {
-                                throw new UnsupportedOperationException();
-                            }
-
-                            @Override
-                            public boolean advanceExact(int target) {
-                                throw new UnsupportedOperationException();
-                            }
-                        };
-
+                        return DocValues.emptyNumeric();
+                    } else {
+                        return super.getNumeric(field);
                     }
-                    return numeric;
                 }
             };
         }
@@ -139,7 +106,6 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
         public StoredFieldsReader getFieldsReader() {
             return new RecoverySourcePruningStoredFieldsReader(
                 super.getFieldsReader(),
-                recoverySourceToKeep,
                 recoverySourceField,
                 pruneIdField
             );
@@ -226,48 +192,39 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
         }
 
         private static class RecoverySourcePruningStoredFieldsReader extends FilterStoredFieldsReader {
-
-            private final BitSet recoverySourceToKeep;
             private final String recoverySourceField;
             private final boolean pruneIdField;
 
             RecoverySourcePruningStoredFieldsReader(
                 StoredFieldsReader in,
-                BitSet recoverySourceToKeep,
                 String recoverySourceField,
                 boolean pruneIdField
             ) {
                 super(in);
-                this.recoverySourceToKeep = recoverySourceToKeep;
                 this.recoverySourceField = Objects.requireNonNull(recoverySourceField);
                 this.pruneIdField = pruneIdField;
             }
 
             @Override
             public void document(int docID, StoredFieldVisitor visitor) throws IOException {
-                if (recoverySourceToKeep != null && recoverySourceToKeep.get(docID)) {
-                    super.document(docID, visitor);
-                } else {
-                    super.document(docID, new FilterStoredFieldVisitor(visitor) {
-                        @Override
-                        public Status needsField(FieldInfo fieldInfo) throws IOException {
-                            if (recoverySourceField.equals(fieldInfo.name)) {
-                                return Status.NO;
-                            }
-                            if (pruneIdField && IdFieldMapper.NAME.equals(fieldInfo.name)) {
-                                return Status.NO;
-                            }
-                            return super.needsField(fieldInfo);
+                super.document(docID, new FilterStoredFieldVisitor(visitor) {
+                    @Override
+                    public Status needsField(FieldInfo fieldInfo) throws IOException {
+                        if (recoverySourceField.equals(fieldInfo.name)) {
+                            return Status.NO;
                         }
-                    });
-                }
+                        if (pruneIdField && IdFieldMapper.NAME.equals(fieldInfo.name)) {
+                            return Status.NO;
+                        }
+                        return super.needsField(fieldInfo);
+                    }
+                });
             }
 
             @Override
             public StoredFieldsReader getMergeInstance() {
                 return new RecoverySourcePruningStoredFieldsReader(
                     in.getMergeInstance(),
-                    recoverySourceToKeep,
                     recoverySourceField,
                     pruneIdField
                 );
@@ -275,7 +232,7 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
 
             @Override
             public StoredFieldsReader clone() {
-                return new RecoverySourcePruningStoredFieldsReader(in.clone(), recoverySourceToKeep, recoverySourceField, pruneIdField);
+                return new RecoverySourcePruningStoredFieldsReader(in.clone(), recoverySourceField, pruneIdField);
             }
 
         }
