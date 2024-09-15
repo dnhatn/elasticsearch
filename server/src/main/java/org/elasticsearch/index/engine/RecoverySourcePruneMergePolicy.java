@@ -31,6 +31,7 @@ import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.BitSetIterator;
+import org.elasticsearch.index.codec.FilteredStoredFieldsReader;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.search.internal.FilterStoredFieldVisitor;
 
@@ -198,34 +199,7 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
             }
         }
 
-        private abstract static class FilterStoredFieldsReader extends StoredFieldsReader {
-
-            protected final StoredFieldsReader in;
-
-            FilterStoredFieldsReader(StoredFieldsReader fieldsReader) {
-                this.in = fieldsReader;
-            }
-
-            @Override
-            public void close() throws IOException {
-                in.close();
-            }
-
-            @Override
-            public void document(int docID, StoredFieldVisitor visitor) throws IOException {
-                in.document(docID, visitor);
-            }
-
-            @Override
-            public abstract StoredFieldsReader clone();
-
-            @Override
-            public void checkIntegrity() throws IOException {
-                in.checkIntegrity();
-            }
-        }
-
-        private static class RecoverySourcePruningStoredFieldsReader extends FilterStoredFieldsReader {
+        private static class RecoverySourcePruningStoredFieldsReader extends FilteredStoredFieldsReader {
 
             private final BitSet recoverySourceToKeep;
             private final String recoverySourceField;
@@ -237,7 +211,7 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
                 String recoverySourceField,
                 boolean pruneIdField
             ) {
-                super(in);
+                super(in, recoverySourceToKeep);
                 this.recoverySourceToKeep = recoverySourceToKeep;
                 this.recoverySourceField = Objects.requireNonNull(recoverySourceField);
                 this.pruneIdField = pruneIdField;

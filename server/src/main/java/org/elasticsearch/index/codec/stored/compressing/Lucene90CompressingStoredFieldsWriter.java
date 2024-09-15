@@ -41,6 +41,7 @@ import org.apache.lucene.util.BitUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.index.codec.FilteredStoredFieldsReader;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -581,12 +582,13 @@ public final class Lucene90CompressingStoredFieldsWriter extends StoredFieldsWri
             final StoredFieldsReader reader = mergeState.storedFieldsReaders[i];
             reader.checkIntegrity();
             MergeStrategy mergeStrategy = getMergeStrategy(mergeState, matchingReaders, i);
-            if (mergeStrategy == MergeStrategy.VISITOR) {
+            if (mergeStrategy == MergeStrategy.VISITOR || mergeStrategy == MergeStrategy.DOC) {
                 visitors[i] = new MergeVisitor(mergeState, i);
             }
             subs.add(new CompressingStoredFieldsMergeSub(mergeState, mergeStrategy, i));
         }
         int docCount = 0;
+        // unwrap the liveDocs
         final DocIDMerger<CompressingStoredFieldsMergeSub> docIDMerger = DocIDMerger.of(subs, mergeState.needsIndexSort);
         CompressingStoredFieldsMergeSub sub = docIDMerger.next();
         while (sub != null) {
@@ -604,7 +606,17 @@ public final class Lucene90CompressingStoredFieldsWriter extends StoredFieldsWri
                 copyChunks(mergeState, current, fromDocID, toDocID);
                 docCount += (toDocID - fromDocID);
             } else if (sub.mergeStrategy == MergeStrategy.DOC) {
-                copyOneDoc((Lucene90CompressingStoredFieldsReader) reader, sub.docID);
+                if (reader instanceof FilteredStoredFieldsReader f) {
+                    if (f.unchangedDocs != null && f.unchangedDocs.get(sub.docID)) {
+                        copyOneDoc((Lucene90CompressingStoredFieldsReader) f.in, sub.docID);
+                    } else {
+                        startDocument();
+                        reader.document(sub.docID, visitors[sub.readerIndex]);
+                        finishDocument();
+                    }
+                } else {
+                    copyOneDoc((Lucene90CompressingStoredFieldsReader) reader, sub.docID);
+                }
                 ++docCount;
                 sub = docIDMerger.next();
             } else if (sub.mergeStrategy == MergeStrategy.VISITOR) {
@@ -647,20 +659,32 @@ public final class Lucene90CompressingStoredFieldsWriter extends StoredFieldsWri
         VISITOR
     }
 
+    static boolean canCopyRawData(StoredFieldsReader candidate) {
+        if (candidate instanceof Lucene90CompressingStoredFieldsReader reader) {
+            return reader.getVersion() == VERSION_CURRENT;
+        }
+        if (candidate instanceof FilteredStoredFieldsReader f && f.in instanceof Lucene90CompressingStoredFieldsReader reader) {
+            return reader.getVersion() == VERSION_CURRENT;
+        }
+        return false;
+    }
+
     private MergeStrategy getMergeStrategy(MergeState mergeState, MatchingReaders matchingReaders, int readerIndex) {
         final StoredFieldsReader candidate = mergeState.storedFieldsReaders[readerIndex];
-        if (matchingReaders.matchingReaders[readerIndex] == false
-            || candidate instanceof Lucene90CompressingStoredFieldsReader == false
-            || ((Lucene90CompressingStoredFieldsReader) candidate).getVersion() != VERSION_CURRENT) {
+        if (matchingReaders.matchingReaders[readerIndex] == false || canCopyRawData(candidate) == false) {
             return MergeStrategy.VISITOR;
         }
-        Lucene90CompressingStoredFieldsReader reader = (Lucene90CompressingStoredFieldsReader) candidate;
-        if (BULK_MERGE_ENABLED && reader.getCompressionMode() == compressionMode && reader.getChunkSize() == chunkSize
-        // its not worth fine-graining this if there are deletions.
-            && mergeState.liveDocs[readerIndex] == null
-            && tooDirty(reader) == false) {
-            return MergeStrategy.BULK;
+        if (candidate instanceof Lucene90CompressingStoredFieldsReader reader) {
+            if (BULK_MERGE_ENABLED && reader.getCompressionMode() == compressionMode && reader.getChunkSize() == chunkSize
+            // its not worth fine-graining this if there are deletions.
+                && mergeState.liveDocs[readerIndex] == null
+                && tooDirty(reader) == false) {
+                return MergeStrategy.BULK;
+            } else {
+                return MergeStrategy.DOC;
+            }
         } else {
+            // TODO:
             return MergeStrategy.DOC;
         }
     }
