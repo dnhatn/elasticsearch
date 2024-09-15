@@ -10,17 +10,17 @@ package org.elasticsearch.index.codec;
 
 import org.apache.lucene.codecs.StoredFieldsReader;
 import org.apache.lucene.index.StoredFieldVisitor;
-import org.apache.lucene.util.Bits;
 
 import java.io.IOException;
+import java.util.function.IntPredicate;
 
 public class FilteredStoredFieldsReader extends StoredFieldsReader {
     public final StoredFieldsReader in;
-    public final Bits unchangedDocs;
+    public final IntPredicate visitDocs;
 
-    public FilteredStoredFieldsReader(StoredFieldsReader fieldsReader, Bits unchangedDocs) {
+    public FilteredStoredFieldsReader(StoredFieldsReader fieldsReader, IntPredicate visitDocs) {
         this.in = fieldsReader;
-        this.unchangedDocs = unchangedDocs;
+        this.visitDocs = visitDocs;
     }
 
     @Override
@@ -35,12 +35,12 @@ public class FilteredStoredFieldsReader extends StoredFieldsReader {
 
     @Override
     public StoredFieldsReader getMergeInstance() {
-        return new FilteredStoredFieldsReader(in.getMergeInstance(), unchangedDocs);
+        return new FilteredStoredFieldsReader(in.getMergeInstance(), visitDocs);
     }
 
     @Override
     public StoredFieldsReader clone() {
-        return new FilteredStoredFieldsReader(in.clone(), unchangedDocs);
+        return new FilteredStoredFieldsReader(in.clone(), visitDocs);
     }
 
     @Override

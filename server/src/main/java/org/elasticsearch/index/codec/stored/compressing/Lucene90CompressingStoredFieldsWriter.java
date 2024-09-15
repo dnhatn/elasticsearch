@@ -607,12 +607,12 @@ public final class Lucene90CompressingStoredFieldsWriter extends StoredFieldsWri
                 docCount += (toDocID - fromDocID);
             } else if (sub.mergeStrategy == MergeStrategy.DOC) {
                 if (reader instanceof FilteredStoredFieldsReader f) {
-                    if (f.unchangedDocs != null && f.unchangedDocs.get(sub.docID)) {
-                        copyOneDoc((Lucene90CompressingStoredFieldsReader) f.in, sub.docID);
-                    } else {
+                    if (f.visitDocs.test(sub.docID)) {
                         startDocument();
                         reader.document(sub.docID, visitors[sub.readerIndex]);
                         finishDocument();
+                    } else {
+                        copyOneDoc((Lucene90CompressingStoredFieldsReader) f.in, sub.docID);
                     }
                 } else {
                     copyOneDoc((Lucene90CompressingStoredFieldsReader) reader, sub.docID);
