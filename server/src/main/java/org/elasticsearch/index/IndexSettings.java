@@ -646,7 +646,7 @@ public final class IndexSettings {
 
     public static final Setting<Boolean> TIME_SERIES_ES87TSDB_CODEC_ENABLED_SETTING = Setting.boolSetting(
         "index.time_series.es87tsdb_codec.enabled",
-        true,
+        false,
         Property.IndexScope,
         Property.Final
     );
