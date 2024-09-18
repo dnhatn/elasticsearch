@@ -9,11 +9,14 @@
 
 package org.elasticsearch.index.mapper;
 
+import joptsimple.internal.Strings;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.LeafReaderContext;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.Explicit;
+import org.elasticsearch.common.Randomness;
 import org.elasticsearch.common.TriFunction;
 import org.elasticsearch.common.collect.Iterators;
 import org.elasticsearch.common.logging.DeprecationCategory;
@@ -119,6 +122,16 @@ public abstract class FieldMapper extends Mapper {
         // could be blank but not empty on indices created < 8.6.0
         assert mappedFieldType.name().isEmpty() == false;
         assert params.copyTo != null;
+    }
+
+    static final String MALFORMED_PREFIX =  Strings.repeat('z', 16) + ":";
+
+    protected String maybeInjectMalformedValue(String value) {
+        if(Randomness.get().nextInt(100) < 5){
+            return MALFORMED_PREFIX + (value != null ? value : "");
+        } else {
+            return value;
+        }
     }
 
     @Override

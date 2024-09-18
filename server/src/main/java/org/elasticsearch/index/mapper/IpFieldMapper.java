@@ -9,6 +9,8 @@
 
 package org.elasticsearch.index.mapper;
 
+import joptsimple.internal.Strings;
+
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.InetAddressPoint;
 import org.apache.lucene.document.SortedSetDocValuesField;
@@ -35,6 +37,8 @@ import org.elasticsearch.index.fielddata.FieldDataContext;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.plain.SortedSetOrdinalsIndexFieldData;
 import org.elasticsearch.index.query.SearchExecutionContext;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 import org.elasticsearch.script.IpFieldScript;
 import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptCompiler;
@@ -63,6 +67,7 @@ import static org.elasticsearch.index.mapper.IpPrefixAutomatonUtil.buildIpPrefix
 public class IpFieldMapper extends FieldMapper {
 
     private static final DeprecationLogger DEPRECATION_LOGGER = DeprecationLogger.getLogger(IpFieldMapper.class);
+    private static final Logger LOGGER = LogManager.getLogger(IpFieldMapper.class);
 
     public static final String CONTENT_TYPE = "ip";
 
@@ -542,10 +547,14 @@ public class IpFieldMapper extends FieldMapper {
         return fieldType().typeName();
     }
 
+
     @Override
     protected void parseCreateField(DocumentParserContext context) throws IOException {
         InetAddress address;
         String value = context.parser().textOrNull();
+        if (ignoreMalformed) {
+            value = maybeInjectMalformedValue(value);
+        }
         try {
             address = value == null ? nullValue : InetAddresses.forString(value);
         } catch (IllegalArgumentException e) {

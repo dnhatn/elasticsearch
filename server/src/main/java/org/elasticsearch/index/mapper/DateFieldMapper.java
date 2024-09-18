@@ -947,11 +947,7 @@ public final class DateFieldMapper extends FieldMapper {
             timestamp = nullValue;
         } else {
             if (injectMalFormed) {
-                if (Randomness.get().nextInt(100) < 1) {
-                    long count = injected.incrementAndGet();
-                    logger.info("--> inject {} malformed values for field {}", count, mappedFieldType.name());
-                    dateAsString = "?" + dateAsString;
-                }
+                dateAsString = maybeInjectMalformedValue(dateAsString);
             }
             try {
                 timestamp = fieldType().parse(dateAsString);
