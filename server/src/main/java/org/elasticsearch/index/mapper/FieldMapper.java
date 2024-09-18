@@ -125,7 +125,7 @@ public abstract class FieldMapper extends Mapper {
     }
 
     protected String maybeInjectMalformedValue(String value) {
-        if (Randomness.get().nextInt(100) < 50) {
+        if (Randomness.get().nextInt(100) < 1) {
             return "z" + (value != null ? value : "");
         } else {
             return value;
