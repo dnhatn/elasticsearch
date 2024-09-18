@@ -124,11 +124,9 @@ public abstract class FieldMapper extends Mapper {
         assert params.copyTo != null;
     }
 
-    static final String MALFORMED_PREFIX =  Strings.repeat('z', 16) + ":";
-
     protected String maybeInjectMalformedValue(String value) {
-        if(Randomness.get().nextInt(100) < 5){
-            return MALFORMED_PREFIX + (value != null ? value : "");
+        if (Randomness.get().nextInt(100) < 50) {
+            return "z" + (value != null ? value : "");
         } else {
             return value;
         }
