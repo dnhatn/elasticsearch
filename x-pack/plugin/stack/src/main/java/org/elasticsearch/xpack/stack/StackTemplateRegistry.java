@@ -63,7 +63,7 @@ public class StackTemplateRegistry extends IndexTemplateRegistry {
      */
     public static final Setting<Boolean> CLUSTER_LOGSDB_ENABLED = Setting.boolSetting(
         "cluster.logsdb.enabled",
-        false,
+        true,
         Setting.Property.NodeScope
     );
 

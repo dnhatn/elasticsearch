@@ -23,6 +23,7 @@ import org.apache.lucene.search.IndexOrDocValuesQuery;
 import org.apache.lucene.search.IndexSortSortedNumericDocValuesRangeQuery;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.common.Randomness;
 import org.elasticsearch.common.geo.ShapeRelation;
 import org.elasticsearch.common.logging.DeprecationCategory;
 import org.elasticsearch.common.logging.DeprecationLogger;
@@ -69,6 +70,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
@@ -884,6 +886,7 @@ public final class DateFieldMapper extends FieldMapper {
     private final FieldValues<Long> scriptValues;
 
     private final boolean isDataStreamTimestampField;
+    private final boolean injectMalFormed;
 
     private DateFieldMapper(
         String leafName,
@@ -911,6 +914,7 @@ public final class DateFieldMapper extends FieldMapper {
         this.scriptCompiler = builder.scriptCompiler;
         this.scriptValues = builder.scriptValues();
         this.isDataStreamTimestampField = mappedFieldType.name().equals(DataStreamTimestampFieldMapper.DEFAULT_PATH);
+        this.injectMalFormed = mappedFieldType.name().equals("@timestamp") == false;
     }
 
     @Override
@@ -928,6 +932,9 @@ public final class DateFieldMapper extends FieldMapper {
         return fieldType().resolution.type();
     }
 
+
+    final AtomicLong injected = new AtomicLong();
+
     @Override
     protected void parseCreateField(DocumentParserContext context) throws IOException {
         String dateAsString = context.parser().textOrNull();
@@ -939,6 +946,13 @@ public final class DateFieldMapper extends FieldMapper {
             }
             timestamp = nullValue;
         } else {
+            if (injectMalFormed) {
+                if (Randomness.get().nextInt(100) < 1) {
+                    long count = injected.incrementAndGet();
+                    logger.info("--> inject {} malformed values for field {}", count, mappedFieldType.name());
+                    dateAsString = "?" + dateAsString;
+                }
+            }
             try {
                 timestamp = fieldType().parse(dateAsString);
             } catch (IllegalArgumentException | ElasticsearchParseException | DateTimeException | ArithmeticException e) {
