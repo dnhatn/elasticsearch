@@ -660,13 +660,21 @@ public final class IndexSettings {
         return es87TSDBCodecEnabled;
     }
 
+    public static final Setting<IndexMode> DEFAULT_MODE = Setting.enumSetting(
+        IndexMode.class,
+        "cluster.index_mode",
+        IndexMode.STANDARD,
+        Property.NodeScope,
+        Property.ServerlessPublic
+    );
+
     /**
      * The {@link IndexMode "mode"} of the index.
      */
     public static final Setting<IndexMode> MODE = Setting.enumSetting(
         IndexMode.class,
         "index.mode",
-        IndexMode.STANDARD,
+        DEFAULT_MODE,
         new Setting.Validator<>() {
             @Override
             public void validate(IndexMode value) {}
