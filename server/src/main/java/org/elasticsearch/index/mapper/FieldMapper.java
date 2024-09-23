@@ -63,8 +63,11 @@ import static org.elasticsearch.core.Strings.format;
 public abstract class FieldMapper extends Mapper {
     private static final Logger logger = LogManager.getLogger(FieldMapper.class);
 
+    public static final Setting<Boolean> CLUSTER_IGNORE_MALFORMED_SETTING =
+        Setting.boolSetting("cluster.mapping.ignore_malformed", false, Property.NodeScope, Property.ServerlessPublic);
+
     public static final Setting<Boolean> IGNORE_MALFORMED_SETTING =
-        Setting.boolSetting("index.mapping.ignore_malformed", true, Property.IndexScope, Property.ServerlessPublic);
+        Setting.boolSetting("index.mapping.ignore_malformed", settings -> Boolean.toString(CLUSTER_IGNORE_MALFORMED_SETTING.get(settings)), Property.IndexScope, Property.ServerlessPublic);
 
     public static final Setting<Boolean> COERCE_SETTING = Setting.boolSetting(
         "index.mapping.coerce",
