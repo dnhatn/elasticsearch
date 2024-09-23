@@ -698,6 +698,14 @@ public final class IndexSettings {
         Property.IndexSettingDeprecatedInV7AndRemovedInV8
     );
 
+    public static final Setting<Integer> CLUSTER_IGNORE_ABOVE_SETTING = Setting.intSetting(
+        "cluster.mapping.ignore_above",
+        Integer.MAX_VALUE,
+        0,
+        Property.NodeScope,
+        Property.ServerlessPublic
+    );
+
     /**
      * The `index.mapping.ignore_above` setting defines the maximum length for the content of a field that will be indexed
      * or stored. If the length of the field’s content exceeds this limit, the field value will be ignored during indexing.
@@ -716,8 +724,9 @@ public final class IndexSettings {
      */
     public static final Setting<Integer> IGNORE_ABOVE_SETTING = Setting.intSetting(
         "index.mapping.ignore_above",
-        Integer.MAX_VALUE,
+        settings -> Integer.toString(CLUSTER_IGNORE_ABOVE_SETTING.get(settings)),
         0,
+        s -> {},
         Property.IndexScope,
         Property.ServerlessPublic
     );

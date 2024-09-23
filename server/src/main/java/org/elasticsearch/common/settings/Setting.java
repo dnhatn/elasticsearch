@@ -1386,6 +1386,16 @@ public class Setting<T> implements ToXContentObject {
         return new Setting<>(key, Integer.toString(defaultValue), intParser(key, minValue, properties), validator, properties);
     }
 
+    public static Setting<Integer> intSetting(
+        String key,
+        Function<Settings, String> defaultValue,
+        int minValue,
+        Validator<Integer> validator,
+        Property... properties
+    ) {
+        return new Setting<>(key, defaultValue, intParser(key, minValue, properties), validator, properties);
+    }
+
     public static Setting<Integer> intSetting(String key, Setting<Integer> fallbackSetting, int minValue, Property... properties) {
         return new Setting<>(key, fallbackSetting, intParser(key, minValue, properties), properties);
     }

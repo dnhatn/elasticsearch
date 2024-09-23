@@ -67,12 +67,12 @@ public class SourceFieldMapper extends MetadataFieldMapper {
     }
 
     private static final SourceFieldMapper DEFAULT = new SourceFieldMapper(
-        null,
+        Mode.SYNTHETIC,
         Explicit.IMPLICIT_TRUE,
         Strings.EMPTY_ARRAY,
         Strings.EMPTY_ARRAY,
         null,
-        true
+        false
     );
 
     private static final SourceFieldMapper DEFAULT_NO_RECOVERY_SOURCE = new SourceFieldMapper(
