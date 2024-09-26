@@ -288,7 +288,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final AtomicLong lastSearcherAccess = new AtomicLong();
     private final AtomicReference<Translog.Location> pendingRefreshLocation = new AtomicReference<>();
     private final RefreshPendingLocationListener refreshPendingLocationListener;
-    private final RefreshFieldHasValueListener refreshFieldHasValueListener;
     private volatile boolean useRetentionLeasesInPeerRecovery;
     private final LongSupplier relativeTimeInNanosSupplier;
     private volatile long startedRelativeTimeInNanos;
@@ -404,7 +403,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         persistMetadata(path, indexSettings, shardRouting, null, logger);
         this.useRetentionLeasesInPeerRecovery = replicationTracker.hasAllPeerRecoveryRetentionLeases();
         this.refreshPendingLocationListener = new RefreshPendingLocationListener();
-        this.refreshFieldHasValueListener = new RefreshFieldHasValueListener();
         this.relativeTimeInNanosSupplier = relativeTimeInNanosSupplier;
         this.indexCommitListener = indexCommitListener;
         this.fieldInfos = FieldInfos.EMPTY;
@@ -3457,7 +3455,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             cachingPolicy,
             translogConfig,
             IndexingMemoryController.SHARD_INACTIVE_TIME_SETTING.get(indexSettings.getSettings()),
-            List.of(refreshListeners, refreshPendingLocationListener, refreshFieldHasValueListener),
+            List.of(refreshListeners, refreshPendingLocationListener),
             Collections.singletonList(new RefreshMetricUpdater(refreshMetric)),
             indexSort,
             circuitBreakerService,
@@ -4007,22 +4005,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         return pendingLocation;
                     }
                 });
-            }
-        }
-    }
-
-    private class RefreshFieldHasValueListener implements ReferenceManager.RefreshListener {
-        @Override
-        public void beforeRefresh() {}
-
-        @Override
-        public void afterRefresh(boolean didRefresh) {
-            if (enableFieldHasValue) {
-                try (Engine.Searcher hasValueSearcher = getEngine().acquireSearcher("field_has_value")) {
-                    setFieldInfos(FieldInfos.getMergedFieldInfos(hasValueSearcher.getIndexReader()));
-                } catch (AlreadyClosedException ignore) {
-                    // engine is closed - no updated FieldInfos is fine
-                }
             }
         }
     }
