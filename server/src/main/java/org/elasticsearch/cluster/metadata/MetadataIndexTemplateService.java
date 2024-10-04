@@ -1271,6 +1271,7 @@ public class MetadataIndexTemplateService {
     @Nullable
     public static String findV2Template(Metadata metadata, String indexName, boolean isHidden) {
         final List<Tuple<String, ComposableIndexTemplate>> candidates = findV2CandidateTemplates(metadata, indexName, isHidden);
+        logger.info("--> {} v2 templates {}", indexName, candidates.stream().map(Tuple::v1).toList());
         if (candidates.isEmpty()) {
             return null;
         }
