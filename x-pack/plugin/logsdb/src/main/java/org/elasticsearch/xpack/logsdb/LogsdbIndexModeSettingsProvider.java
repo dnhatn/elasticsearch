@@ -16,6 +16,8 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexSettingProvider;
 import org.elasticsearch.index.IndexSettings;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 
 import java.time.Instant;
 import java.util.List;
@@ -24,6 +26,8 @@ import java.util.Locale;
 import static org.elasticsearch.xpack.cluster.settings.ClusterSettings.CLUSTER_LOGSDB_ENABLED;
 
 final class LogsdbIndexModeSettingsProvider implements IndexSettingProvider {
+    public static final Logger LOGGER = LogManager.getLogger(LogsdbIndexModeSettingsProvider.class);
+
     private static final String LOGS_PATTERN = "logs-*-*";
     private volatile boolean isLogsdbEnabled;
 
@@ -62,7 +66,9 @@ final class LogsdbIndexModeSettingsProvider implements IndexSettingProvider {
     }
 
     private static boolean matchesLogsPattern(final String name) {
-        return Regex.simpleMatch(LOGS_PATTERN, name);
+        boolean matched = Regex.simpleMatch(LOGS_PATTERN, name);
+        LOGGER.info("--> data_stream {} log pattern", name, matched);
+        return matched;
     }
 
     private IndexMode resolveIndexMode(final String mode) {
@@ -71,10 +77,12 @@ final class LogsdbIndexModeSettingsProvider implements IndexSettingProvider {
 
     private boolean usesLogsAtSettingsComponentTemplate(final Metadata metadata, final String name) {
         final String template = MetadataIndexTemplateService.findV2Template(metadata, name, false);
+        LOGGER.info("--> data_stream {} matching template {}", name, template);
         if (template == null) {
             return false;
         }
         final ComposableIndexTemplate composableIndexTemplate = metadata.templatesV2().get(template);
+        LOGGER.info("--> data_stream {} matching compose template {}", name, composableIndexTemplate == null ? null : composableIndexTemplate.composedOf());
         if (composableIndexTemplate == null) {
             return false;
         }
