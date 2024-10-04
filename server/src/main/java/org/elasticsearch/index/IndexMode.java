@@ -299,7 +299,7 @@ public enum IndexMode {
 
         @Override
         public boolean isSyntheticSourceEnabled() {
-            return true;
+            return false;
         }
 
         @Override
