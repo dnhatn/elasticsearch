@@ -306,7 +306,7 @@ public final class TextFieldMapper extends FieldMapper {
             // If 'store' parameter was explicitly provided we'll reject the request.
             this.store = Parameter.storeParam(
                 m -> ((TextFieldMapper) m).store,
-                () -> isSyntheticSourceEnabledViaIndexMode && multiFieldsBuilder.hasSyntheticSourceCompatibleKeywordField() == false
+                () -> false
             );
             this.indexCreatedVersion = indexCreatedVersion;
             this.analyzers = new TextParams.Analyzers(

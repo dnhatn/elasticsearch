@@ -447,7 +447,8 @@ public class MatchOnlyTextFieldMapper extends FieldMapper {
         context.addToFieldNames(fieldType().name());
 
         if (storeSource) {
-            context.doc().add(new StoredField(fieldType().storedFieldNameForSyntheticSource(), value));
+            // DO NOT STORE the extra store field
+            // context.doc().add(new StoredField(fieldType().storedFieldNameForSyntheticSource(), value));
         }
     }
 
