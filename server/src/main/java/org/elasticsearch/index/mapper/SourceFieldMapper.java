@@ -245,7 +245,7 @@ public class SourceFieldMapper extends MetadataFieldMapper {
             if (isDefault()) {
                 return switch (indexMode) {
                     case TIME_SERIES -> enableRecoverySource ? TSDB_DEFAULT : TSDB_DEFAULT_NO_RECOVERY_SOURCE;
-                    case LOGSDB -> enableRecoverySource ? LOGSDB_DEFAULT : LOGSDB_DEFAULT_NO_RECOVERY_SOURCE;
+                    case LOGSDB -> LOGSDB_DEFAULT_NO_RECOVERY_SOURCE;
                     default -> enableRecoverySource ? DEFAULT : DEFAULT_NO_RECOVERY_SOURCE;
                 };
             }
@@ -298,7 +298,7 @@ public class SourceFieldMapper extends MetadataFieldMapper {
                     return enableRecoverySource ? TSDB_LEGACY_DEFAULT : TSDB_LEGACY_DEFAULT_NO_RECOVERY_SOURCE;
                 }
             } else if (indexMode == IndexMode.LOGSDB) {
-                return enableRecoverySource ? LOGSDB_DEFAULT : LOGSDB_DEFAULT_NO_RECOVERY_SOURCE;
+                return LOGSDB_DEFAULT_NO_RECOVERY_SOURCE;
             }
         }
         return enableRecoverySource ? DEFAULT : DEFAULT_NO_RECOVERY_SOURCE;
