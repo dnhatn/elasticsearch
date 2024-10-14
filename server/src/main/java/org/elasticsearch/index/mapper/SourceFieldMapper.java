@@ -102,14 +102,7 @@ public class SourceFieldMapper extends MetadataFieldMapper {
         false
     );
 
-    private static final SourceFieldMapper LOGSDB_DEFAULT = new SourceFieldMapper(
-        Mode.SYNTHETIC,
-        Explicit.IMPLICIT_TRUE,
-        Strings.EMPTY_ARRAY,
-        Strings.EMPTY_ARRAY,
-        IndexMode.LOGSDB,
-        true
-    );
+    private static final SourceFieldMapper LOGSDB_DEFAULT = DEFAULT;
 
     private static final SourceFieldMapper LOGSDB_DEFAULT_NO_RECOVERY_SOURCE = new SourceFieldMapper(
         Mode.SYNTHETIC,
