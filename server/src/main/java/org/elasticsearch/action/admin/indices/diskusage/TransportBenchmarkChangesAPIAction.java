@@ -99,6 +99,7 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
         if (shard.indexSettings().getMode() == IndexMode.LOGSDB) {
             mappingLookup = shard.mapperService().mappingLookup();
         }
+        int loop = 0;
         while (fromSeqNo < checkpoint) {
             long toSeqNo = fromSeqNo + batchSize;
             try (LuceneChangesSnapshot snapshot = new LuceneChangesSnapshot(
@@ -115,8 +116,12 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
                 while (snapshot.next() != null) {
                     totalOps++;
                 }
+                loop++;
             } catch (IOException e) {
 
+            }
+            if (loop % 10 == 0) {
+                logger.info("--> fetched {} operations", fromSeqNo);
             }
             fromSeqNo = toSeqNo;
         }
