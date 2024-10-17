@@ -100,6 +100,7 @@ import org.elasticsearch.action.admin.indices.dangling.import_index.TransportImp
 import org.elasticsearch.action.admin.indices.dangling.list.TransportListDanglingIndicesAction;
 import org.elasticsearch.action.admin.indices.delete.TransportDeleteIndexAction;
 import org.elasticsearch.action.admin.indices.diskusage.TransportAnalyzeIndexDiskUsageAction;
+import org.elasticsearch.action.admin.indices.diskusage.TransportBenchmarkChangesAPIAction;
 import org.elasticsearch.action.admin.indices.flush.FlushAction;
 import org.elasticsearch.action.admin.indices.flush.TransportFlushAction;
 import org.elasticsearch.action.admin.indices.flush.TransportShardFlushAction;
@@ -314,6 +315,7 @@ import org.elasticsearch.rest.action.admin.cluster.dangling.RestListDanglingIndi
 import org.elasticsearch.rest.action.admin.indices.RestAddIndexBlockAction;
 import org.elasticsearch.rest.action.admin.indices.RestAnalyzeAction;
 import org.elasticsearch.rest.action.admin.indices.RestAnalyzeIndexDiskUsageAction;
+import org.elasticsearch.rest.action.admin.indices.RestBenchmarkChangesAPIAction;
 import org.elasticsearch.rest.action.admin.indices.RestClearIndicesCacheAction;
 import org.elasticsearch.rest.action.admin.indices.RestCloseIndexAction;
 import org.elasticsearch.rest.action.admin.indices.RestCreateIndexAction;
@@ -739,6 +741,8 @@ public class ActionModule extends AbstractModule {
         actions.register(ResolveIndexAction.INSTANCE, ResolveIndexAction.TransportAction.class);
         actions.register(TransportResolveClusterAction.TYPE, TransportResolveClusterAction.class);
         actions.register(TransportAnalyzeIndexDiskUsageAction.TYPE, TransportAnalyzeIndexDiskUsageAction.class);
+        actions.register(TransportBenchmarkChangesAPIAction.TYPE, TransportBenchmarkChangesAPIAction.class);
+
         actions.register(FieldUsageStatsAction.INSTANCE, TransportFieldUsageAction.class);
         actions.register(MasterHistoryAction.INSTANCE, MasterHistoryAction.TransportAction.class);
         actions.register(CoordinationDiagnosticsAction.INSTANCE, CoordinationDiagnosticsAction.TransportAction.class);
@@ -1001,6 +1005,7 @@ public class ActionModule extends AbstractModule {
         registerHandler.accept(new RestTemplatesAction());
         registerHandler.accept(new RestCatComponentTemplateAction());
         registerHandler.accept(new RestAnalyzeIndexDiskUsageAction());
+        registerHandler.accept(new RestBenchmarkChangesAPIAction());
         registerHandler.accept(new RestFieldUsageStatsAction());
 
         registerHandler.accept(new RestUpgradeActionDeprecated());
