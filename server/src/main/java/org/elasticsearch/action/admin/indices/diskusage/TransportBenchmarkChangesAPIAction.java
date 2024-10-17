@@ -71,9 +71,12 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
     }
 
     void benchmarkChanges(IndexShard shard) {
-        for (int batchSize : List.of(1024, 512, 256, 64, 32)) {
-            benchmarkChanges(shard, batchSize);
-            benchmarkBatchedChanges(shard, batchSize);
+        int times = 3;
+        for (int i = 0; i < times; i++) {
+            for (int batchSize : List.of(1024, 512, 256, 64, 32)) {
+                benchmarkChanges(shard, batchSize);
+                benchmarkBatchedChanges(shard, batchSize);
+            }
         }
     }
 
