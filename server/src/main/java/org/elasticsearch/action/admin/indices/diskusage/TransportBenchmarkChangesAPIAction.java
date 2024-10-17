@@ -82,6 +82,7 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
         int times = 1;
         for (int i = 0; i < times; i++) {
             for (int batchSize : List.of(1024, 512, 256, 64, 32)) {
+                logger.info("--> benchmark {} batch_size {}", shard.shardId(), batchSize);
                 benchmarkChanges(shard, batchSize);
                 benchmarkBatchedChanges(shard, batchSize);
             }

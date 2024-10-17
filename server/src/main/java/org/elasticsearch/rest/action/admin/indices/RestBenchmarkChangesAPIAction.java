@@ -31,7 +31,7 @@ public class RestBenchmarkChangesAPIAction extends BaseRestHandler {
 
     @Override
     public List<Route> routes() {
-        return List.of(new Route(GET, "/{index}/benchmark_changes_api"));
+        return List.of(new Route(GET, "/{index}/_benchmark_changes_api"));
     }
 
     @Override
