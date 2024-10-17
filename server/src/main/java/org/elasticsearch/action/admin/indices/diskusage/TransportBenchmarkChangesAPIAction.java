@@ -13,8 +13,10 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
+import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.IndexVersion;
@@ -30,13 +32,15 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<AnalyzeIndexDiskUsageRequest, AnalyzeIndexDiskUsageResponse> {
     public static final ActionType<AnalyzeIndexDiskUsageResponse> TYPE = new ActionType<>("indices:admin/benchmark_changes_api");
     private final IndicesService indicesService;
+    private final IndexNameExpressionResolver indexNameExpressionResolver;
+    private final ClusterService clusterService;
 
     @Inject
     public TransportBenchmarkChangesAPIAction(
@@ -55,14 +59,18 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
             transportService.getThreadPool().executor(ThreadPool.Names.SEARCH)
         );
         this.indicesService = indexServices;
+        this.clusterService = clusterService;
+        this.indexNameExpressionResolver = indexNameExpressionResolver;
     }
 
     @Override
     protected void doExecute(Task task, AnalyzeIndexDiskUsageRequest request, ActionListener<AnalyzeIndexDiskUsageResponse> listener) {
-        Set<String> indices = Set.of(request.indices());
-        for (IndexService indexService : indicesService) {
-            for (IndexShard indexShard : indexService) {
-                if (indices.contains(indexShard.shardId().getIndexName())) {
+        ClusterState state = clusterService.state();
+        Index[] concreteIndices = indexNameExpressionResolver.concreteIndices(state, request);
+        for (Index index : concreteIndices) {
+            IndexService indexService = indicesService.indexService(index);
+            if (indexService != null) {
+                for (IndexShard indexShard : indexService) {
                     benchmarkChanges(indexShard);
                 }
             }
@@ -71,7 +79,7 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
     }
 
     void benchmarkChanges(IndexShard shard) {
-        int times = 3;
+        int times = 1;
         for (int i = 0; i < times; i++) {
             for (int batchSize : List.of(1024, 512, 256, 64, 32)) {
                 benchmarkChanges(shard, batchSize);
@@ -141,7 +149,7 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
                     totalOps++;
                 }
             } catch (IOException e) {
-
+                throw new UncheckedIOException(e);
             }
             fromSeqNo = toSeqNo;
         }
