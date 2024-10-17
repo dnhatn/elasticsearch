@@ -96,7 +96,8 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
         long startTime = System.nanoTime();
         long totalOps = 0;
         MappingLookup mappingLookup = null;
-        if (shard.indexSettings().getMode() == IndexMode.LOGSDB) {
+        IndexMode indexMode = shard.indexSettings().getMode();
+        if (indexMode == IndexMode.LOGSDB) {
             mappingLookup = shard.mapperService().mappingLookup();
         }
         int loop = 0;
@@ -120,8 +121,8 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
             } catch (IOException e) {
 
             }
-            if (loop % 10 == 0) {
-                logger.info("--> fetched {} operations", fromSeqNo);
+            if (loop % 50 == 0) {
+                logger.info("--> {} unbatched fetched {}/{} operations", indexMode.getName(), fromSeqNo, checkpoint);
             }
             fromSeqNo = toSeqNo;
         }
@@ -136,9 +137,11 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
         long startTime = System.nanoTime();
         long totalOps = 0;
         MappingLookup mappingLookup = null;
-        if (shard.indexSettings().getMode() == IndexMode.LOGSDB) {
+        IndexMode indexMode = shard.indexSettings().getMode();
+        if (indexMode == IndexMode.LOGSDB) {
             mappingLookup = shard.mapperService().mappingLookup();
         }
+        int loop = 0;
         while (fromSeqNo < checkpoint) {
             long toSeqNo = fromSeqNo + batchSize;
             try (var snapshot = new LuceneBatchChangesSnapshot(
@@ -157,6 +160,10 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
+            if (loop % 50 == 0) {
+                logger.info("--> {} batched fetched {}/{} operations", indexMode.getName(), fromSeqNo, checkpoint);
+            }
+            loop++;
             fromSeqNo = toSeqNo;
         }
         long endTime = System.nanoTime();
