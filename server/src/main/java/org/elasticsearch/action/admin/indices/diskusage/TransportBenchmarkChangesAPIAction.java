@@ -16,6 +16,7 @@ import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.Randomness;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexService;
@@ -81,7 +82,7 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
     void benchmarkChanges(IndexShard shard) {
         int times = 1;
         for (int i = 0; i < times; i++) {
-            for (int batchSize : List.of(1024, 512, 256, 64, 32)) {
+            for (int batchSize : List.of(1024, 256, 64)) {
                 logger.info("--> benchmark {} batch_size {}", shard.shardId(), batchSize);
                 benchmarkChanges(shard, batchSize);
                 benchmarkBatchedChanges(shard, batchSize);
@@ -92,39 +93,34 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
     void benchmarkChanges(IndexShard shard, int batchSize) {
         Engine.Searcher searcher = shard.acquireSearcher("test");
         long checkpoint = shard.seqNoStats().getLocalCheckpoint();
-        long fromSeqNo = 0;
-        long startTime = System.nanoTime();
-        long totalOps = 0;
         MappingLookup mappingLookup = null;
-        IndexMode indexMode = shard.indexSettings().getMode();
-        if (indexMode == IndexMode.LOGSDB) {
+        boolean synthetic = shard.mapperService().mappingLookup().isSourceSynthetic();
+        if (synthetic) {
             mappingLookup = shard.mapperService().mappingLookup();
         }
-        int loop = 0;
-        while (fromSeqNo < checkpoint) {
-            long toSeqNo = fromSeqNo + batchSize;
-            try (LuceneChangesSnapshot snapshot = new LuceneChangesSnapshot(
-                mappingLookup,
-                searcher,
-                batchSize,
-                fromSeqNo,
-                toSeqNo,
-                false,
-                true,
-                false,
-                IndexVersion.current()
-            )) {
-                while (snapshot.next() != null) {
-                    totalOps++;
+        long fromSeqNo = 5000;
+        long toSeqNo = 105_000;
+        long startTime = System.nanoTime();
+        long totalOps = 0;
+        try (var snapshot = new LuceneChangesSnapshot(
+            mappingLookup,
+            searcher,
+            batchSize,
+            fromSeqNo,
+            toSeqNo,
+            false,
+            true,
+            false,
+            IndexVersion.current()
+        )) {
+            while (snapshot.next() != null) {
+                totalOps++;
+                if (totalOps % 10_000 == 0) {
+                    logger.info("--> un-batched fetched synthetic={} {}/{} ops", synthetic, fromSeqNo, checkpoint);
                 }
-                loop++;
-            } catch (IOException e) {
-
             }
-            if (loop % 50 == 0) {
-                logger.info("--> {} unbatched fetched {}/{} operations", indexMode.getName(), fromSeqNo, checkpoint);
-            }
-            fromSeqNo = toSeqNo;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
         long endTime = System.nanoTime();
         logger.info("--> un-batched size {}, total ops {} total time {}", batchSize, totalOps, endTime - startTime);
@@ -133,38 +129,33 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
     void benchmarkBatchedChanges(IndexShard shard, int batchSize) {
         Engine.Searcher searcher = shard.acquireSearcher("test");
         long checkpoint = shard.seqNoStats().getLocalCheckpoint();
-        long fromSeqNo = 0;
-        long startTime = System.nanoTime();
-        long totalOps = 0;
         MappingLookup mappingLookup = null;
-        IndexMode indexMode = shard.indexSettings().getMode();
-        if (indexMode == IndexMode.LOGSDB) {
+        boolean synthetic = shard.mapperService().mappingLookup().isSourceSynthetic();
+        if (synthetic) {
             mappingLookup = shard.mapperService().mappingLookup();
         }
-        int loop = 0;
-        while (fromSeqNo < checkpoint) {
-            long toSeqNo = fromSeqNo + batchSize;
-            try (var snapshot = new LuceneBatchChangesSnapshot(
-                mappingLookup,
-                searcher,
-                batchSize,
-                fromSeqNo,
-                toSeqNo,
-                false,
-                true,
-                IndexVersion.current()
-            )) {
-                while (snapshot.next() != null) {
-                    totalOps++;
+        long fromSeqNo = 5000;
+        long toSeqNo = 105_000;
+        long startTime = System.nanoTime();
+        long totalOps = 0;
+        try (var snapshot = new LuceneBatchChangesSnapshot(
+            mappingLookup,
+            searcher,
+            batchSize,
+            fromSeqNo,
+            toSeqNo,
+            false,
+            false,
+            IndexVersion.current()
+        )) {
+            while (snapshot.next() != null) {
+                totalOps++;
+                if (totalOps % 10_000 == 0) {
+                    logger.info("--> batched fetched synthetic={} {}/{} ops", synthetic, fromSeqNo, checkpoint);
                 }
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
             }
-            if (loop % 50 == 0) {
-                logger.info("--> {} batched fetched {}/{} operations", indexMode.getName(), fromSeqNo, checkpoint);
-            }
-            loop++;
-            fromSeqNo = toSeqNo;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
         long endTime = System.nanoTime();
         logger.info("--> batched size {}, total ops {} total time {}", batchSize, totalOps, endTime - startTime);
