@@ -101,8 +101,8 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
         if (synthetic) {
             mappingLookup = shard.mapperService().mappingLookup();
         }
-        long fromSeqNo = 5000;
-        long toSeqNo = 105_000;
+        long fromSeqNo = 5001;
+        long toSeqNo = 205_000;
         long startTime = System.nanoTime();
         long totalOps = 0;
         try (var snapshot = new LuceneChangesSnapshot(
@@ -119,14 +119,16 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
             while (snapshot.next() != null) {
                 totalOps++;
                 if (totalOps % 10_000 == 0) {
-                    logger.info("--> un-batched fetched synthetic={} {}/{} ops", synthetic, fromSeqNo, checkpoint);
+                    logger.info("--> un-batched fetched synthetic={} {}/{} ops", synthetic, totalOps, checkpoint);
                 }
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
         long endTime = System.nanoTime();
-        logger.info("--> un-batched size {}, total ops {} total time {}", batchSize, totalOps, endTime - startTime);
+        long ms = (endTime - startTime) / 1000_000;
+        double speed = (double) totalOps / ms;
+        logger.info("--> un-batched size {}, total ops {} total time {} speed={}", batchSize, totalOps, endTime - startTime, speed);
     }
 
     void benchmarkBatchedChanges(IndexShard shard, int batchSize) {
@@ -137,8 +139,8 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
         if (synthetic) {
             mappingLookup = shard.mapperService().mappingLookup();
         }
-        long fromSeqNo = 5000;
-        long toSeqNo = 105_000;
+        long fromSeqNo = 5001;
+        long toSeqNo = 205_000;
         long startTime = System.nanoTime();
         long totalOps = 0;
         try (var snapshot = new LuceneBatchChangesSnapshot(
@@ -154,13 +156,15 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
             while (snapshot.next() != null) {
                 totalOps++;
                 if (totalOps % 10_000 == 0) {
-                    logger.info("--> batched fetched synthetic={} {}/{} ops", synthetic, fromSeqNo, checkpoint);
+                    logger.info("--> batched fetched synthetic={} {}/{} ops", synthetic, totalOps, checkpoint);
                 }
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
         long endTime = System.nanoTime();
-        logger.info("--> batched size {}, total ops {} total time {}", batchSize, totalOps, endTime - startTime);
+        long ms = (endTime - startTime) / 1000_000;
+        double speed = (double) totalOps / ms;
+        logger.info("--> batched size {}, total ops {} total time {} speed={}", batchSize, totalOps, endTime - startTime, speed);
     }
 }
