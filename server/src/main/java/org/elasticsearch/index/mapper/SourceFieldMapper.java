@@ -102,15 +102,7 @@ public class SourceFieldMapper extends MetadataFieldMapper {
         false
     );
 
-    private static final SourceFieldMapper LOGSDB_DEFAULT = new SourceFieldMapper(
-        Mode.SYNTHETIC,
-        Explicit.IMPLICIT_TRUE,
-        Strings.EMPTY_ARRAY,
-        Strings.EMPTY_ARRAY,
-        IndexMode.LOGSDB,
-        // recovery source is always disabled for logsdb
-        false
-    );
+    private static final SourceFieldMapper LOGSDB_DEFAULT = DEFAULT;
 
     /*
      * Synthetic source was added as the default for TSDB in v.8.7. The legacy field mapper below
