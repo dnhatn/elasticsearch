@@ -28,6 +28,7 @@ import org.elasticsearch.index.mapper.MappingLookup;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.injection.guice.Inject;
+import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
@@ -72,19 +73,21 @@ public class TransportBenchmarkChangesAPIAction extends HandledTransportAction<A
             IndexService indexService = indicesService.indexService(index);
             if (indexService != null) {
                 for (IndexShard indexShard : indexService) {
-                    benchmarkChanges(indexShard);
+                    benchmarkChanges((CancellableTask) task, indexShard);
                 }
             }
         }
         listener.onResponse(new AnalyzeIndexDiskUsageResponse(0, 0, 0, List.of(), Map.of()));
     }
 
-    void benchmarkChanges(IndexShard shard) {
+    void benchmarkChanges(CancellableTask cancellableTask, IndexShard shard) {
         int times = 1;
         for (int i = 0; i < times; i++) {
             for (int batchSize : List.of(1024, 256, 64)) {
+                cancellableTask.ensureNotCancelled();
                 logger.info("--> benchmark {} batch_size {}", shard.shardId(), batchSize);
                 benchmarkChanges(shard, batchSize);
+                cancellableTask.ensureNotCancelled();
                 benchmarkBatchedChanges(shard, batchSize);
             }
         }
