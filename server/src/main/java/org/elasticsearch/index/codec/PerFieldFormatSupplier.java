@@ -21,9 +21,12 @@ import org.elasticsearch.index.codec.bloomfilter.ES87BloomFilterPostingsFormat;
 import org.elasticsearch.index.codec.postings.ES812PostingsFormat;
 import org.elasticsearch.index.codec.tsdb.ES87TSDBDocValuesFormat;
 import org.elasticsearch.index.mapper.IdFieldMapper;
+import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.Mapper;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.vectors.DenseVectorFieldMapper;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 
 /**
  * Class that encapsulates the logic of figuring out the most appropriate file format for a given field, across postings, doc values and
@@ -35,6 +38,7 @@ public class PerFieldFormatSupplier {
     private static final KnnVectorsFormat knnVectorsFormat = new Lucene99HnswVectorsFormat();
     private static final ES87TSDBDocValuesFormat tsdbDocValuesFormat = new ES87TSDBDocValuesFormat();
     private static final ES812PostingsFormat es812PostingsFormat = new ES812PostingsFormat();
+    public static final Logger LOGGER = LogManager.getLogger(PerFieldFormatSupplier.class);
 
     private final ES87BloomFilterPostingsFormat bloomFilterPostingsFormat;
     private final MapperService mapperService;
@@ -92,8 +96,19 @@ public class PerFieldFormatSupplier {
 
     public DocValuesFormat getDocValuesFormatForField(String field) {
         if (useTSDBDocValuesFormat(field)) {
+            LOGGER.info("--> use tsdb codec for field {}", field);
             return tsdbDocValuesFormat;
+        } else {
+            if (mapperService == null) {
+                return docValuesFormat;
+            }
+            MappedFieldType mappedFieldType = mapperService.fieldType(field);
+            if (mappedFieldType != null && mappedFieldType.typeName().equals("geo_shape")) {
+                LOGGER.info("--> use tsdb codec for field {}", field);
+                return tsdbDocValuesFormat;
+            }
         }
+        LOGGER.info("--> use default codec for field {}", field);
         return docValuesFormat;
     }
 
