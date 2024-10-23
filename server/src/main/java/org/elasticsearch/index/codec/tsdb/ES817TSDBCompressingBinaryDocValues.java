@@ -35,8 +35,8 @@ import java.io.Closeable;
 import java.io.IOException;
 
 class ES817TSDBCompressingBinaryDocValues {
-    static final byte MAX_DOC_PER_CHUNK = 32;
-    static final int MAX_CHUNK_SIZE = 256 * 1024;
+    static final byte MAX_DOC_PER_CHUNK = 16;
+    static final int MAX_CHUNK_SIZE = 32 * 1024;
     static final String TMP_BLOCK_POINTERS_CODEC = "TSDB_817_BlockPointers";
 
     static final class Entry {
