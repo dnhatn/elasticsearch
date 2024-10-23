@@ -13,7 +13,6 @@ import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.DocValuesProducer;
 import org.apache.lucene.codecs.lucene90.IndexedDISI;
 import org.apache.lucene.index.BinaryDocValues;
-import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -23,20 +22,17 @@ import org.apache.lucene.store.RandomAccessInput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LongValues;
+import org.apache.lucene.util.compress.LZ4;
 import org.apache.lucene.util.packed.DirectMonotonicReader;
 import org.apache.lucene.util.packed.DirectMonotonicWriter;
 import org.elasticsearch.core.IOUtils;
-import org.elasticsearch.core.Releasable;
-import org.elasticsearch.nativeaccess.CloseableByteBuffer;
-import org.elasticsearch.nativeaccess.NativeAccess;
-import org.elasticsearch.nativeaccess.Zstd;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 class ES817TSDBCompressingBinaryDocValues {
-    static final byte MAX_DOC_PER_CHUNK = 16;
-    static final int MAX_CHUNK_SIZE = 32 * 1024;
+    static final byte MAX_DOC_PER_CHUNK = 32;
+    static final int MAX_CHUNK_SIZE = 64 * 1024;
     static final String TMP_BLOCK_POINTERS_CODEC = "TSDB_817_BlockPointers";
 
     static final class Entry {
@@ -80,6 +76,7 @@ class ES817TSDBCompressingBinaryDocValues {
         final SegmentWriteState state;
         final IndexOutput data;
         final IndexOutput meta;
+        final LZ4.FastCompressionHashTable compressionHashTable = new LZ4.FastCompressionHashTable();
 
         final int[] docLengths = new int[MAX_DOC_PER_CHUNK];
         byte[] block = BytesRef.EMPTY_BYTES;
@@ -151,41 +148,31 @@ class ES817TSDBCompressingBinaryDocValues {
         void flush() throws IOException {
             tmpBlockPointers.writeByte(numDocsInCurrentBlock);
             tmpBlockPointers.writeVLong(data.getFilePointer() - dataStartFilePointer);
-            try (CompressingBuffer compressingBuffer = compress(block, numBytesInCurrentBlock)) {
-                boolean allLengthsSame = true;
-                for (int i = 1; i < docLengths.length; i++) {
-                    if (docLengths[0] != docLengths[i]) {
-                        allLengthsSame = false;
-                        break;
-                    }
-                }
-                byte header = compressingBuffer != null ? (byte) 1 : (byte) 0;
-                if (allLengthsSame) {
-                    header |= 2;
-                }
-                data.writeByte(header);
-                final int docOffset = totalDocsWithValues - numDocsInCurrentBlock;
-                assert docOffset >= 0 : docOffset;
-                data.writeInt(docOffset);
-                data.writeByte(numDocsInCurrentBlock);
-                if (allLengthsSame) {
-                    data.writeInt(docLengths[0]);
-                } else {
-                    int pos = 0;
-                    for (int i = 0; i < numDocsInCurrentBlock; i++) {
-                        pos += docLengths[i];
-                        data.writeInt(pos);
-                    }
-                }
-                if (compressingBuffer != null) {
-                    final int compressedLen = compressingBuffer.compressedLen;
-                    data.writeVInt(compressedLen);
-                    compressingBuffer.buffer.buffer().get(block, 0, compressedLen);
-                    data.writeBytes(block, 0, compressedLen);
-                } else {
-                    data.writeBytes(block, 0, numBytesInCurrentBlock);
+            boolean allLengthsSame = true;
+            byte header = (byte) (numDocsInCurrentBlock << 1);
+            for (int i = 1; i < docLengths.length; i++) {
+                if (docLengths[0] != docLengths[i]) {
+                    allLengthsSame = false;
+                    break;
                 }
             }
+            if (allLengthsSame) {
+                header |= 1;
+            }
+            data.writeByte(header);
+            final int docOffset = totalDocsWithValues - numDocsInCurrentBlock;
+            assert docOffset >= 0 : docOffset;
+            data.writeInt(docOffset);
+            if (allLengthsSame) {
+                data.writeInt(docLengths[0]);
+            } else {
+                int pos = 0;
+                for (int i = 0; i < numDocsInCurrentBlock; i++) {
+                    pos += docLengths[i];
+                    data.writeInt(pos);
+                }
+            }
+            data.writeBytes(block, 0, numBytesInCurrentBlock);
             numDocsInCurrentBlock = 0;
             numBytesInCurrentBlock = 0;
             totalBlocks++;
@@ -245,20 +232,8 @@ class ES817TSDBCompressingBinaryDocValues {
         }
     }
 
-    private static class Block {
-        long address = -1;
-        byte numDocs;
-        int docOffset = -1;
-        boolean sameLength;
-        boolean compressed;
-
-        boolean contains(int docID) {
-            return docOffset <= docID && docID < docOffset + numDocs;
-        }
-    }
-
     static final class Reader {
-        static final int START_OFFSET_FP = 6;
+        static final int START_OFFSET_FP = 5;
         final LongValues blockAddresses;
         final IndexInput data;
         final BytesRef values = new BytesRef();
@@ -268,7 +243,7 @@ class ES817TSDBCompressingBinaryDocValues {
 
         Reader(Entry entry, IndexInput data, boolean merging) throws IOException {
             final RandomAccessInput addressesData = data.randomAccessSlice(entry.blockAddressOffset, entry.blockAddressLength);
-            this.blockAddresses = DirectMonotonicReader.getInstance(entry.blockAddressMeta, addressesData);
+            this.blockAddresses = DirectMonotonicReader.getInstance(entry.blockAddressMeta, addressesData, merging);
             this.data = data.slice("binary_values", entry.dataOffset, entry.dataLength);
             this.merging = merging;
             this.offsets = merging ? new int[MAX_DOC_PER_CHUNK + 1] : null;
@@ -293,9 +268,7 @@ class ES817TSDBCompressingBinaryDocValues {
             } else {
                 readOneOffsetAndLength(position);
             }
-            if (block.compressed == false) {
-                readOneValue();
-            }
+            readOneValue();
             return values;
         }
 
@@ -303,10 +276,9 @@ class ES817TSDBCompressingBinaryDocValues {
             data.seek(startAddress);
             block.address = startAddress;
             final byte header = data.readByte();
-            block.sameLength = (header & 2) != 0;
-            block.compressed = (header & 1) != 0;
+            block.numDocs = (byte) (header >>> 1);
+            block.sameLength = (header & 1) != 0;
             block.docOffset = data.readInt();
-            block.numDocs = data.readByte();
             // load all offsets of a merging instance
             if (merging) {
                 assert offsets != null;
@@ -320,20 +292,6 @@ class ES817TSDBCompressingBinaryDocValues {
                         offsets[i] = data.readInt();
                     }
                 }
-            }
-            // decompress values
-            if (block.compressed) {
-                final int blockLength;
-                if (merging) {
-                    blockLength = offsets[block.numDocs];
-                } else if (block.sameLength) {
-                    blockLength = data.readInt() * block.numDocs;
-                } else {
-                    data.seek(startAddress + START_OFFSET_FP + (block.numDocs - 1L) * 4L);
-                    blockLength = data.readInt();
-                }
-                values.bytes = ArrayUtil.growNoCopy(values.bytes, blockLength);
-                decompress(data, values.bytes, blockLength);
             }
         }
 
@@ -360,60 +318,16 @@ class ES817TSDBCompressingBinaryDocValues {
             values.offset = 0;
             data.readBytes(values.bytes, 0, values.length);
         }
-    }
 
-    private record CompressingBuffer(int compressedLen, CloseableByteBuffer buffer) implements Releasable {
-        @Override
-        public void close() {
-            buffer.close();
-        }
-    }
+        private static class Block {
+            long address = -1;
+            byte numDocs;
+            int docOffset = -1;
+            boolean sameLength;
 
-    private static CompressingBuffer compress(byte[] input, int inputLen) {
-        // don't compress small blocks
-        if (inputLen < 1024) {
-            return null;
-        }
-        NativeAccess nativeAccess = NativeAccess.instance();
-        Zstd zstd = nativeAccess.getZstd();
-        int compressedBound = zstd.compressBound(inputLen);
-        try (CloseableByteBuffer src = nativeAccess.newBuffer(inputLen)) {
-            src.buffer().put(input, 0, inputLen);
-            src.buffer().flip();
-            CloseableByteBuffer dest = nativeAccess.newBuffer(compressedBound);
-            try {
-                final int compressedLen = zstd.compress(dest, src, 3);
-                if (compressedLen * 10 > inputLen * 9) {
-                    // ignore compression if savings are less than 10%
-                    return null;
-                }
-                var result = new CompressingBuffer(compressedLen, dest);
-                dest = null;
-                return result;
-            } finally {
-                if (dest != null) {
-                    dest.close();
-                }
+            boolean contains(int docID) {
+                return docOffset <= docID && docID < docOffset + numDocs;
             }
-        }
-    }
-
-    private static void decompress(IndexInput dataIn, byte[] buffer, int originalLength) throws IOException {
-        final int compressedLen = dataIn.readVInt();
-        final NativeAccess nativeAccess = NativeAccess.instance();
-        final Zstd zstd = nativeAccess.getZstd();
-        try (
-            CloseableByteBuffer src = nativeAccess.newBuffer(compressedLen);
-            CloseableByteBuffer dest = nativeAccess.newBuffer(originalLength)
-        ) {
-            dataIn.readBytes(buffer, 0, compressedLen);
-            src.buffer().put(buffer, 0, compressedLen);
-            src.buffer().flip();
-            final int decompressedLen = zstd.decompress(dest, src);
-            if (decompressedLen != originalLength) {
-                throw new CorruptIndexException("Expected " + originalLength + " decompressed bytes, got " + decompressedLen, dataIn);
-            }
-            dest.buffer().get(0, buffer, 0, originalLength);
         }
     }
 }
