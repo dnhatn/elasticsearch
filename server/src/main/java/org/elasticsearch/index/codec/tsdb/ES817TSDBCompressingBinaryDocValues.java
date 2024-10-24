@@ -31,8 +31,8 @@ import java.io.Closeable;
 import java.io.IOException;
 
 class ES817TSDBCompressingBinaryDocValues {
-    static final byte MAX_DOC_PER_CHUNK = 32;
-    static final int MAX_CHUNK_SIZE = 64 * 1024;
+    static final byte MAX_DOC_PER_CHUNK = 16;
+    static final int MAX_CHUNK_SIZE = 31 * 1024;
     static final String TMP_BLOCK_POINTERS_CODEC = "TSDB_817_BlockPointers";
 
     static final class Entry {
@@ -76,7 +76,7 @@ class ES817TSDBCompressingBinaryDocValues {
         final SegmentWriteState state;
         final IndexOutput data;
         final IndexOutput meta;
-        final LZ4.FastCompressionHashTable compressionHashTable = new LZ4.FastCompressionHashTable();
+        final LZ4.FastCompressionHashTable ht = new LZ4.FastCompressionHashTable();
 
         final int[] docLengths = new int[MAX_DOC_PER_CHUNK];
         byte[] block = BytesRef.EMPTY_BYTES;
@@ -149,7 +149,7 @@ class ES817TSDBCompressingBinaryDocValues {
             tmpBlockPointers.writeByte(numDocsInCurrentBlock);
             tmpBlockPointers.writeVLong(data.getFilePointer() - dataStartFilePointer);
             boolean allLengthsSame = true;
-            byte header = (byte) (numDocsInCurrentBlock << 1);
+            byte header = (byte) (numDocsInCurrentBlock << 2);
             for (int i = 1; i < docLengths.length; i++) {
                 if (docLengths[0] != docLengths[i]) {
                     allLengthsSame = false;
@@ -158,6 +158,11 @@ class ES817TSDBCompressingBinaryDocValues {
             }
             if (allLengthsSame) {
                 header |= 1;
+            }
+            // don't compress small blocks
+            boolean toCompress = numBytesInCurrentBlock / numDocsInCurrentBlock >= 128;
+            if (toCompress) {
+                header |= 2;
             }
             data.writeByte(header);
             final int docOffset = totalDocsWithValues - numDocsInCurrentBlock;
@@ -172,7 +177,11 @@ class ES817TSDBCompressingBinaryDocValues {
                     data.writeInt(pos);
                 }
             }
-            data.writeBytes(block, 0, numBytesInCurrentBlock);
+            if (toCompress) {
+                LZ4.compress(block, 0, numBytesInCurrentBlock, data, ht);
+            } else {
+                data.writeBytes(block, 0, numBytesInCurrentBlock);
+            }
             numDocsInCurrentBlock = 0;
             numBytesInCurrentBlock = 0;
             totalBlocks++;
@@ -265,6 +274,9 @@ class ES817TSDBCompressingBinaryDocValues {
                 final int length = offsets[position + 1] - values.offset;
                 assert length >= 0 : length;
                 values.length = length;
+                if (block.compressed) {
+                    return values;
+                }
             } else {
                 readOneOffsetAndLength(position);
             }
@@ -276,8 +288,9 @@ class ES817TSDBCompressingBinaryDocValues {
             data.seek(startAddress);
             block.address = startAddress;
             final byte header = data.readByte();
-            block.numDocs = (byte) (header >>> 1);
+            block.numDocs = (byte) (header >>> 2);
             block.sameLength = (header & 1) != 0;
+            block.compressed = (header & 2) != 0;
             block.docOffset = data.readInt();
             // load all offsets of a merging instance
             if (merging) {
@@ -292,14 +305,27 @@ class ES817TSDBCompressingBinaryDocValues {
                         offsets[i] = data.readInt();
                     }
                 }
+                block.blockLength = offsets[block.numDocs];
+                if (block.compressed) {
+                    values.bytes = ArrayUtil.growNoCopy(values.bytes, block.blockLength);
+                    LZ4.decompress(data, block.blockLength, values.bytes, 0);
+                }
+            } else {
+                if (block.sameLength) {
+                    block.blockLength = block.numDocs * data.readInt();
+                } else {
+                    int skipOffsets = block.numDocs - 1;
+                    data.seek(startAddress + START_OFFSET_FP + skipOffsets * 4L);
+                    block.blockLength = data.readInt();
+                }
             }
         }
 
         private void readOneOffsetAndLength(int position) throws IOException {
             if (block.sameLength) {
-                data.seek(block.address + START_OFFSET_FP);
-                values.length = data.readInt();
-                values.offset = position * values.length;
+                int oneLength = block.blockLength / block.numDocs;
+                values.offset = oneLength * position;
+                values.length = oneLength;
             } else if (position == 0) {
                 values.offset = 0;
                 data.seek(block.address + START_OFFSET_FP);
@@ -313,17 +339,27 @@ class ES817TSDBCompressingBinaryDocValues {
 
         private void readOneValue() throws IOException {
             final int numOffsets = block.sameLength ? 1 : block.numDocs;
-            data.seek(block.address + START_OFFSET_FP + numOffsets * 4L + values.offset);
-            values.bytes = ArrayUtil.growNoCopy(values.bytes, values.length);
-            values.offset = 0;
-            data.readBytes(values.bytes, 0, values.length);
+            if (block.compressed) {
+                data.seek(block.address + START_OFFSET_FP + numOffsets * 4L);
+                int decompressedLen = values.offset + values.length;
+                assert decompressedLen <= block.blockLength : decompressedLen + " > " + block.blockLength;
+                values.bytes = ArrayUtil.growNoCopy(values.bytes, block.blockLength);
+                LZ4.decompress(data, decompressedLen, values.bytes, 0);
+            } else {
+                data.seek(block.address + START_OFFSET_FP + numOffsets * 4L + values.offset);
+                values.bytes = ArrayUtil.growNoCopy(values.bytes, values.length);
+                values.offset = 0;
+                data.readBytes(values.bytes, 0, values.length);
+            }
         }
 
         private static class Block {
             long address = -1;
             byte numDocs;
             int docOffset = -1;
+            int blockLength;
             boolean sameLength;
+            boolean compressed;
 
             boolean contains(int docID) {
                 return docOffset <= docID && docID < docOffset + numDocs;
