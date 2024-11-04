@@ -117,7 +117,7 @@ public final class LuceneBatchChangesSnapshot implements Translog.Snapshot {
         this.ops = new Translog.Operation[this.batchSize];
         this.indexVersionCreated = indexVersionCreated;
         final TopDocs topDocs = searchOperations(null, accessStats);
-        this.totalHits = Math.toIntExact(topDocs.totalHits.value);
+        this.totalHits = Math.toIntExact(topDocs.totalHits.value());
         this.scoreDocs = topDocs.scoreDocs;
         if (mappingLookup != null) {
             this.sourceLoader = mappingLookup.newSourceLoader(SourceFieldMetrics.NOOP);

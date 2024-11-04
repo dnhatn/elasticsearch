@@ -166,7 +166,7 @@ public final class LuceneChangesSnapshot implements Translog.Snapshot {
         this.parallelArray = new ParallelArray(this.searchBatchSize);
         this.indexVersionCreated = indexVersionCreated;
         final TopDocs topDocs = searchOperations(null, accessStats);
-        this.totalHits = Math.toIntExact(topDocs.totalHits.value);
+        this.totalHits = Math.toIntExact(topDocs.totalHits.value());
         this.scoreDocs = topDocs.scoreDocs;
         if (mappingLookup != null) {
             this.sourceLoader = mappingLookup.newSourceLoader(SourceFieldMetrics.NOOP);
