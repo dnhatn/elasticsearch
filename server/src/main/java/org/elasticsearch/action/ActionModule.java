@@ -235,6 +235,8 @@ import org.elasticsearch.health.node.UpdateHealthInfoCacheAction;
 import org.elasticsearch.health.stats.HealthApiStatsAction;
 import org.elasticsearch.health.stats.HealthApiStatsTransportAction;
 import org.elasticsearch.http.HttpPreRequest;
+import org.elasticsearch.index.engine.ReadChangesActionType;
+import org.elasticsearch.index.engine.RestReadChangesAction;
 import org.elasticsearch.index.seqno.GlobalCheckpointSyncAction;
 import org.elasticsearch.index.seqno.RetentionLeaseActions;
 import org.elasticsearch.indices.SystemIndices;
@@ -802,6 +804,8 @@ public class ActionModule extends AbstractModule {
         actions.register(GetSynonymRuleAction.INSTANCE, TransportGetSynonymRuleAction.class);
         actions.register(DeleteSynonymRuleAction.INSTANCE, TransportDeleteSynonymRuleAction.class);
 
+        actions.register(ReadChangesActionType.INSTANCE, ReadChangesActionType.TransportAction.class);
+
         return unmodifiableMap(actions.getRegistry());
     }
 
@@ -1004,6 +1008,8 @@ public class ActionModule extends AbstractModule {
         registerHandler.accept(new RestGetDesiredNodesAction());
         registerHandler.accept(new RestUpdateDesiredNodesAction(clusterSupportsFeature));
         registerHandler.accept(new RestDeleteDesiredNodesAction());
+
+        registerHandler.accept(new RestReadChangesAction());
 
         for (ActionPlugin plugin : actionPlugins) {
             for (RestHandler handler : plugin.getRestHandlers(
