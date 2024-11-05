@@ -393,7 +393,7 @@ public class RecoverySettings {
      */
     public static final Setting<Boolean> INDICES_RECOVERY_SOURCE_ENABLED_SETTING = Setting.boolSetting(
         "indices.recovery.recovery_source.enabled",
-        true,
+        false,
         Property.NodeScope
     );
 
