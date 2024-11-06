@@ -151,17 +151,22 @@ public class ReadChangesActionType extends ActionType<ReadChangesActionType.Read
             if (state.nodes().size() > 1) {
                 throw new IllegalArgumentException("api requires single node cluster");
             }
-            logger.info("--> resolving to {} to {} indices", request.indices, indices);
             ActionListener.completeWith(listener, () -> {
                 final long startTimeInNanos = System.nanoTime();
                 long totalOps = 0;
+                long minSeqNo = Long.MAX_VALUE;
+                long maxSeqNo = Long.MIN_VALUE;
                 for (Index index : indices) {
                     for (IndexShard shard : indicesService.indexServiceSafe(index)) {
                         try(Translog.Snapshot snapshot = acquireSnapshot(shard, request)){
-                            while (snapshot.next() != null) {
+                            Translog.Operation op;
+                            while ((op = snapshot.next()) != null) {
                                 totalOps++;
+                                minSeqNo = Math.min(op.seqNo(), minSeqNo);
+                                maxSeqNo = Math.max(op.seqNo(), maxSeqNo);
                             }
                         }
+                        logger.info("--> reading {} total operations {} from {} to {}", index.getName(), totalOps, minSeqNo, maxSeqNo);
                     }
                 }
                 final long tookTimeInNanos = System.nanoTime() - startTimeInNanos;
