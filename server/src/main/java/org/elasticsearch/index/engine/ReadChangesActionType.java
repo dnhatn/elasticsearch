@@ -23,11 +23,13 @@ import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.indices.IndicesService;
+import org.elasticsearch.indices.recovery.RecoverySettings;
 import org.elasticsearch.injection.guice.Inject;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -155,7 +157,7 @@ public class ReadChangesActionType extends ActionType<ReadChangesActionType.Read
                 long totalOps = 0;
                 for (Index index : indices) {
                     for (IndexShard shard : indicesService.indexServiceSafe(index)) {
-                        try (Translog.Snapshot snapshot = shard.newChangesSnapshot("api", request.fromSeqNo, request.toSeqNo, false, true, false)) {
+                        try(Translog.Snapshot snapshot = acquireSnapshot(shard, request)){
                             while (snapshot.next() != null) {
                                 totalOps++;
                             }
@@ -166,5 +168,30 @@ public class ReadChangesActionType extends ActionType<ReadChangesActionType.Read
                 return new ReadChangeResponse(tookTimeInNanos, totalOps);
             });
         }
+        private Translog.Snapshot acquireSnapshot(IndexShard shard, ReadChangeRequest request) throws IOException {
+            Engine engine = shard.getEngineOrNull();
+            Engine.Searcher searcher = engine.acquireSearcher("api", Engine.SearcherScope.INTERNAL);
+            boolean useRecoverySource = RecoverySettings.INDICES_RECOVERY_SOURCE_ENABLED_SETTING.get(
+                engine.config().getIndexSettings().getSettings()
+            );
+            var mappingLookup = useRecoverySource ? shard.mapperService().mappingLookup() : null;
+            try {
+                Translog.Snapshot snapshot = new LuceneBatchChangesSnapshot(
+                    mappingLookup,
+                    searcher,
+                    request.batchSize,
+                    request.fromSeqNo,
+                    request.toSeqNo,
+                    false,
+                    false,
+                    engine.config().getIndexSettings().getIndexVersionCreated()
+                );
+                searcher = null;
+                return snapshot;
+            } finally {
+                IOUtils.close(searcher);
+            }
+        }
     }
+
 }
