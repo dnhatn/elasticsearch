@@ -114,10 +114,10 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
         }
     }
 
-    private record Buffer(IndexInput indexInput, long filePosition, byte[] bytes) {
+    private record Buffer(IndexInput indexInput, long startFilePosition, int fileLength, byte[] bytes) {
         void copy(BytesRef dst, int offset, int length) {
             dst.bytes = bytes;
-            dst.offset = offset;
+            dst.offset = 0;
             dst.length = length;
         }
     }
@@ -138,16 +138,20 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
                 bytes.length = 0;
                 return;
             }
-            final long filePosition;
+            bytes.offset = 0;
+            bytes.length = length;
+            bytes.bytes = ArrayUtil.growNoCopy(bytes.bytes, length);
+            final long startFP;
             if (in instanceof IndexInput indexInput) {
-                filePosition = indexInput.getFilePointer();
+                startFP = indexInput.getFilePointer();
                 final Buffer buffer = cachedBuffer.get();
-                if (buffer != null && buffer.indexInput == indexInput && buffer.filePosition == filePosition) {
+                if (buffer != null && buffer.indexInput == indexInput && buffer.startFilePosition == startFP) {
+                    indexInput.skipBytes(Math.toIntExact(buffer.fileLength));
                     buffer.copy(bytes, offset, length);
                     return;
                 }
             } else {
-                filePosition = -1;
+                startFP = -1;
             }
 
             final NativeAccess nativeAccess = NativeAccess.instance();
@@ -172,17 +176,16 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
                     throw new CorruptIndexException("Expected " + originalLength + " decompressed bytes, got " + decompressedLen, in);
                 }
                 if (in instanceof IndexInput indexInput) {
-                    final Buffer cached = cachedBuffer.get();
-                    bytes.bytes = ArrayUtil.growNoCopy(cached != null ? cached.bytes : bytes.bytes, decompressedLen);
-                    dest.buffer().get(0, bytes.bytes, 0, decompressedLen);
-                    cachedBuffer = new WeakReference<>(new Buffer(indexInput, filePosition, bytes.bytes));
-                    bytes.offset = offset;
+                    Buffer cached = cachedBuffer.get();
+                    final byte[] buffer = ArrayUtil.growNoCopy(cached != null ? cached.bytes : new byte[0], decompressedLen);
+                    dest.buffer().get(0, buffer, 0, decompressedLen);
+                    cached = new Buffer(indexInput, startFP, Math.toIntExact(indexInput.getFilePointer() - startFP), buffer);
+                    cachedBuffer = new WeakReference<>(cached);
+                    cached.copy(bytes, offset, length);
                 } else {
-                    bytes.bytes = ArrayUtil.growNoCopy(bytes.bytes, length);
+                    assert false;
                     dest.buffer().get(offset, bytes.bytes, 0, length);
-                    bytes.offset = 0;
                 }
-                bytes.length = length;
             }
         }
 
