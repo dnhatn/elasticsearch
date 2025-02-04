@@ -21,6 +21,7 @@ import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.nativeaccess.CloseableByteBuffer;
@@ -28,6 +29,7 @@ import org.elasticsearch.nativeaccess.NativeAccess;
 import org.elasticsearch.nativeaccess.Zstd;
 
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 
 /**
  * {@link org.apache.lucene.codecs.StoredFieldsFormat} that compresses blocks of data using ZStandard.
@@ -112,11 +114,20 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
         }
     }
 
+    private record Buffer(IndexInput indexInput, long filePosition, byte[] bytes) {
+        void copy(BytesRef dst, int offset, int length) {
+            dst.bytes = bytes;
+            dst.offset = offset;
+            dst.length = length;
+        }
+    }
+
     private static final class ZstdDecompressor extends Decompressor {
 
         // Buffer for copying between the DataInput and native memory. No hard science behind this number, it just tries to be high enough
         // to benefit from bulk copying and low enough to keep heap usage under control.
         final byte[] copyBuffer = new byte[4096];
+        private WeakReference<Buffer> cachedBuffer = new WeakReference<>(null);
 
         ZstdDecompressor() {}
 
@@ -126,6 +137,17 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
                 bytes.offset = 0;
                 bytes.length = 0;
                 return;
+            }
+            final long filePosition;
+            if (in instanceof IndexInput indexInput) {
+                filePosition = indexInput.getFilePointer();
+                final Buffer buffer = cachedBuffer.get();
+                if (buffer != null && buffer.indexInput == indexInput && buffer.filePosition == filePosition) {
+                    buffer.copy(bytes, offset, length);
+                    return;
+                }
+            } else {
+                filePosition = -1;
             }
 
             final NativeAccess nativeAccess = NativeAccess.instance();
@@ -149,10 +171,17 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
                 if (decompressedLen != originalLength) {
                     throw new CorruptIndexException("Expected " + originalLength + " decompressed bytes, got " + decompressedLen, in);
                 }
-
-                bytes.bytes = ArrayUtil.growNoCopy(bytes.bytes, length);
-                dest.buffer().get(offset, bytes.bytes, 0, length);
-                bytes.offset = 0;
+                if (in instanceof IndexInput indexInput) {
+                    final Buffer cached = cachedBuffer.get();
+                    bytes.bytes = ArrayUtil.growNoCopy(cached != null ? cached.bytes : bytes.bytes, decompressedLen);
+                    dest.buffer().get(0, bytes.bytes, 0, decompressedLen);
+                    cachedBuffer = new WeakReference<>(new Buffer(indexInput, filePosition, bytes.bytes));
+                    bytes.offset = offset;
+                } else {
+                    bytes.bytes = ArrayUtil.growNoCopy(bytes.bytes, length);
+                    dest.buffer().get(offset, bytes.bytes, 0, length);
+                    bytes.offset = 0;
+                }
                 bytes.length = length;
             }
         }
