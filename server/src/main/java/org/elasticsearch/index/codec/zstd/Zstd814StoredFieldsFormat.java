@@ -143,8 +143,10 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
             if (in instanceof IndexInput indexInput) {
                 startFP = indexInput.getFilePointer();
                 final Buffer buffer = cachedBuffer.get();
-                if (buffer != null && buffer.indexInput == indexInput && buffer.startFilePosition == startFP &&
-                    buffer.startOffset < offset) {
+                if (buffer != null
+                    && buffer.indexInput == indexInput
+                    && buffer.startFilePosition == startFP
+                    && buffer.startOffset <= offset) {
                     indexInput.skipBytes(Math.toIntExact(buffer.fileLength));
                     buffer.copyBytes(bytes, offset, length);
                     return;
@@ -177,6 +179,7 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
                 // don't cache if it's the last document in the chunk
                 if (in instanceof IndexInput indexInput && (offset + length) < decompressedLen) {
                     Buffer cached = cachedBuffer.get();
+                    // only cache the compressing buffer starting at the offset, as stored fields should be read in increasing order
                     final int bufferLen = decompressedLen - offset;
                     final byte[] buffer = ArrayUtil.growNoCopy(cached != null ? cached.bytes : new byte[0], bufferLen);
                     dest.buffer().get(offset, buffer, 0, bufferLen);
