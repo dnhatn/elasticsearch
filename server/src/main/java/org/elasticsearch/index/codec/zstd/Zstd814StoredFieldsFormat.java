@@ -114,10 +114,10 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
         }
     }
 
-    private record Buffer(IndexInput indexInput, long startFilePosition, int fileLength, byte[] bytes) {
+    private record Buffer(IndexInput indexInput, long startFilePosition, int startOffset, int fileLength, byte[] bytes) {
         void copyBytes(BytesRef dst, int offset, int length) {
             dst.bytes = bytes;
-            dst.offset = offset;
+            dst.offset = offset - startOffset;
             dst.length = length;
         }
     }
@@ -143,7 +143,8 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
             if (in instanceof IndexInput indexInput) {
                 startFP = indexInput.getFilePointer();
                 final Buffer buffer = cachedBuffer.get();
-                if (buffer != null && buffer.indexInput == indexInput && buffer.startFilePosition == startFP) {
+                if (buffer != null && buffer.indexInput == indexInput && buffer.startFilePosition == startFP &&
+                    buffer.startOffset < offset) {
                     indexInput.skipBytes(Math.toIntExact(buffer.fileLength));
                     buffer.copyBytes(bytes, offset, length);
                     return;
@@ -176,9 +177,10 @@ public final class Zstd814StoredFieldsFormat extends Lucene90CompressingStoredFi
                 // don't cache if it's the last document in the chunk
                 if (in instanceof IndexInput indexInput && (offset + length) < decompressedLen) {
                     Buffer cached = cachedBuffer.get();
-                    final byte[] buffer = ArrayUtil.growNoCopy(cached != null ? cached.bytes : new byte[0], decompressedLen);
-                    dest.buffer().get(0, buffer, 0, decompressedLen);
-                    cached = new Buffer(indexInput, startFP, Math.toIntExact(indexInput.getFilePointer() - startFP), buffer);
+                    final int bufferLen = decompressedLen - offset;
+                    final byte[] buffer = ArrayUtil.growNoCopy(cached != null ? cached.bytes : new byte[0], bufferLen);
+                    dest.buffer().get(offset, buffer, 0, bufferLen);
+                    cached = new Buffer(indexInput, startFP, offset, Math.toIntExact(indexInput.getFilePointer() - startFP), buffer);
                     cachedBuffer = new WeakReference<>(cached);
                     cached.copyBytes(bytes, offset, length);
                 } else {
