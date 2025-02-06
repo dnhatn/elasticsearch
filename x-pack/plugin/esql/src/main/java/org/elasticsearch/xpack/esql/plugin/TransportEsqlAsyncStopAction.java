@@ -32,6 +32,7 @@ import org.elasticsearch.xpack.core.async.AsyncTaskIndexService;
 import org.elasticsearch.xpack.core.async.GetAsyncResultRequest;
 import org.elasticsearch.xpack.core.security.SecurityContext;
 import org.elasticsearch.xpack.esql.action.EsqlAsyncStopAction;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryResponse;
 import org.elasticsearch.xpack.esql.action.EsqlQueryTask;
 
@@ -106,34 +107,25 @@ public class TransportEsqlAsyncStopAction extends HandledTransportAction<AsyncSt
 
     private void stopQueryAndReturnResult(Task task, AsyncExecutionId asyncId, ActionListener<EsqlQueryResponse> listener) {
         String asyncIdStr = asyncId.getEncoded();
-        TransportEsqlQueryAction.EsqlQueryListener asyncListener = queryAction.getAsyncListener(asyncIdStr);
-        if (asyncListener == null) {
-            // This should mean one of the two things: either bad request ID, or the query has already finished
-            // In both cases, let regular async get deal with it.
-            var getAsyncResultRequest = new GetAsyncResultRequest(asyncIdStr);
-            // TODO: this should not be happening, but if the listener is not registered and the query is not finished,
-            // we give it some time to finish
-            getAsyncResultRequest.setWaitForCompletionTimeout(new TimeValue(1, TimeUnit.SECONDS));
-            getResultsAction.execute(task, getAsyncResultRequest, listener);
+        final EsqlQueryTask asyncTask;
+        try {
+            asyncTask = AsyncTaskIndexService.getTask(taskManager, asyncId, EsqlQueryTask.class);
+            if (asyncTask == null || false == security.currentUserHasAccessToTask(asyncTask)) {
+                listener.onFailure(new ResourceNotFoundException(asyncId + " not found"));
+                return;
+            }
+            final EsqlExecutionInfo esqlExecutionInfo = asyncTask.executionInfo();
+            if (esqlExecutionInfo != null) {
+                esqlExecutionInfo.markAsPartial();
+            }
+        } catch (IOException ex) {
+            listener.onFailure(new ResourceNotFoundException(asyncId + " not found"));
             return;
         }
-        try {
-            EsqlQueryTask asyncTask = AsyncTaskIndexService.getTask(taskManager, asyncId, EsqlQueryTask.class);
-            if (false == security.currentUserHasAccessToTask(asyncTask)) {
-                throw new ResourceNotFoundException(asyncId + " not found");
-            }
-        } catch (IOException e) {
-            throw new ResourceNotFoundException(asyncId + " not found", e);
-        }
-        // Here we will wait for both the response to become available and for the finish operation to complete
-        var responseHolder = new AtomicReference<EsqlQueryResponse>();
-        try (var refs = new EsqlRefCountingListener(listener.map(unused -> responseHolder.get()))) {
-            asyncListener.addListener(refs.acquire().map(r -> {
-                responseHolder.set(r);
-                return null;
-            }));
-            asyncListener.markAsPartial();
-            exchangeService.finishSessionEarly(sessionID(asyncId), refs.acquire());
-        }
+        exchangeService.finishSessionEarly(sessionID(asyncId), ActionListener.running(() -> {
+            var getAsyncResultRequest = new GetAsyncResultRequest(asyncIdStr);
+            getAsyncResultRequest.setWaitForCompletionTimeout(new TimeValue(30, TimeUnit.SECONDS));
+            getResultsAction.execute(task, getAsyncResultRequest, listener);
+        }));
     }
 }
