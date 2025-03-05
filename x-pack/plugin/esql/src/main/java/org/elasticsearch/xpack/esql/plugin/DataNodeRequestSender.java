@@ -24,6 +24,8 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 import org.elasticsearch.search.internal.AliasFilter;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.Task;
@@ -62,6 +64,7 @@ abstract class DataNodeRequestSender {
     private final Map<ShardId, ShardFailure> shardFailures = ConcurrentCollections.newConcurrentMap();
     private final AtomicBoolean changed = new AtomicBoolean();
     private boolean reportedFailure = false; // guarded by sendingLock
+    private static final Logger logger = LogManager.getLogger(DataNodeRequestSender.class);
 
     DataNodeRequestSender(TransportService transportService, Executor esqlExecutor, CancellableTask rootTask, boolean allowPartialResults) {
         this.transportService = transportService;
@@ -174,6 +177,7 @@ abstract class DataNodeRequestSender {
                     }
                 }
                 for (Map.Entry<ShardId, Exception> e : response.shardLevelFailures().entrySet()) {
+                    logger.warn("--> shard failure ", e.getValue());
                     final ShardId shardId = e.getKey();
                     trackShardLevelFailure(shardId, false, e.getValue());
                     pendingShardIds.add(shardId);
@@ -183,6 +187,7 @@ abstract class DataNodeRequestSender {
 
             @Override
             public void onFailure(Exception e, boolean receivedData) {
+                logger.warn("--> request failure ", e);
                 for (ShardId shardId : request.shardIds) {
                     trackShardLevelFailure(shardId, receivedData, e);
                     pendingShardIds.add(shardId);
