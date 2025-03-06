@@ -202,7 +202,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
         if (request.allowPartialResults() == null) {
             request.allowPartialResults(defaultAllowPartialResults);
         }
-        ExecutionTime.INSTANCE.clea();
+        ExecutionTime.INSTANCE.clear();
         long startNanoTime = System.nanoTime();
         Configuration configuration = new Configuration(
             ZoneOffset.UTC,
