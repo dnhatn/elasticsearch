@@ -185,7 +185,10 @@ public class DefaultRestChannel extends AbstractRestChannel {
                 final var finalOpaque = opaque;
                 listener = ActionListener.runAfter(
                     listener,
-                    () -> httpLogger.logResponse(restResponse, httpChannel, finalContentLength, finalOpaque, request.getRequestId(), true)
+                    () -> {
+                        logger.info("--> send rest response took [{}]", TimeValue.timeValueNanos(System.nanoTime() - startTime));
+                        httpLogger.logResponse(restResponse, httpChannel, finalContentLength, finalOpaque, request.getRequestId(), true);
+                    }
                 );
             }
 
@@ -194,7 +197,6 @@ public class DefaultRestChannel extends AbstractRestChannel {
             }
             success = true;
         } finally {
-            logger.info("--> send rest response took [{}]", TimeValue.timeValueNanos(System.nanoTime() - startTime));
             if (success == false) {
                 Releasables.close(toClose);
                 if (httpLogger != null) {
