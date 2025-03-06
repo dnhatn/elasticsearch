@@ -186,14 +186,15 @@ public class DefaultRestChannel extends AbstractRestChannel {
                 listener = ActionListener.runAfter(
                     listener,
                     () -> {
-                        logger.info("--> send rest response took [{}]", TimeValue.timeValueNanos(System.nanoTime() - startTime));
                         httpLogger.logResponse(restResponse, httpChannel, finalContentLength, finalOpaque, request.getRequestId(), true);
                     }
                 );
             }
 
             try (ThreadContext.StoredContext ignored = threadContext.stashContext()) {
-                httpChannel.sendResponse(httpResponse, listener);
+                httpChannel.sendResponse(httpResponse, ActionListener.runAfter(listener, () -> {
+                    logger.info("--> send rest response took [{}]", TimeValue.timeValueNanos(System.nanoTime() - startTime));
+                }));
             }
             success = true;
         } finally {
