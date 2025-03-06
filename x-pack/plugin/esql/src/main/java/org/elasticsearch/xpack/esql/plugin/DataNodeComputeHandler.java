@@ -16,6 +16,7 @@ import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.support.ChannelActionListener;
 import org.elasticsearch.action.support.RefCountingRunnable;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.compute.operator.exchange.ExchangeSink;
@@ -238,6 +239,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             final int endBatchIndex = Math.min(startBatchIndex + maxConcurrentShards, request.shardIds().size());
             final AtomicInteger pagesProduced = new AtomicInteger();
             List<ShardId> shardIds = request.shardIds().subList(startBatchIndex, endBatchIndex);
+            ExecutionTime.INSTANCE.shards.addAndGet(shardIds.size());
             ActionListener<List<DriverProfile>> batchListener = new ActionListener<>() {
                 final ActionListener<List<DriverProfile>> ref = computeListener.acquireCompute();
 

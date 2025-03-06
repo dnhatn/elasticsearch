@@ -8,6 +8,7 @@
 package org.elasticsearch.compute.operator.exchange;
 
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BlockStreamInput;
 import org.elasticsearch.compute.data.Page;
@@ -36,13 +37,16 @@ public final class ExchangeResponse extends TransportResponse implements Releasa
 
     public ExchangeResponse(BlockStreamInput in) throws IOException {
         super(in);
+        long startInNanos = System.nanoTime();
         this.blockFactory = in.blockFactory();
         this.page = in.readOptionalWriteable(Page::new);
         this.finished = in.readBoolean();
+        ExecutionTime.INSTANCE.trackExecutionTime("read_exchange_response", System.nanoTime() - startInNanos);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
+        long startInNanos = System.nanoTime();
         if (page != null) {
             long bytes = page.ramBytesUsedByBlocks();
             blockFactory.breaker().addEstimateBytesAndMaybeBreak(bytes, "serialize exchange response");
@@ -50,6 +54,7 @@ public final class ExchangeResponse extends TransportResponse implements Releasa
         }
         out.writeOptionalWriteable(page);
         out.writeBoolean(finished);
+        ExecutionTime.INSTANCE.trackExecutionTime("writing_exchange_response", System.nanoTime() - startInNanos);
     }
 
     /**

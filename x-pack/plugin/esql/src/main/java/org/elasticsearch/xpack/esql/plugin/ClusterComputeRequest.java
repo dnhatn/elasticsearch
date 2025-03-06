@@ -14,6 +14,7 @@ import org.elasticsearch.common.breaker.NoopCircuitBreaker;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BlockStreamInput;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
@@ -61,6 +62,7 @@ final class ClusterComputeRequest extends TransportRequest implements IndicesReq
 
     ClusterComputeRequest(StreamInput in) throws IOException {
         super(in);
+        long startInNanos = System.nanoTime();
         this.clusterAlias = in.readString();
         this.sessionId = in.readString();
         this.configuration = new Configuration(
@@ -69,15 +71,18 @@ final class ClusterComputeRequest extends TransportRequest implements IndicesReq
         );
         this.plan = RemoteClusterPlan.from(new PlanStreamInput(in, in.namedWriteableRegistry(), configuration));
         this.indices = plan.originalIndices().indices();
+        ExecutionTime.INSTANCE.trackExecutionTime("sending_cluster_request", System.nanoTime() - startInNanos);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
+        long startInNanos = System.nanoTime();
         super.writeTo(out);
         out.writeString(clusterAlias);
         out.writeString(sessionId);
         configuration.writeTo(out);
         plan.writeTo(new PlanStreamOutput(out, configuration));
+        ExecutionTime.INSTANCE.trackExecutionTime("writing_cluster_request", System.nanoTime() - startInNanos);
     }
 
     @Override

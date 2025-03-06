@@ -11,6 +11,7 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
 import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.support.ChannelActionListener;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.compute.operator.exchange.ExchangeSourceHandler;
@@ -208,6 +209,7 @@ final class ClusterComputeHandler implements TransportRequestHandler<ClusterComp
             listener.onFailure(new IllegalStateException("expected exchange sink for a remote compute; got " + plan));
             return;
         }
+        ExecutionTime.INSTANCE.clear();
         runComputeOnRemoteCluster(
             request.clusterAlias(),
             request.sessionId(),
@@ -216,7 +218,7 @@ final class ClusterComputeHandler implements TransportRequestHandler<ClusterComp
             (ExchangeSinkExec) plan,
             Set.of(remoteClusterPlan.targetIndices()),
             remoteClusterPlan.originalIndices(),
-            listener
+            ActionListener.runAfter(listener, ExecutionTime.INSTANCE::logExecutionTime)
         );
     }
 

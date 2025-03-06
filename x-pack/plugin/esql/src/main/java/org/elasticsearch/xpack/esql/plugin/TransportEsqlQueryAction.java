@@ -20,6 +20,7 @@ import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.data.BlockFactoryProvider;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.core.Nullable;
@@ -201,6 +202,8 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
         if (request.allowPartialResults() == null) {
             request.allowPartialResults(defaultAllowPartialResults);
         }
+        ExecutionTime.INSTANCE.clear();
+        long startNanoTime = System.nanoTime();
         Configuration configuration = new Configuration(
             ZoneOffset.UTC,
             request.locale() != null ? request.locale() : Locale.US,
@@ -213,7 +216,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             request.query(),
             request.profile(),
             request.tables(),
-            System.nanoTime(),
+            startNanoTime,
             request.allowPartialResults()
         );
         String sessionId = sessionID(task);
@@ -221,15 +224,18 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
         // sync query uses CancellableTask which does not have EsqlExecutionInfo, so create one
         EsqlExecutionInfo executionInfo = getOrCreateExecutionInfo(task, request);
         FoldContext foldCtx = configuration.newFoldContext();
-        PlanRunner planRunner = (plan, resultListener) -> computeService.execute(
-            sessionId,
-            (CancellableTask) task,
-            plan,
-            configuration,
-            foldCtx,
-            executionInfo,
-            resultListener
-        );
+        PlanRunner planRunner = (plan, resultListener) -> {
+            ExecutionTime.INSTANCE.trackExecutionTime("planning", System.nanoTime() - startNanoTime);
+            computeService.execute(
+                sessionId,
+                (CancellableTask) task,
+                plan,
+                configuration,
+                foldCtx,
+                executionInfo,
+                resultListener
+            );
+        };
         planExecutor.esql(
             request,
             sessionId,
@@ -242,7 +248,9 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             services,
             ActionListener.wrap(result -> {
                 recordCCSTelemetry(task, executionInfo, request, null);
-                listener.onResponse(toResponse(task, request, configuration, result));
+                EsqlQueryResponse response = toResponse(task, request, configuration, result);
+                ExecutionTime.INSTANCE.logExecutionTime();
+                listener.onResponse(response);
             }, ex -> {
                 recordCCSTelemetry(task, executionInfo, request, ex);
                 listener.onFailure(ex);

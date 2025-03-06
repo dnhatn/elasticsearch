@@ -14,6 +14,7 @@ import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.concurrent.RunOnce;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.Driver;
@@ -340,6 +341,7 @@ public class ComputeService {
     }
 
     void runCompute(CancellableTask task, ComputeContext context, PhysicalPlan plan, ActionListener<List<DriverProfile>> listener) {
+        long startTime = System.nanoTime();
         listener = ActionListener.runBefore(listener, () -> Releasables.close(context.searchContexts()));
         List<EsPhysicalOperationProviders.ShardContext> contexts = new ArrayList<>(context.searchContexts().size());
         for (int i = 0; i < context.searchContexts().size(); i++) {
@@ -389,12 +391,14 @@ public class ComputeService {
             if (drivers.isEmpty()) {
                 throw new IllegalStateException("no drivers created");
             }
+            ExecutionTime.INSTANCE.trackExecutionTime("local_planning", System.nanoTime() - startTime);
             LOGGER.debug("using {} drivers", drivers.size());
         } catch (Exception e) {
             listener.onFailure(e);
             return;
         }
         ActionListener<Void> listenerCollectingStatus = listener.map(ignored -> {
+            ExecutionTime.INSTANCE.trackExecutionTime("run_compute", System.nanoTime() - startTime);
             if (context.configuration().profile()) {
                 return drivers.stream().map(Driver::profile).toList();
             } else {
