@@ -380,6 +380,8 @@ public class ComputeService {
             LOGGER.debug("Received physical plan:\n{}", plan);
 
             plan = PlannerUtils.localPlan(context.searchExecutionContexts(), context.configuration(), context.foldCtx(), plan);
+            ExecutionTime.INSTANCE.trackExecutionTime("local_planning", System.nanoTime() - startTime);
+
             // the planner will also set the driver parallelism in LocalExecutionPlanner.LocalExecutionPlan (used down below)
             // it's doing this in the planning of EsQueryExec (the source of the data)
             // see also EsPhysicalOperationProviders.sourcePhysicalOperation
@@ -391,7 +393,7 @@ public class ComputeService {
             if (drivers.isEmpty()) {
                 throw new IllegalStateException("no drivers created");
             }
-            ExecutionTime.INSTANCE.trackExecutionTime("local_planning", System.nanoTime() - startTime);
+            ExecutionTime.INSTANCE.trackExecutionTime("local_plan_and_drivers", System.nanoTime() - startTime);
             LOGGER.debug("using {} drivers", drivers.size());
         } catch (Exception e) {
             listener.onFailure(e);
