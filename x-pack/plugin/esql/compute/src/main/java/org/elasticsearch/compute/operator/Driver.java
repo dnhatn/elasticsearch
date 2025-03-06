@@ -13,6 +13,7 @@ import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.compute.Describable;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.exchange.ExchangeSinkOperator;
 import org.elasticsearch.core.Nullable;
@@ -259,7 +260,9 @@ public class Driver implements Releasable, Describable {
 
             if (op.isFinished() == false && nextOp.needsInput()) {
                 driverContext.checkForEarlyTermination();
+                long startTime = System.nanoTime();
                 Page page = op.getOutput();
+                ExecutionTime.INSTANCE.trackExecutionTime(op.getClass().getSimpleName(), System.nanoTime() - startTime);
                 if (page == null) {
                     // No result, just move to the next iteration
                 } else if (page.getPositionCount() == 0) {
@@ -273,7 +276,9 @@ public class Driver implements Releasable, Describable {
                         page.releaseBlocks();
                         throw e;
                     }
+                    startTime = System.nanoTime();
                     nextOp.addInput(page);
+                    ExecutionTime.INSTANCE.trackExecutionTime(nextOp.getClass().getSimpleName(), System.nanoTime() - startTime);
                     movedPage = true;
                 }
             }
