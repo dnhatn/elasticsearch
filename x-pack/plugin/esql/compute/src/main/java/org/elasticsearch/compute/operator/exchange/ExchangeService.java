@@ -323,6 +323,7 @@ public final class ExchangeService extends AbstractLifecycleComponent {
         final Task parentTask;
         final String exchangeId;
         final Executor responseExecutor;
+        final AtomicLong readingTimes = new AtomicLong();
 
         final AtomicLong estimatedPageSizeInBytes = new AtomicLong(0L);
         final AtomicReference<SubscribableListener<Void>> completionListenerRef = new AtomicReference<>(null);
@@ -357,7 +358,9 @@ public final class ExchangeService extends AbstractLifecycleComponent {
             }
             doFetchPageAsync(false, ActionListener.wrap(r -> {
                 if (r.finished()) {
-                    completionListenerRef.compareAndSet(null, SubscribableListener.newSucceeded(null));
+                    if (completionListenerRef.compareAndSet(null, SubscribableListener.newSucceeded(null))) {
+                        LOGGER.info("--> read exchange responses took {}", TimeValue.timeValueNanos(readingTimes.get()));
+                    }
                 }
                 listener.onResponse(r);
             }, e -> close(ActionListener.running(() -> listener.onFailure(e)))));
@@ -383,10 +386,12 @@ public final class ExchangeService extends AbstractLifecycleComponent {
                 parentTask,
                 TransportRequestOptions.EMPTY,
                 new ActionListenerResponseHandler<>(listener, in -> {
+                    long startTime = System.nanoTime();
                     try (BlockStreamInput bsi = new BlockStreamInput(in, blockFactory)) {
                         final ExchangeResponse resp = new ExchangeResponse(bsi);
                         final long responseBytes = resp.ramBytesUsedByPage();
                         estimatedPageSizeInBytes.getAndUpdate(curr -> Math.max(responseBytes, curr / 2));
+                        readingTimes.addAndGet(System.nanoTime() - startTime);
                         return resp;
                     }
                 }, responseExecutor)
@@ -401,6 +406,7 @@ public final class ExchangeService extends AbstractLifecycleComponent {
             );
             actual.addListener(listener);
             if (candidate == actual) {
+                LOGGER.info("--> read exchange responses took {}", TimeValue.timeValueNanos(readingTimes.get()));
                 doFetchPageAsync(true, ActionListener.wrap(r -> {
                     final Page page = r.takePage();
                     if (page != null) {

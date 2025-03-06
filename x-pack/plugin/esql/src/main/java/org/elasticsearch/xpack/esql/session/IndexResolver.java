@@ -16,9 +16,12 @@ import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.util.Maps;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.mapper.TimeSeriesParams;
 import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.xpack.esql.action.EsqlResolveFieldsAction;
 import org.elasticsearch.xpack.esql.core.expression.MetadataAttribute;
@@ -68,6 +71,7 @@ public class IndexResolver {
             IndicesOptions.GatekeeperOptions.builder().ignoreThrottled(true).allowClosedIndices(true).allowAliasToMultipleIndices(true)
         )
         .build();
+    private static final Logger log = LogManager.getLogger(IndexResolver.class);
 
     private final Client client;
 
@@ -84,10 +88,14 @@ public class IndexResolver {
         QueryBuilder requestFilter,
         ActionListener<IndexResolution> listener
     ) {
+        long startTimeInNanos = System.nanoTime();
         client.execute(
             EsqlResolveFieldsAction.TYPE,
             createFieldCapsRequest(indexWildcard, fieldNames, requestFilter),
-            listener.delegateFailureAndWrap((l, response) -> l.onResponse(mergedMappings(indexWildcard, response)))
+            listener.delegateFailureAndWrap((l, response) -> {
+                log.info("--> field-caps took {}", TimeValue.timeValueNanos(System.nanoTime() - startTimeInNanos));
+                l.onResponse(mergedMappings(indexWildcard, response));
+            })
         );
     }
 

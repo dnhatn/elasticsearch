@@ -74,8 +74,8 @@ public class ComputeService {
     public static final String DATA_ACTION_NAME = EsqlQueryAction.NAME + "/data";
     public static final String CLUSTER_ACTION_NAME = EsqlQueryAction.NAME + "/cluster";
     private static final String LOCAL_CLUSTER = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
-
     private static final Logger LOGGER = LogManager.getLogger(ComputeService.class);
+    private static final org.apache.log4j.Logger log = org.apache.log4j.Logger.getLogger(ComputeService.class);
     private final SearchService searchService;
     private final BigArrays bigArrays;
     private final BlockFactory blockFactory;
@@ -232,6 +232,7 @@ public class ComputeService {
                         })
                     )
                 ) {
+                    long startTimeInNanos = System.nanoTime();
                     runCompute(
                         rootTask,
                         new ComputeContext(
@@ -245,7 +246,9 @@ public class ComputeService {
                             null
                         ),
                         coordinatorPlan,
-                        localListener.acquireCompute()
+                        ActionListener.runBefore(localListener.acquireCompute(), () -> {
+                            LOGGER.info("--> final reduction took {}", TimeValue.timeValueNanos(System.nanoTime() - startTimeInNanos));
+                        })
                     );
                     // starts computes on data nodes on the main cluster
                     if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
@@ -261,6 +264,7 @@ public class ComputeService {
                             exchangeSource,
                             cancelQueryOnFailure,
                             ActionListener.wrap(r -> {
+                                LOGGER.info("--> data-nodes took {}", TimeValue.timeValueNanos(System.nanoTime() - startTimeInNanos));
                                 localClusterWasInterrupted.set(execInfo.isStopped());
                                 execInfo.swapCluster(
                                     LOCAL_CLUSTER,
@@ -377,11 +381,13 @@ public class ComputeService {
 
             LOGGER.debug("Received physical plan:\n{}", plan);
 
+            long startTime = System.nanoTime();
             plan = PlannerUtils.localPlan(context.searchExecutionContexts(), context.configuration(), context.foldCtx(), plan);
             // the planner will also set the driver parallelism in LocalExecutionPlanner.LocalExecutionPlan (used down below)
             // it's doing this in the planning of EsQueryExec (the source of the data)
             // see also EsPhysicalOperationProviders.sourcePhysicalOperation
             LocalExecutionPlanner.LocalExecutionPlan localExecutionPlan = planner.plan(context.description(), context.foldCtx(), plan);
+            LOGGER.info("--> local planning took {}", TimeValue.timeValueNanos(System.nanoTime() - startTime));
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug("Local execution plan:\n{}", localExecutionPlan.describe());
             }

@@ -31,6 +31,7 @@ final class DataNodeComputeResponse extends TransportResponse {
     }
 
     DataNodeComputeResponse(StreamInput in) throws IOException {
+
         if (DataNodeComputeHandler.supportShardLevelRetryFailure(in.getTransportVersion())) {
             this.profiles = in.readCollectionAsImmutableList(DriverProfile::readFrom);
             this.shardLevelFailures = in.readMap(ShardId::new, StreamInput::readException);

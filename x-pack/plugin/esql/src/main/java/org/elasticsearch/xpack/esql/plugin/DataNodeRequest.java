@@ -80,6 +80,7 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
 
     DataNodeRequest(StreamInput in) throws IOException {
         super(in);
+        long startTimeInNanos = System.nanoTime();
         this.sessionId = in.readString();
         this.configuration = new Configuration(
             // TODO make EsqlConfiguration Releasable
@@ -105,11 +106,13 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
         } else {
             this.runNodeLevelReduction = false;
         }
+        logger.info("--> sending plan took {}", System.nanoTime() - startTimeInNanos);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
+        long startTimeInNanos = System.nanoTime();
         out.writeString(sessionId);
         configuration.writeTo(out);
         if (out.getTransportVersion().onOrAfter(TransportVersions.V_8_13_0)) {
@@ -125,6 +128,7 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
         if (out.getTransportVersion().onOrAfter(TransportVersions.ESQL_ENABLE_NODE_LEVEL_REDUCTION)) {
             out.writeBoolean(runNodeLevelReduction);
         }
+        logger.info("--> reading plan took {}", System.nanoTime() - startTimeInNanos);
     }
 
     @Override

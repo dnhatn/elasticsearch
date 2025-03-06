@@ -15,12 +15,16 @@ import org.elasticsearch.core.AbstractRefCounted;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.RefCounted;
 import org.elasticsearch.core.Releasable;
+import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 import org.elasticsearch.transport.TransportResponse;
 
 import java.io.IOException;
 import java.util.Objects;
 
 public final class ExchangeResponse extends TransportResponse implements Releasable {
+    private static final Logger logger = LogManager.getLogger(ExchangeResponse.class);
     private final RefCounted counted = AbstractRefCounted.of(this::closeInternal);
     private final Page page;
     private final boolean finished;
@@ -36,6 +40,7 @@ public final class ExchangeResponse extends TransportResponse implements Releasa
 
     public ExchangeResponse(BlockStreamInput in) throws IOException {
         super(in);
+        long startTime = System.nanoTime();
         this.blockFactory = in.blockFactory();
         this.page = in.readOptionalWriteable(Page::new);
         this.finished = in.readBoolean();
@@ -43,6 +48,7 @@ public final class ExchangeResponse extends TransportResponse implements Releasa
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
+        long startTime = System.nanoTime();
         if (page != null) {
             long bytes = page.ramBytesUsedByBlocks();
             blockFactory.breaker().addEstimateBytesAndMaybeBreak(bytes, "serialize exchange response");
@@ -50,6 +56,7 @@ public final class ExchangeResponse extends TransportResponse implements Releasa
         }
         out.writeOptionalWriteable(page);
         out.writeBoolean(finished);
+        logger.info("--> write exchange response took {}", TimeValue.timeValueNanos(System.nanoTime() - startTime));
     }
 
     /**
