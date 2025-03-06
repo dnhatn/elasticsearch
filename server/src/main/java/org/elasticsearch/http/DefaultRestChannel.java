@@ -21,6 +21,9 @@ import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 import org.elasticsearch.rest.AbstractRestChannel;
 import org.elasticsearch.rest.ChunkedRestResponseBodyPart;
 import org.elasticsearch.rest.LoggingChunkedRestResponseBodyPart;
@@ -55,6 +58,7 @@ public class DefaultRestChannel extends AbstractRestChannel {
     private final HttpChannel httpChannel;
     private final CorsHandler corsHandler;
     private final Tracer tracer;
+    public static final Logger logger = LogManager.getLogger(DefaultRestChannel.class);
 
     @Nullable
     private final HttpTracer httpLogger;
@@ -89,6 +93,7 @@ public class DefaultRestChannel extends AbstractRestChannel {
     @Override
     public void sendResponse(RestResponse restResponse) {
         // We're sending a response so we know we won't be needing the request content again and release it
+        long startTime = System.nanoTime();
         httpRequest.release();
 
         final ArrayList<Releasable> toClose = new ArrayList<>(4);
@@ -189,6 +194,7 @@ public class DefaultRestChannel extends AbstractRestChannel {
             }
             success = true;
         } finally {
+            logger.info("--> send rest response took [{}]", TimeValue.timeValueNanos(System.nanoTime() - startTime));
             if (success == false) {
                 Releasables.close(toClose);
                 if (httpLogger != null) {
