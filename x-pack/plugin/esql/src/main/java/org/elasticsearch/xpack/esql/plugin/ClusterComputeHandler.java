@@ -209,7 +209,7 @@ final class ClusterComputeHandler implements TransportRequestHandler<ClusterComp
             listener.onFailure(new IllegalStateException("expected exchange sink for a remote compute; got " + plan));
             return;
         }
-        ExecutionTime.INSTANCE.clear();
+        ExecutionTime.INSTANCE.clea();
         runComputeOnRemoteCluster(
             request.clusterAlias(),
             request.sessionId(),

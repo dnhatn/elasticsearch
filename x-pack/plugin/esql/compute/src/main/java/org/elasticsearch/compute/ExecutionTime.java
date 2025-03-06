@@ -22,11 +22,13 @@ public final class ExecutionTime {
     public static final Logger LOG = LogManager.getLogger(ExecutionTime.class);
     public static final ExecutionTime INSTANCE = new ExecutionTime();
     private final Map<String, List<Long>> events = ConcurrentCollections.newConcurrentMap();
+    private long startTime = System.nanoTime();
     public final AtomicInteger shards = new AtomicInteger();
 
     public void clear() {
         shards.set(0);
         events.clear();
+        startTime = System.nanoTime();
     }
 
     public void trackExecutionTime(String task, long timeInNanos) {
@@ -34,7 +36,7 @@ public final class ExecutionTime {
     }
 
     public void logExecutionTime() {
-        LOG.info("--> total shards {} ", shards.get());
+        LOG.info("--> query took {} shards {} ", TimeValue.timeValueNanos(System.nanoTime() - startTime), shards.get());
         for (Map.Entry<String, List<Long>> e : events.entrySet()) {
             List<Long> values = e.getValue();
             long total = values.stream().mapToLong(Long::longValue).sum();
@@ -44,7 +46,7 @@ public final class ExecutionTime {
         for (Map.Entry<String, List<Long>> e : events.entrySet()) {
             List<Long> values = e.getValue();
             for (Long v : values) {
-                LOG.info("--> {}  took {} ", e.getKey(), values.size(), TimeValue.timeValueNanos(v));
+                LOG.info("--> {} took [{}] ", e.getKey(), TimeValue.timeValueNanos(v));
             }
         }
     }
