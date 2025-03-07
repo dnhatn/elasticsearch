@@ -22,6 +22,8 @@ public final class ExecutionTime {
     public static final Logger LOG = LogManager.getLogger(ExecutionTime.class);
     public static final ExecutionTime INSTANCE = new ExecutionTime();
     private final Map<String, List<Long>> events = ConcurrentCollections.newConcurrentMap();
+    private final Map<String, List<Long>> rules = ConcurrentCollections.newConcurrentMap();
+
     private long startTime = System.nanoTime();
     public final AtomicInteger shards = new AtomicInteger();
     public String query = "";
@@ -29,6 +31,7 @@ public final class ExecutionTime {
     public void startQuery() {
         shards.set(0);
         events.clear();
+        rules.clear();
         startTime = System.nanoTime();
     }
 
@@ -40,6 +43,10 @@ public final class ExecutionTime {
         events.computeIfAbsent(task, k -> Collections.synchronizedList(new ArrayList<>())).add(timeInNanos);
     }
 
+    public void trackRule(String rule, long timeInNanos) {
+        rules.computeIfAbsent(rule, k -> Collections.synchronizedList(new ArrayList<>())).add(timeInNanos);
+    }
+
     public void logExecutionTime() {
         LOG.info("--> query [{}] took {} shards {} ", query, TimeValue.timeValueNanos(System.nanoTime() - startTime), shards.get());
         for (Map.Entry<String, List<Long>> e : events.entrySet()) {
@@ -47,6 +54,14 @@ public final class ExecutionTime {
             long total = values.stream().mapToLong(Long::longValue).sum();
             LOG.info("--> {} executed {} times took {} ", e.getKey(), values.size(), TimeValue.timeValueNanos(total));
         }
+        LOG.info("--> rules ");
+        rules.entrySet()
+            .stream()
+            .map(e -> Map.entry(e.getKey(), e.getValue().stream().mapToLong(Long::longValue).sum()))
+            .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+            .forEach(e -> {
+                LOG.info("--> rule {} took [{}] ", e.getKey(), TimeValue.timeValueNanos(e.getValue()));
+            });
         for (Map.Entry<String, List<Long>> e : events.entrySet()) {
             List<Long> values = e.getValue();
             for (Long v : values) {

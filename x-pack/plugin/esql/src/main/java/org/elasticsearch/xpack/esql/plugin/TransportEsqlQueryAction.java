@@ -227,15 +227,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
         FoldContext foldCtx = configuration.newFoldContext();
         PlanRunner planRunner = (plan, resultListener) -> {
             ExecutionTime.INSTANCE.trackExecutionTime("planning", System.nanoTime() - startNanoTime);
-            computeService.execute(
-                sessionId,
-                (CancellableTask) task,
-                plan,
-                configuration,
-                foldCtx,
-                executionInfo,
-                resultListener
-            );
+            computeService.execute(sessionId, (CancellableTask) task, plan, configuration, foldCtx, executionInfo, resultListener);
         };
         planExecutor.esql(
             request,

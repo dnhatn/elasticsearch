@@ -7,6 +7,7 @@
 
 package org.elasticsearch.xpack.esql.rule;
 
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.xpack.esql.core.tree.Node;
 
 import java.util.function.Function;
@@ -26,6 +27,20 @@ public abstract class ParameterizedRuleExecutor<TreeType extends Node<TreeType>,
     @Override
     @SuppressWarnings({ "rawtypes", "unchecked" })
     protected Function<TreeType, TreeType> transform(Rule<?, TreeType> rule) {
-        return (rule instanceof ParameterizedRule pr) ? t -> (TreeType) pr.apply(t, context) : t -> rule.apply(t);
+        if (rule instanceof ParameterizedRule pr) {
+            return t -> {
+                long startTime = System.nanoTime();
+                TreeType r = (TreeType) pr.apply(t, context);
+                ExecutionTime.INSTANCE.trackRule(pr.getClass().getSimpleName(), System.nanoTime() - startTime);
+                return r;
+            };
+        } else {
+            return t -> {
+                long startTime = System.nanoTime();
+                TreeType r = rule.apply(t);
+                ExecutionTime.INSTANCE.trackRule(rule.getClass().getSimpleName(), System.nanoTime() - startTime);
+                return r;
+            };
+        }
     }
 }

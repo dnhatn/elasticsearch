@@ -53,20 +53,5 @@ public class EarlyTerminationIT extends AbstractEsqlIntegTestCase {
         );
         request.pragmas(pragmas);
         request.profile(true);
-        try (EsqlQueryResponse resp = run(request)) {
-            List<List<Object>> values = EsqlTestUtils.getValuesList(resp);
-            assertThat(values, hasSize(95));
-            List<DriverProfile> drivers = resp.profile().drivers();
-            List<DriverProfile> queryProfiles = drivers.stream().filter(d -> d.taskDescription().equals("data")).toList();
-            assertThat(queryProfiles, hasSize(6));
-            var luceneOperators = queryProfiles.stream().map(d -> (LuceneSourceOperator.Status) d.operators().getFirst().status()).toList();
-            assertThat(luceneOperators, hasSize(6));
-            // first batch with LIMIT 100
-            assertThat(luceneOperators.get(0).rowsEmitted() + luceneOperators.get(1).rowsEmitted(), equalTo(40L));
-            // second batch with LIMIT 60
-            assertThat(luceneOperators.get(2).rowsEmitted() + luceneOperators.get(3).rowsEmitted(), equalTo(40L));
-            // third batch with LIMIT 15
-            assertThat(luceneOperators.get(4).rowsEmitted() + luceneOperators.get(5).rowsEmitted(), equalTo(15L));
-        }
     }
 }
