@@ -15,6 +15,7 @@ import org.elasticsearch.common.breaker.NoopCircuitBreaker;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BlockStreamInput;
 import org.elasticsearch.index.Index;
@@ -80,6 +81,7 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
 
     DataNodeRequest(StreamInput in) throws IOException {
         super(in);
+        long startInNanos = System.nanoTime();
         this.sessionId = in.readString();
         this.configuration = new Configuration(
             // TODO make EsqlConfiguration Releasable
@@ -105,11 +107,13 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
         } else {
             this.runNodeLevelReduction = false;
         }
+        ExecutionTime.INSTANCE.trackExecutionTime("read_data_node_request", System.nanoTime() - startInNanos);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
+        long startInNanos = System.nanoTime();
         out.writeString(sessionId);
         configuration.writeTo(out);
         if (out.getTransportVersion().onOrAfter(TransportVersions.V_8_13_0)) {
@@ -125,6 +129,7 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
         if (out.getTransportVersion().onOrAfter(TransportVersions.ESQL_ENABLE_NODE_LEVEL_REDUCTION)) {
             out.writeBoolean(runNodeLevelReduction);
         }
+        ExecutionTime.INSTANCE.trackExecutionTime("write_data_node_request", System.nanoTime() - startInNanos);
     }
 
     @Override

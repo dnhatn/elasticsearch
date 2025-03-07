@@ -54,7 +54,7 @@ public final class ExchangeResponse extends TransportResponse implements Releasa
         }
         out.writeOptionalWriteable(page);
         out.writeBoolean(finished);
-        ExecutionTime.INSTANCE.trackExecutionTime("writing_exchange_response", System.nanoTime() - startInNanos);
+        ExecutionTime.INSTANCE.trackExecutionTime("write_exchange_response", System.nanoTime() - startInNanos);
     }
 
     /**
