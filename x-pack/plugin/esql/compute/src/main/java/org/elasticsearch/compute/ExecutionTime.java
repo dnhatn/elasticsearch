@@ -29,9 +29,7 @@ public final class ExecutionTime {
     public String query = "";
 
     public void startQuery() {
-        shards.set(0);
-        events.clear();
-        rules.clear();
+        clear();
         startTime = System.nanoTime();
     }
 
@@ -68,5 +66,12 @@ public final class ExecutionTime {
                 LOG.info("--> {} took [{}] ", e.getKey(), TimeValue.timeValueNanos(v));
             }
         }
+        clear();
+    }
+
+    private void clear() {
+        shards.set(0);
+        events.clear();
+        rules.clear();
     }
 }

@@ -482,7 +482,14 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
         );
         // the sender doesn't support retry on shard failures, so we need to fail fast here.
         final boolean failFastOnShardFailures = supportShardLevelRetryFailure(channel.getVersion()) == false;
-        runComputeOnDataNode((CancellableTask) task, sessionId, reductionPlan, request, failFastOnShardFailures, listener);
+        runComputeOnDataNode(
+            (CancellableTask) task,
+            sessionId,
+            reductionPlan,
+            request,
+            failFastOnShardFailures,
+            ActionListener.runAfter(listener, ExecutionTime.INSTANCE::logExecutionTime)
+        );
     }
 
     static boolean supportShardLevelRetryFailure(TransportVersion transportVersion) {
