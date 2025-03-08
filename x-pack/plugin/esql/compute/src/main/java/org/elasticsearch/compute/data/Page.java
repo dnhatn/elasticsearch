@@ -98,10 +98,11 @@ public final class Page implements Writeable {
         int positionCount = in.readVInt();
         int blockPositions = in.readVInt();
         Block[] blocks = new Block[blockPositions];
+        BlockStreamInput blockStreamInput = (BlockStreamInput) in;
         boolean success = false;
         try {
             for (int blockIndex = 0; blockIndex < blockPositions; blockIndex++) {
-                blocks[blockIndex] = in.readNamedWriteable(Block.class);
+                blocks[blockIndex] = Block.readTypedBlock(blockStreamInput);
             }
             success = true;
         } finally {
@@ -222,7 +223,7 @@ public final class Page implements Writeable {
         out.writeVInt(positionCount);
         out.writeVInt(getBlockCount());
         for (Block block : blocks) {
-            out.writeNamedWriteable(block);
+            block.writeTypedBlock(out);
         }
     }
 

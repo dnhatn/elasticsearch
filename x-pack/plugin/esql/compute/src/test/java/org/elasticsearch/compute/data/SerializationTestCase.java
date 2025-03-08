@@ -11,8 +11,6 @@ import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.ByteBufferStreamInput;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
-import org.elasticsearch.common.io.stream.NamedWriteableAwareStreamInput;
-import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.MockBigArrays;
@@ -29,7 +27,6 @@ import static org.hamcrest.Matchers.equalTo;
 public abstract class SerializationTestCase extends ESTestCase {
     BigArrays bigArrays;
     protected BlockFactory blockFactory;
-    NamedWriteableRegistry registry = new NamedWriteableRegistry(BlockWritables.getNamedWriteables());
 
     @Before
     public final void newBlockFactory() {
@@ -41,7 +38,6 @@ public abstract class SerializationTestCase extends ESTestCase {
     public final void blockFactoryEmpty() {
         assertThat(blockFactory.breaker().getUsed(), equalTo(0L));
         blockFactory = null;
-        registry = null;
     }
 
     Page serializeDeserializePage(Page origPage) throws IOException {
@@ -52,18 +48,16 @@ public abstract class SerializationTestCase extends ESTestCase {
     }
 
     BlockStreamInput blockStreamInput(BytesStreamOutput out) {
-        return new BlockStreamInput(
-            new NamedWriteableAwareStreamInput(ByteBufferStreamInput.wrap(BytesReference.toBytes(out.bytes())), registry),
-            blockFactory
-        );
+        return new BlockStreamInput(ByteBufferStreamInput.wrap(BytesReference.toBytes(out.bytes())), blockFactory);
     }
 
     @SuppressWarnings("unchecked")
     <T extends Block> T serializeDeserializeBlock(T origBlock) throws IOException {
         try (BytesStreamOutput out = new BytesStreamOutput()) {
-            out.writeNamedWriteable(origBlock);
+            origBlock.elementType().writeTo(out);
+            origBlock.writeTo(out);
             try (BlockStreamInput in = blockStreamInput(out)) {
-                return (T) in.readNamedWriteable(Block.class);
+                return (T) Block.readTypedBlock(in);
             }
         }
     }

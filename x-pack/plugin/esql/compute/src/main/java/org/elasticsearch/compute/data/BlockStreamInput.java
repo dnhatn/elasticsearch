@@ -7,7 +7,7 @@
 
 package org.elasticsearch.compute.data;
 
-import org.elasticsearch.common.io.stream.NamedWriteableAwareStreamInput;
+import org.elasticsearch.common.io.stream.FilterStreamInput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.core.IOUtils;
 
@@ -20,7 +20,7 @@ import java.io.IOException;
  * wrapped reader. Instead it decrements any reference counts on {@link Block}s
  * cached in the reader.
  */
-public class BlockStreamInput extends NamedWriteableAwareStreamInput {
+public class BlockStreamInput extends FilterStreamInput {
     private final BlockFactory blockFactory;
     /**
      * Cache of the last constant null block returned by {@link #readConstantNullBlock}.
@@ -37,7 +37,7 @@ public class BlockStreamInput extends NamedWriteableAwareStreamInput {
     private Block lastConstantNullBlock;
 
     public BlockStreamInput(StreamInput delegate, BlockFactory blockFactory) {
-        super(delegate, delegate.namedWriteableRegistry());
+        super(delegate);
         this.blockFactory = blockFactory;
     }
 

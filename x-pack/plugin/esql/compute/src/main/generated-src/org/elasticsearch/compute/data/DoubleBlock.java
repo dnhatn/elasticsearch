@@ -8,7 +8,6 @@
 package org.elasticsearch.compute.data;
 
 import org.elasticsearch.TransportVersions;
-import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.unit.ByteSizeValue;
@@ -48,17 +47,6 @@ public sealed interface DoubleBlock extends Block permits DoubleArrayBlock, Doub
 
     @Override
     DoubleBlock expand();
-
-    @Override
-    default String getWriteableName() {
-        return "DoubleBlock";
-    }
-
-    NamedWriteableRegistry.Entry ENTRY = new NamedWriteableRegistry.Entry(Block.class, "DoubleBlock", DoubleBlock::readFrom);
-
-    private static DoubleBlock readFrom(StreamInput in) throws IOException {
-        return readFrom((BlockStreamInput) in);
-    }
 
     static DoubleBlock readFrom(BlockStreamInput in) throws IOException {
         final byte serializationType = in.readByte();
