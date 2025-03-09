@@ -177,6 +177,7 @@ public class LocalExecutionPlanner {
      * turn the given plan into a list of drivers to execute
      */
     public LocalExecutionPlan plan(String description, FoldContext foldCtx, PhysicalPlan localPhysicalPlan) {
+        long startTime = System.nanoTime();
         var context = new LocalExecutionPlannerContext(
             new ArrayList<>(),
             new Holder<>(DriverParallelism.SINGLE),
@@ -210,7 +211,7 @@ public class LocalExecutionPlanner {
                 context.driverParallelism().get()
             )
         );
-
+        ExecutionTime.INSTANCE.trackExecutionTime("execution_planner", System.nanoTime() - startTime);
         return new LocalExecutionPlan(context.driverFactories);
     }
 
