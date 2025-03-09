@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ExecutionTime {
     public static final Logger LOG = LogManager.getLogger(ExecutionTime.class);
     public static final ExecutionTime INSTANCE = new ExecutionTime();
+    private static final org.apache.logging.log4j.Logger log = org.apache.logging.log4j.LogManager.getLogger(ExecutionTime.class);
     private final Map<String, List<Long>> events = ConcurrentCollections.newConcurrentMap();
     private final Map<String, List<Long>> rules = ConcurrentCollections.newConcurrentMap();
 
@@ -67,6 +68,11 @@ public final class ExecutionTime {
             }
         }
         clear();
+    }
+
+    public void startEven(String label) {
+        long elapsed = System.nanoTime() - startTime;
+        log.info("started [{}] after [{}]", label, TimeValue.timeValueNanos(elapsed));
     }
 
     private void clear() {

@@ -132,6 +132,7 @@ public class ComputeService {
         EsqlExecutionInfo execInfo,
         ActionListener<Result> listener
     ) {
+        ExecutionTime.INSTANCE.startEven("execute_plan_on_coordinator");
         Tuple<PhysicalPlan, PhysicalPlan> coordinatorAndDataNodePlan = PlannerUtils.breakPlanBetweenCoordinatorAndDataNode(
             physicalPlan,
             configuration
@@ -205,6 +206,7 @@ public class ComputeService {
         exchangeService.addExchangeSourceHandler(sessionId, exchangeSource);
         try (var computeListener = new ComputeListener(transportService.getThreadPool(), cancelQueryOnFailure, listener.map(profiles -> {
             execInfo.markEndQuery();  // TODO: revisit this time recording model as part of INLINESTATS improvements
+            ExecutionTime.INSTANCE.startEven("query_completed");
             return new Result(outputAttributes, collectedPages, profiles, execInfo);
         }))) {
             try (Releasable ignored = exchangeSource.addEmptySink()) {
@@ -251,6 +253,8 @@ public class ComputeService {
                     // starts computes on data nodes on the main cluster
                     if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
                         final var dataNodesListener = localListener.acquireCompute();
+                        System.err.println("--> start data node " + System.nanoTime());
+                        ExecutionTime.INSTANCE.startEven("start_data_node_request");
                         dataNodeComputeHandler.startComputeOnDataNodes(
                             sessionId,
                             LOCAL_CLUSTER,
@@ -262,6 +266,7 @@ public class ComputeService {
                             exchangeSource,
                             cancelQueryOnFailure,
                             ActionListener.wrap(r -> {
+                                ExecutionTime.INSTANCE.startEven("data_node_completed");
                                 localClusterWasInterrupted.set(execInfo.isStopped());
                                 execInfo.swapCluster(
                                     LOCAL_CLUSTER,
@@ -341,6 +346,7 @@ public class ComputeService {
     }
 
     void runCompute(CancellableTask task, ComputeContext context, PhysicalPlan plan, ActionListener<List<DriverProfile>> listener) {
+        ExecutionTime.INSTANCE.startEven("run_new_compute");
         long startTime = System.nanoTime();
         listener = ActionListener.runBefore(listener, () -> Releasables.close(context.searchContexts()));
         List<EsPhysicalOperationProviders.ShardContext> contexts = new ArrayList<>(context.searchContexts().size());

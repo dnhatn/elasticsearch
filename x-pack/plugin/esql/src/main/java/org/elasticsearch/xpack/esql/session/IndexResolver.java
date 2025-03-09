@@ -16,6 +16,7 @@ import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.util.Maps;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.mapper.TimeSeriesParams;
 import org.elasticsearch.index.query.QueryBuilder;
@@ -84,10 +85,16 @@ public class IndexResolver {
         QueryBuilder requestFilter,
         ActionListener<IndexResolution> listener
     ) {
+        ExecutionTime.INSTANCE.startEven("start_field_cap");
         client.execute(
             EsqlResolveFieldsAction.TYPE,
             createFieldCapsRequest(indexWildcard, fieldNames, requestFilter),
-            listener.delegateFailureAndWrap((l, response) -> l.onResponse(mergedMappings(indexWildcard, response)))
+            listener.delegateFailureAndWrap((l, response) -> {
+                ExecutionTime.INSTANCE.startEven("end_field_cap");
+                IndexResolution mergedMapping = mergedMappings(indexWildcard, response);
+                ExecutionTime.INSTANCE.startEven("end_merging_mapping");
+                l.onResponse(mergedMapping);
+            })
         );
     }
 

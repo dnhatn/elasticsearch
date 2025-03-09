@@ -15,6 +15,7 @@ import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Iterators;
 import org.elasticsearch.common.regex.Regex;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.DriverProfile;
@@ -170,7 +171,9 @@ public class EsqlSession {
                     preMapper.preMapper(
                         analyzedPlan,
                         listener.delegateFailureAndWrap(
-                            (l, p) -> executeOptimizedPlan(request, executionInfo, planRunner, optimizedPlan(p), l)
+                            (l, p) -> {
+                                executeOptimizedPlan(request, executionInfo, planRunner, optimizedPlan(p), l);
+                            }
                         )
                     );
                 }
@@ -189,6 +192,7 @@ public class EsqlSession {
         LogicalPlan optimizedPlan,
         ActionListener<Result> listener
     ) {
+        ExecutionTime.INSTANCE.startEven("optimize_plan");
         PhysicalPlan physicalPlan = logicalPlanToPhysicalPlan(optimizedPlan, request);
         // TODO: this could be snuck into the underlying listener
         EsqlCCSUtils.updateExecutionInfoAtEndOfPlanning(executionInfo);
@@ -339,8 +343,10 @@ public class EsqlSession {
                 new AnalyzerContext(configuration, functionRegistry, l.indices, l.lookupIndices, l.enrichResolution),
                 verifier
             );
+            ExecutionTime.INSTANCE.startEven("start_analyze");
             LogicalPlan plan = analyzer.analyze(parsed);
             plan.setAnalyzed();
+            ExecutionTime.INSTANCE.startEven("end_analyze");
             return plan;
         };
 

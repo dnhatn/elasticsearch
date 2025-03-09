@@ -244,12 +244,14 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             final AtomicInteger pagesProduced = new AtomicInteger();
             List<ShardId> shardIds = request.shardIds().subList(startBatchIndex, endBatchIndex);
             ExecutionTime.INSTANCE.shards.addAndGet(shardIds.size());
+            ExecutionTime.INSTANCE.startEven("start_batch_" + startBatchIndex);
             ActionListener<List<DriverProfile>> batchListener = new ActionListener<>() {
                 final ActionListener<List<DriverProfile>> ref = computeListener.acquireCompute();
 
                 @Override
                 public void onResponse(List<DriverProfile> result) {
                     try {
+                        ExecutionTime.INSTANCE.startEven("finish_batch_" + startBatchIndex);
                         onBatchCompleted(endBatchIndex);
                     } finally {
                         ref.onResponse(result);
@@ -440,7 +442,9 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                     reducePlan,
                     ActionListener.wrap(resp -> {
                         // don't return until all pages are fetched
+                        ExecutionTime.INSTANCE.startEven("node_reduce_ready");
                         externalSink.addCompletionListener(ActionListener.running(() -> {
+                            ExecutionTime.INSTANCE.startEven("node_reduce_completed");
                             exchangeService.finishSinkHandler(externalId, null);
                             reductionListener.onResponse(resp);
                         }));

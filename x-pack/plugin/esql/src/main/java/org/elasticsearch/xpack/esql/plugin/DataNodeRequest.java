@@ -81,7 +81,9 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
 
     DataNodeRequest(StreamInput in) throws IOException {
         super(in);
+        ExecutionTime.INSTANCE.startQuery();
         long startInNanos = System.nanoTime();
+        System.err.println("--> start data_node_request " + startInNanos);
         this.sessionId = in.readString();
         this.configuration = new Configuration(
             // TODO make EsqlConfiguration Releasable
