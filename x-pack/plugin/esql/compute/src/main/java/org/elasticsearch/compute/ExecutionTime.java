@@ -72,7 +72,7 @@ public final class ExecutionTime {
 
     public void startEven(String label) {
         long elapsed = System.nanoTime() - startTime;
-        log.info("started [{}] after [{}]", label, TimeValue.timeValueNanos(elapsed));
+        log.info("[{}] after [{}]", label, TimeValue.timeValueNanos(elapsed));
     }
 
     private void clear() {
