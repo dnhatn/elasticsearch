@@ -11,6 +11,7 @@ import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.compute.Describable;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.aggregation.AggregatorMode;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
@@ -950,6 +951,7 @@ public class LocalExecutionPlanner {
         }
 
         public List<Driver> createDrivers(String sessionId) {
+            long startTime = System.nanoTime();
             List<Driver> drivers = new ArrayList<>();
             boolean success = false;
             try {
@@ -960,6 +962,7 @@ public class LocalExecutionPlanner {
                     }
                 }
                 success = true;
+                ExecutionTime.INSTANCE.trackExecutionTime("create_driver", System.nanoTime() - startTime);
                 return drivers;
             } finally {
                 if (success == false) {
