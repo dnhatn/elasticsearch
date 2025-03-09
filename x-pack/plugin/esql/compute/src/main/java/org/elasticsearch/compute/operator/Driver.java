@@ -11,7 +11,6 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ContextPreservingActionListener;
 import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
-import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.compute.Describable;
 import org.elasticsearch.compute.ExecutionTime;
@@ -26,7 +25,6 @@ import org.elasticsearch.tasks.TaskCancelledException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -396,7 +394,6 @@ public class Driver implements Releasable, Describable {
         driverContext.finish();
         Releasables.closeWhileHandlingException(releasable, driverContext.getSnapshot());
     }
-
 
     private static void schedule(
         TimeValue maxTime,

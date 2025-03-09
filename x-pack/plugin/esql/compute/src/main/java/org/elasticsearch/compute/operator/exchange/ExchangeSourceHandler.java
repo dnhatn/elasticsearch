@@ -196,6 +196,7 @@ public final class ExchangeSourceHandler {
                                         public void onFailure(Exception e) {
                                             onSinkFailed(e);
                                         }
+
                                         @Override
                                         protected void doRun() {
                                             fetchPage();

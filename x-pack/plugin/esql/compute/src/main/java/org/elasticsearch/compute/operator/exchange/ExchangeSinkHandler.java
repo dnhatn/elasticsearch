@@ -77,6 +77,7 @@ public final class ExchangeSinkHandler {
                 public void onFailure(Exception e) {
 
                 }
+
                 @Override
                 protected void doRun() {
                     if (notified.compareAndSet(false, true) == false) {

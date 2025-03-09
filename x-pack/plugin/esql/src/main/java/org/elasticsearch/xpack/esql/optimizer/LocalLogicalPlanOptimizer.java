@@ -9,10 +9,7 @@ package org.elasticsearch.xpack.esql.optimizer;
 
 import org.elasticsearch.xpack.esql.optimizer.rules.logical.PropagateEmptyRelation;
 import org.elasticsearch.xpack.esql.optimizer.rules.logical.ReplaceStatsFilteredAggWithEval;
-import org.elasticsearch.xpack.esql.optimizer.rules.logical.local.InferIsNotNull;
-import org.elasticsearch.xpack.esql.optimizer.rules.logical.local.InferNonNullAggConstraint;
 import org.elasticsearch.xpack.esql.optimizer.rules.logical.local.LocalPropagateEmptyRelation;
-import org.elasticsearch.xpack.esql.optimizer.rules.logical.local.ReplaceMissingFieldWithNull;
 import org.elasticsearch.xpack.esql.optimizer.rules.logical.local.ReplaceTopNWithLimitAndSort;
 import org.elasticsearch.xpack.esql.plan.logical.LogicalPlan;
 import org.elasticsearch.xpack.esql.rule.ParameterizedRuleExecutor;
@@ -39,13 +36,10 @@ public class LocalLogicalPlanOptimizer extends ParameterizedRuleExecutor<Logical
 
     @Override
     protected List<Batch<LogicalPlan>> batches() {
-        var local = new Batch<>(
-            "Local rewrite",
-            Limiter.ONCE,
-            new ReplaceTopNWithLimitAndSort()
-            // new ReplaceMissingFieldWithNull(),
-            // new InferIsNotNull(),
-            // new InferNonNullAggConstraint()
+        var local = new Batch<>("Local rewrite", Limiter.ONCE, new ReplaceTopNWithLimitAndSort()
+        // new ReplaceMissingFieldWithNull(),
+        // new InferIsNotNull(),
+        // new InferNonNullAggConstraint()
         );
 
         var rules = new ArrayList<Batch<LogicalPlan>>();
