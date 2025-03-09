@@ -30,10 +30,7 @@ public class PreMapper {
      */
     public void preMapper(LogicalPlan plan, ActionListener<LogicalPlan> listener) {
         ExecutionTime.INSTANCE.startEven("start_premapper");
-        queryRewrite(plan, listener.delegateFailureAndWrap((l, p) -> {
-            p.setOptimized();
-            l.onResponse(p);
-        }));
+        listener.onResponse(plan);
     }
 
     private void queryRewrite(LogicalPlan plan, ActionListener<LogicalPlan> listener) {
