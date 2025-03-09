@@ -14,14 +14,13 @@ import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.compute.Describable;
+import org.elasticsearch.compute.ExecutionTime;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.exchange.ExchangeSinkOperator;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 import org.elasticsearch.core.TimeValue;
-import org.elasticsearch.logging.LogManager;
-import org.elasticsearch.logging.Logger;
 import org.elasticsearch.tasks.TaskCancelledException;
 
 import java.util.ArrayList;
@@ -248,7 +247,6 @@ public class Driver implements Releasable, Describable {
         }
     }
 
-    private final Map<String, List<Long>> tookTime = ConcurrentCollections.newConcurrentMap();
     private IsBlockedResult runSingleLoopIteration() {
         driverContext.checkForEarlyTermination();
         boolean movedPage = false;
@@ -266,7 +264,7 @@ public class Driver implements Releasable, Describable {
                 driverContext.checkForEarlyTermination();
                 long startTime = System.nanoTime();
                 Page page = op.getOutput();
-                tookTime.computeIfAbsent(op.getClass().getSimpleName(), k -> new ArrayList<>()).add(System.nanoTime() - startTime);
+                ExecutionTime.INSTANCE.trackExecutionTime(op.getClass().getSimpleName(), System.nanoTime() - startTime);
                 if (page == null) {
                     // No result, just move to the next iteration
                 } else if (page.getPositionCount() == 0) {
@@ -282,7 +280,7 @@ public class Driver implements Releasable, Describable {
                     }
                     startTime = System.nanoTime();
                     nextOp.addInput(page);
-                    tookTime.computeIfAbsent(nextOp.getClass().getSimpleName(), k -> new ArrayList<>()).add(System.nanoTime() - startTime);
+                    ExecutionTime.INSTANCE.trackExecutionTime(nextOp.getClass().getSimpleName(), System.nanoTime() - startTime);
                     movedPage = true;
                 }
             }
@@ -291,7 +289,7 @@ public class Driver implements Releasable, Describable {
                 driverContext.checkForEarlyTermination();
                 var startTime = System.nanoTime();
                 nextOp.finish();
-                tookTime.computeIfAbsent(nextOp.getClass().getSimpleName(), k -> new ArrayList<>()).add(System.nanoTime() - startTime);
+                ExecutionTime.INSTANCE.trackExecutionTime(nextOp.getClass().getSimpleName(), System.nanoTime() - startTime);
             }
         }
 
@@ -397,26 +395,8 @@ public class Driver implements Releasable, Describable {
         }
         driverContext.finish();
         Releasables.closeWhileHandlingException(releasable, driverContext.getSnapshot());
-        logTime();
     }
 
-    static Logger logger = LogManager.getLogger(Driver.class);
-
-    private void logTime() {
-        tookTime.entrySet()
-            .stream()
-            .map(e -> Map.entry(e.getKey(), e.getValue().stream().mapToLong(Long::longValue).sum()))
-            .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
-            .forEach(e -> {
-                logger.info("--> operator {} took [{}] ", e.getKey(), TimeValue.timeValueNanos(e.getValue()));
-            });
-        for (Map.Entry<String, List<Long>> e : tookTime.entrySet()) {
-            List<Long> values = e.getValue();
-            for (Long v : values) {
-                logger.info("--> {} took [{}] ", e.getKey(), TimeValue.timeValueNanos(v));
-            }
-        }
-    }
 
     private static void schedule(
         TimeValue maxTime,
