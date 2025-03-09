@@ -397,8 +397,7 @@ public class Driver implements Releasable, Describable {
         }
         driverContext.finish();
         Releasables.closeWhileHandlingException(releasable, driverContext.getSnapshot());
-
-
+        logTime();
     }
 
     static Logger logger = LogManager.getLogger(Driver.class);
@@ -409,7 +408,7 @@ public class Driver implements Releasable, Describable {
             .map(e -> Map.entry(e.getKey(), e.getValue().stream().mapToLong(Long::longValue).sum()))
             .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
             .forEach(e -> {
-                logger.info("--> rule {} took [{}] ", e.getKey(), TimeValue.timeValueNanos(e.getValue()));
+                logger.info("--> operator {} took [{}] ", e.getKey(), TimeValue.timeValueNanos(e.getValue()));
             });
         for (Map.Entry<String, List<Long>> e : tookTime.entrySet()) {
             List<Long> values = e.getValue();
