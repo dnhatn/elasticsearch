@@ -42,10 +42,10 @@ public class LocalLogicalPlanOptimizer extends ParameterizedRuleExecutor<Logical
         var local = new Batch<>(
             "Local rewrite",
             Limiter.ONCE,
-            new ReplaceTopNWithLimitAndSort(),
-            new ReplaceMissingFieldWithNull(),
-            new InferIsNotNull(),
-            new InferNonNullAggConstraint()
+            new ReplaceTopNWithLimitAndSort()
+            // new ReplaceMissingFieldWithNull(),
+            // new InferIsNotNull(),
+            // new InferNonNullAggConstraint()
         );
 
         var rules = new ArrayList<Batch<LogicalPlan>>();

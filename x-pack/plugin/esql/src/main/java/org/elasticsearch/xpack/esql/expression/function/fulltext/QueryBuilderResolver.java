@@ -14,6 +14,7 @@ import org.elasticsearch.index.query.QueryRewriteContext;
 import org.elasticsearch.index.query.Rewriteable;
 import org.elasticsearch.xpack.esql.core.util.Holder;
 import org.elasticsearch.xpack.esql.plan.logical.EsRelation;
+import org.elasticsearch.xpack.esql.plan.logical.Filter;
 import org.elasticsearch.xpack.esql.plan.logical.LogicalPlan;
 import org.elasticsearch.xpack.esql.planner.TranslatorHandler;
 import org.elasticsearch.xpack.esql.plugin.TransportActionServices;
@@ -35,9 +36,13 @@ public final class QueryBuilderResolver {
 
     public static void resolveQueryBuilders(LogicalPlan plan, TransportActionServices services, ActionListener<LogicalPlan> listener) {
         var hasFullTextFunctions = plan.anyMatch(p -> {
-            Holder<Boolean> hasFullTextFunction = new Holder<>(false);
-            p.forEachExpression(FullTextFunction.class, unused -> hasFullTextFunction.set(true));
-            return hasFullTextFunction.get();
+            if (p instanceof Filter) {
+                Holder<Boolean> hasFullTextFunction = new Holder<>(false);
+                p.forEachExpression(FullTextFunction.class, unused -> hasFullTextFunction.set(true));
+                return hasFullTextFunction.get();
+            } else {
+                return false;
+            }
         });
         if (hasFullTextFunctions) {
             Rewriteable.rewriteAndFetch(
