@@ -9,13 +9,17 @@ package org.elasticsearch.compute.operator.exchange;
 
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.SubscribableListener;
+import org.elasticsearch.common.util.concurrent.AbstractRunnable;
+import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.IsBlockedResult;
 
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
@@ -41,6 +45,7 @@ public final class ExchangeSinkHandler {
     private final LongSupplier nowInMillis;
     private final AtomicLong lastUpdatedInMillis;
     private final BlockFactory blockFactory;
+    public final Executor executor = EsExecutors.DIRECT_EXECUTOR_SERVICE;
 
     public ExchangeSinkHandler(BlockFactory blockFactory, int maxBufferSize, LongSupplier nowInMillis) {
         this.blockFactory = blockFactory;
@@ -66,7 +71,22 @@ public final class ExchangeSinkHandler {
         public void addPage(Page page) {
             onPageFetched.run();
             buffer.addPage(page);
-            notifyListeners();
+            AtomicBoolean notified = new AtomicBoolean();
+            executor.execute(new AbstractRunnable() {
+                @Override
+                public void onFailure(Exception e) {
+
+                }
+                @Override
+                protected void doRun() {
+                    if (notified.compareAndSet(false, true) == false) {
+                        notifyListeners();
+                    }
+                }
+            });
+            if (notified.compareAndSet(false, true) == false) {
+                notifyListeners();
+            }
         }
 
         @Override

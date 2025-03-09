@@ -191,7 +191,16 @@ public final class ExchangeSourceHandler {
                         } else {
                             future.listener().addListener(ActionListener.wrap(unused -> {
                                 if (loopControl.tryResume() == false) {
-                                    fetchPage();
+                                    fetchExecutor.execute(new AbstractRunnable() {
+                                        @Override
+                                        public void onFailure(Exception e) {
+                                            onSinkFailed(e);
+                                        }
+                                        @Override
+                                        protected void doRun() {
+                                            fetchPage();
+                                        }
+                                    });
                                 }
                             }, this::onSinkFailed));
                         }
