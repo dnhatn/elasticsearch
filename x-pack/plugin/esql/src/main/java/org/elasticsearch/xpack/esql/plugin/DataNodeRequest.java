@@ -123,7 +123,8 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
         }
         out.writeCollection(shardIds);
         out.writeMap(aliasFilters);
-        new PlanStreamOutput(out, configuration).writeNamedWriteable(plan);
+        PlanStreamOutput planOut = new PlanStreamOutput(out, configuration);
+        planOut.writeNamedWriteable(plan);
         if (out.getTransportVersion().onOrAfter(TransportVersions.V_8_16_0)) {
             out.writeStringArray(indices);
             indicesOptions.writeIndicesOptions(out);
@@ -131,6 +132,7 @@ final class DataNodeRequest extends TransportRequest implements IndicesRequest.R
         if (out.getTransportVersion().onOrAfter(TransportVersions.ESQL_ENABLE_NODE_LEVEL_REDUCTION)) {
             out.writeBoolean(runNodeLevelReduction);
         }
+        logger.info("--> written bytes {}", planOut.writtenBytes);
         ExecutionTime.INSTANCE.trackExecutionTime("write_data_node_request", System.nanoTime() - startInNanos);
     }
 
