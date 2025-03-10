@@ -148,14 +148,14 @@ public final class Source implements Writeable {
      */
     private record SourcePositions(int line, int column, int length) implements Writeable {
         SourcePositions(StreamInput in) throws IOException {
-            this(in.readInt(), in.readInt(), in.readInt());
+            this(in.readVInt(), in.readVInt(), in.readVInt());
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            out.writeInt(line);
-            out.writeInt(column);
-            out.writeInt(length);
+            out.writeVInt(line);
+            out.writeVInt(column);
+            out.writeVInt(length);
         }
     }
 }
