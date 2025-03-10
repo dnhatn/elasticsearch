@@ -76,6 +76,8 @@ public final class PlanStreamOutput extends StreamOutput implements org.elastics
 
     private final int maxSerializedAttributes;
 
+    public int writtenBytes = 0;
+
     public PlanStreamOutput(StreamOutput delegate, @Nullable Configuration configuration) throws IOException {
         this(delegate, configuration, MAX_SERIALIZED_ATTRIBUTES);
     }
@@ -95,11 +97,13 @@ public final class PlanStreamOutput extends StreamOutput implements org.elastics
     @Override
     public void writeByte(byte b) throws IOException {
         delegate.writeByte(b);
+        writtenBytes++;
     }
 
     @Override
     public void writeBytes(byte[] b, int offset, int length) throws IOException {
         delegate.writeBytes(b, offset, length);
+        writtenBytes += length;
     }
 
     @Override
@@ -113,6 +117,7 @@ public final class PlanStreamOutput extends StreamOutput implements org.elastics
         stringCache.clear();
         cachedEsFields.clear();
         cachedAttributes.clear();
+        System.err.println("--> total written bytes " + writtenBytes);
     }
 
     @Override
