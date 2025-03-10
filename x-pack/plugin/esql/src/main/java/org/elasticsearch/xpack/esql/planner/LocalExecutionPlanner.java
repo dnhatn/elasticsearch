@@ -107,10 +107,12 @@ import org.elasticsearch.xpack.esql.session.Configuration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Stack;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
@@ -141,6 +143,7 @@ public class LocalExecutionPlanner {
     private final LookupFromIndexService lookupFromIndexService;
     private final PhysicalOperationProviders physicalOperationProviders;
     private final List<ShardContext> shardContexts;
+    private final Stack<Long> startTimes = new Stack<>();
 
     public LocalExecutionPlanner(
         String sessionId,
@@ -216,6 +219,13 @@ public class LocalExecutionPlanner {
     }
 
     private PhysicalOperation plan(PhysicalPlan node, LocalExecutionPlannerContext context) {
+        startTimes.push(System.nanoTime());
+        PhysicalOperation op = _plan(node, context);
+        ExecutionTime.INSTANCE.trackExecutionTime("execution_plan_" + node.getClass().getSimpleName(), System.nanoTime() - startTimes.pop());
+        return op;
+    }
+
+    private PhysicalOperation _plan(PhysicalPlan node, LocalExecutionPlannerContext context) {
         if (node instanceof AggregateExec aggregate) {
             return planAggregation(aggregate, context);
         } else if (node instanceof FieldExtractExec fieldExtractExec) {
