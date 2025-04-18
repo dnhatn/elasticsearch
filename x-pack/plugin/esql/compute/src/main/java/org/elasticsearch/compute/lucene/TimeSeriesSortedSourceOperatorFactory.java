@@ -7,9 +7,10 @@
 
 package org.elasticsearch.compute.lucene;
 
+import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
-import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
@@ -23,9 +24,11 @@ import org.elasticsearch.compute.data.DocVector;
 import org.elasticsearch.compute.data.IntBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongVector;
+import org.elasticsearch.compute.data.OrdinalBytesRefVector;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.SourceOperator;
+import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 
 import java.io.IOException;
@@ -100,10 +103,8 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         private IntVector.Builder docsBuilder;
         private IntVector.Builder segmentsBuilder;
         private LongVector.Builder timestampsBuilder;
-        // TODO: add an ordinal block for tsid hashes
-        // (This allows for efficiently grouping by tsid locally, no need to use bytes representation of tsid hash)
-        private BytesRefVector.Builder tsHashesBuilder;
-        private TimeSeriesIterator iterator;
+        private TsidBuilder tsHashesBuilder;
+        private SegmentsIterator iterator;
 
         Impl(BlockFactory blockFactory, LuceneSliceQueue sliceQueue, int maxPageSize, int limit) {
             this.maxPageSize = maxPageSize;
@@ -112,7 +113,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             this.docsBuilder = blockFactory.newIntVectorBuilder(Math.min(limit, maxPageSize));
             this.segmentsBuilder = null;
             this.timestampsBuilder = blockFactory.newLongVectorBuilder(Math.min(limit, maxPageSize));
-            this.tsHashesBuilder = blockFactory.newBytesRefVectorBuilder(Math.min(limit, maxPageSize));
+            this.tsHashesBuilder = new TsidBuilder(blockFactory, Math.min(limit, maxPageSize));
             this.sliceQueue = sliceQueue;
         }
 
@@ -138,48 +139,59 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             }
 
             Page page = null;
-            IntBlock shard = null;
-            IntVector leaf = null;
+            IntBlock shards = null;
+            IntVector segments = null;
             IntVector docs = null;
             LongVector timestamps = null;
             BytesRefVector tsids = null;
             try {
-                if (iterator == null) {
+                while (iterator == null) {
                     var slice = sliceQueue.nextSlice();
                     if (slice == null) {
                         doneCollecting = true;
                         return null;
                     }
-                    if (segmentsBuilder == null && slice.numLeaves() > 1) {
-                        segmentsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
+                    Weight weight = slice.weight();
+                    PriorityQueue<Leaf> queue = new PriorityQueue<>(slice.numLeaves()) {
+                        @Override
+                        protected boolean lessThan(Leaf a, Leaf b) {
+                            return a.timeSeriesHash.compareTo(b.timeSeriesHash) < 0;
+                        }
+                    };
+                    for (var leafReaderContext : slice.leaves()) {
+                        Leaf leaf = new Leaf(weight, leafReaderContext.leafReaderContext());
+                        leaf.nextDoc();
+                        if (leaf.docID != DocIdSetIterator.NO_MORE_DOCS) {
+                            queue.add(leaf);
+                        }
                     }
-                    iterator = new TimeSeriesIterator(slice);
+                    if (queue.size() > 0) {
+                        iterator = new SegmentsIterator(queue);
+                    }
                 }
-                iterator.consume();
-                shard = blockFactory.newConstantIntBlockWith(iterator.slice.shardContext().index(), currentPagePos);
-                if (iterator.slice.numLeaves() == 1) {
-                    int segmentOrd = iterator.slice.getLeaf(0).leafReaderContext().ord;
-                    leaf = blockFactory.newConstantIntBlockWith(segmentOrd, currentPagePos).asVector();
-                } else {
-                    // Due to the multi segment nature of time series source operator singleSegmentNonDecreasing must be false
-                    leaf = segmentsBuilder.build();
-                    segmentsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
+                iterator.readDocsForNextPage();
+                if (currentPagePos > 0) {
+                    shards = blockFactory.newConstantIntBlockWith(0, currentPagePos);
+                    if (segmentsBuilder != null) {
+                        segments = segmentsBuilder.build();
+                        segmentsBuilder = null;
+                    } else {
+                        segments = blockFactory.newConstantIntVector(iterator.lastVisitedSegment, currentPagePos);
+                    }
+                    docs = docsBuilder.build();
+                    docsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
+                    timestamps = timestampsBuilder.build();
+                    timestampsBuilder = blockFactory.newLongVectorBuilder(Math.min(remainingDocs, maxPageSize));
+                    tsids = tsHashesBuilder.build();
+                    tsHashesBuilder = new TsidBuilder(blockFactory, Math.min(remainingDocs, maxPageSize));
+                    page = new Page(
+                        currentPagePos,
+                        new DocVector(shards.asVector(), segments, docs, segments.isConstant()).asBlock(),
+                        tsids.asBlock(),
+                        timestamps.asBlock()
+                    );
+                    currentPagePos = 0;
                 }
-                docs = docsBuilder.build();
-                docsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
-
-                timestamps = timestampsBuilder.build();
-                timestampsBuilder = blockFactory.newLongVectorBuilder(Math.min(remainingDocs, maxPageSize));
-                tsids = tsHashesBuilder.build();
-                tsHashesBuilder = blockFactory.newBytesRefVectorBuilder(Math.min(remainingDocs, maxPageSize));
-                page = new Page(
-                    currentPagePos,
-                    new DocVector(shard.asVector(), leaf, docs, leaf.isConstant()).asBlock(),
-                    tsids.asBlock(),
-                    timestamps.asBlock()
-                );
-
-                currentPagePos = 0;
                 if (iterator.completed()) {
                     iterator = null;
                 }
@@ -187,7 +199,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 throw new UncheckedIOException(e);
             } finally {
                 if (page == null) {
-                    Releasables.closeExpectNoException(shard, leaf, docs, timestamps, tsids);
+                    Releasables.closeExpectNoException(shards, segments, docs, timestamps, tsids);
                 }
             }
             return page;
@@ -198,160 +210,175 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             Releasables.closeExpectNoException(docsBuilder, segmentsBuilder, timestampsBuilder, tsHashesBuilder);
         }
 
-        class TimeSeriesIterator {
+        class SegmentsIterator {
+            private int lastVisitedSegment = -1;
+            private final PriorityQueue<Leaf> mainQueue;
+            private final PriorityQueue<Leaf> oneTsidQueue;
 
-            final LuceneSlice slice;
-            final Leaf leaf;
-            final PriorityQueue<Leaf> queue;
-            int globalTsidOrd;
-            BytesRef currentTsid = new BytesRef();
+            SegmentsIterator(PriorityQueue<Leaf> mainQueue) throws IOException {
+                this.mainQueue = mainQueue;
+                this.oneTsidQueue = new PriorityQueue<>(mainQueue.size()) {
+                    @Override
+                    protected boolean lessThan(Leaf a, Leaf b) {
+                        return a.timestamp > b.timestamp;
+                    }
+                };
+            }
 
-            TimeSeriesIterator(LuceneSlice slice) throws IOException {
-                this.slice = slice;
-                Weight weight = slice.weight();
-                if (slice.numLeaves() == 1) {
-                    queue = null;
-                    leaf = new Leaf(weight, slice.getLeaf(0).leafReaderContext());
-                } else {
-                    queue = new PriorityQueue<>(slice.numLeaves()) {
-                        @Override
-                        protected boolean lessThan(Leaf a, Leaf b) {
-                            // tsid hash in ascending order:
-                            int cmp = a.timeSeriesHash.compareTo(b.timeSeriesHash);
-                            if (cmp == 0) {
-                                // timestamp in descending order:
-                                cmp = -Long.compare(a.timestamp, b.timestamp);
-                            }
-                            return cmp < 0;
-                        }
-                    };
-                    leaf = null;
-                    for (var leafReaderContext : slice.leaves()) {
-                        Leaf leaf = new Leaf(weight, leafReaderContext.leafReaderContext());
-                        if (leaf.nextDoc()) {
-                            queue.add(leaf);
-                        }
+            void readDocsForNextPage() throws IOException {
+                if (mainQueue.size() == 1) {
+                    Leaf top = mainQueue.top();
+                    readDocsFromSingleLeaf(top);
+                    if (top.docID == DocIdSetIterator.NO_MORE_DOCS) {
+                        mainQueue.pop();
+                    }
+                    return;
+                }
+                if (segmentsBuilder == null) {
+                    segmentsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
+                }
+                Thread executingThread = Thread.currentThread();
+                for (Leaf leaf : mainQueue) {
+                    leaf.reinitializeIfNeeded(executingThread);
+                }
+                for (Leaf leaf : oneTsidQueue) {
+                    leaf.reinitializeIfNeeded(executingThread);
+                }
+                do {
+                    PriorityQueue<Leaf> sub = subQueueForNextTsid();
+                    if (sub.size() == 0) {
+                        break;
+                    }
+                    tsHashesBuilder.appendNewTsid(sub.top().timeSeriesHash);
+                    if (readValuesForOneTsid(sub)) {
+                        break;
+                    }
+                } while (mainQueue.size() > 0);
+            }
+
+            private boolean readValuesForOneTsid(PriorityQueue<Leaf> sub) throws IOException {
+                do {
+                    Leaf top = sub.top();
+                    currentPagePos++;
+                    remainingDocs--;
+                    segmentsBuilder.appendInt(top.segmentOrd);
+                    docsBuilder.appendInt(top.docID);
+                    tsHashesBuilder.appendOrdinal();
+                    timestampsBuilder.appendLong(top.timestamp);
+                    if (top.nextDoc()) {
+                        sub.updateTop();
+                    } else if (top.docID == DocIdSetIterator.NO_MORE_DOCS) {
+                        sub.pop();
+                    } else {
+                        mainQueue.add(sub.pop());
+                    }
+                    if (remainingDocs <= 0 || currentPagePos >= maxPageSize) {
+                        return true;
+                    }
+                } while (sub.size() > 0);
+                return false;
+            }
+
+            private void readDocsFromSingleLeaf(Leaf leaf) throws IOException {
+                lastVisitedSegment = leaf.segmentOrd;
+                for (;;) {
+                    currentPagePos++;
+                    remainingDocs--;
+                    if (segmentsBuilder != null) {
+                        segmentsBuilder.appendInt(leaf.segmentOrd);
+                    }
+                    docsBuilder.appendInt(leaf.docID);
+                    tsHashesBuilder.appendOrdinal();
+                    timestampsBuilder.appendLong(leaf.timestamp);
+                    leaf.nextDoc();
+                    if (leaf.docID == DocIdSetIterator.NO_MORE_DOCS) {
+                        break;
+                    }
+                    if (remainingDocs <= 0 || currentPagePos >= maxPageSize) {
+                        break;
                     }
                 }
             }
 
-            void consume() throws IOException {
-                if (queue != null) {
-                    if (queue.size() > 0) {
-                        currentTsid = BytesRef.deepCopyOf(queue.top().timeSeriesHash);
-                        queue.top().reinitializeIfNeeded(Thread.currentThread());
-                    }
-                    while (queue.size() > 0) {
-                        if (remainingDocs <= 0 || currentPagePos >= maxPageSize) {
-                            break;
-                        }
-                        currentPagePos++;
-                        remainingDocs--;
-                        Leaf leaf = queue.top();
-                        segmentsBuilder.appendInt(leaf.segmentOrd);
-                        docsBuilder.appendInt(leaf.iterator.docID());
-                        timestampsBuilder.appendLong(leaf.timestamp);
-                        tsHashesBuilder.appendBytesRef(currentTsid);
-                        final Leaf newTop;
-                        if (leaf.nextDoc()) {
-                            // TODO: updating the top is one of the most expensive parts of this operation.
-                            // Ideally we would do this a less as possible. Maybe the top can be updated every N docs?
-                            newTop = queue.updateTop();
+            private PriorityQueue<Leaf> subQueueForNextTsid() {
+                if (oneTsidQueue.size() == 0 && mainQueue.size() > 0) {
+                    Leaf last = mainQueue.pop();
+                    oneTsidQueue.add(last);
+                    while (mainQueue.size() > 0) {
+                        var top = mainQueue.top();
+                        if (top.timeSeriesHash.equals(last.timeSeriesHash)) {
+                            oneTsidQueue.add(mainQueue.pop());
                         } else {
-                            queue.pop();
-                            newTop = queue.size() > 0 ? queue.top() : null;
-                        }
-                        if (newTop != null) {
-                            if (newTop != leaf) {
-                                newTop.reinitializeIfNeeded(Thread.currentThread());
-                            }
-                            if (newTop.timeSeriesHash.equals(currentTsid) == false) {
-                                globalTsidOrd++;
-                                currentTsid = BytesRef.deepCopyOf(newTop.timeSeriesHash);
-                            }
-                        }
-                    }
-                } else {
-                    // Only one segment, so no need to use priority queue and use segment ordinals as tsid ord.
-                    leaf.reinitializeIfNeeded(Thread.currentThread());
-                    while (leaf.nextDoc()) {
-                        tsHashesBuilder.appendBytesRef(leaf.timeSeriesHash);
-                        timestampsBuilder.appendLong(leaf.timestamp);
-                        // Don't append segment ord, because there is only one segment.
-                        docsBuilder.appendInt(leaf.iterator.docID());
-                        currentPagePos++;
-                        remainingDocs--;
-                        if (remainingDocs <= 0 || currentPagePos >= maxPageSize) {
                             break;
                         }
                     }
                 }
+                return oneTsidQueue;
             }
 
             boolean completed() {
-                if (queue != null) {
-                    return iterator.queue.size() == 0;
-                } else {
-                    return leaf.iterator.docID() == DocIdSetIterator.NO_MORE_DOCS;
-                }
+                return oneTsidQueue.size() == 0 && mainQueue.size() == 0;
+            }
+        }
+
+        static class Leaf {
+            private final int segmentOrd;
+            private final Weight weight;
+            private final LeafReaderContext leaf;
+            private SortedDocValues tsids;
+            private NumericDocValues timestamps;
+            private DocIdSetIterator disi;
+            private Thread createdThread;
+
+            private long timestamp;
+            private int lastTsidOrd = -1;
+            private BytesRef timeSeriesHash;
+            private int docID = -1;
+
+            Leaf(Weight weight, LeafReaderContext leaf) throws IOException {
+                this.segmentOrd = leaf.ord;
+                this.weight = weight;
+                this.leaf = leaf;
+                this.createdThread = Thread.currentThread();
+                tsids = leaf.reader().getSortedDocValues("_tsid");
+                timestamps = DocValues.unwrapSingleton(leaf.reader().getSortedNumericDocValues("@timestamp"));
+                final Scorer scorer = weight.scorer(leaf);
+                disi = scorer != null ? scorer.iterator() : DocIdSetIterator.empty();
             }
 
-            static class Leaf {
-
-                private final int segmentOrd;
-                private final Weight weight;
-                private final LeafReaderContext leaf;
-                private SortedDocValues tsids;
-                private SortedNumericDocValues timestamps;
-                private DocIdSetIterator iterator;
-                private Thread createdThread;
-
-                private long timestamp;
-                private int timeSeriesHashOrd;
-                private BytesRef timeSeriesHash;
-                private int docID = -1;
-
-                Leaf(Weight weight, LeafReaderContext leaf) throws IOException {
-                    this.segmentOrd = leaf.ord;
-                    this.weight = weight;
-                    this.leaf = leaf;
-                    this.createdThread = Thread.currentThread();
-                    tsids = leaf.reader().getSortedDocValues("_tsid");
-                    timestamps = leaf.reader().getSortedNumericDocValues("@timestamp");
-                    final Scorer scorer = weight.scorer(leaf);
-                    iterator = scorer != null ? scorer.iterator() : DocIdSetIterator.empty();
+            boolean nextDoc() throws IOException {
+                docID = disi.nextDoc();
+                if (docID == DocIdSetIterator.NO_MORE_DOCS) {
+                    return false;
                 }
+                boolean advanced = timestamps.advanceExact(docID);
+                assert advanced;
+                timestamp = timestamps.longValue();
+                advanced = tsids.advanceExact(docID);
+                assert advanced;
 
-                boolean nextDoc() throws IOException {
-                    docID = iterator.nextDoc();
-                    if (docID == DocIdSetIterator.NO_MORE_DOCS) {
-                        return false;
-                    }
-
-                    boolean advanced = tsids.advanceExact(docID);
-                    assert advanced;
-                    timeSeriesHashOrd = tsids.ordValue();
-                    timeSeriesHash = tsids.lookupOrd(timeSeriesHashOrd);
-                    advanced = timestamps.advanceExact(docID);
-                    assert advanced;
-                    timestamp = timestamps.nextValue();
+                int ord = tsids.ordValue();
+                if (ord != lastTsidOrd) {
+                    timeSeriesHash = tsids.lookupOrd(ord);
+                    lastTsidOrd = ord;
+                    return false;
+                } else {
                     return true;
                 }
-
-                void reinitializeIfNeeded(Thread executingThread) throws IOException {
-                    if (executingThread != createdThread) {
-                        tsids = leaf.reader().getSortedDocValues("_tsid");
-                        timestamps = leaf.reader().getSortedNumericDocValues("@timestamp");
-                        final Scorer scorer = weight.scorer(leaf);
-                        iterator = scorer != null ? scorer.iterator() : DocIdSetIterator.empty();
-                        if (docID != -1) {
-                            iterator.advance(docID);
-                        }
-                        createdThread = executingThread;
-                    }
-                }
             }
 
+            void reinitializeIfNeeded(Thread executingThread) throws IOException {
+                if (executingThread != createdThread) {
+                    tsids = leaf.reader().getSortedDocValues("_tsid");
+                    timestamps = DocValues.unwrapSingleton(leaf.reader().getSortedNumericDocValues("@timestamp"));
+                    final Scorer scorer = weight.scorer(leaf);
+                    disi = scorer != null ? scorer.iterator() : DocIdSetIterator.empty();
+                    if (docID != -1) {
+                        disi.advance(docID);
+                    }
+                    createdThread = executingThread;
+                }
+            }
         }
 
         @Override
@@ -359,5 +386,58 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             return this.getClass().getSimpleName() + "[" + "maxPageSize=" + maxPageSize + ", remainingDocs=" + remainingDocs + "]";
         }
 
+    }
+
+    /**
+     * Collect tsids then build a {@link OrdinalBytesRefVector}
+     */
+    static final class TsidBuilder implements Releasable {
+        private int currentOrd = -1;
+        private final BytesRefVector.Builder dictBuilder;
+        private final IntVector.Builder ordinalsBuilder;
+
+        TsidBuilder(BlockFactory blockFactory, int estimatedSize) {
+            final var dictBuilder = blockFactory.newBytesRefVectorBuilder(estimatedSize);
+            boolean success = false;
+            try {
+                this.dictBuilder = dictBuilder;
+                this.ordinalsBuilder = blockFactory.newIntVectorBuilder(estimatedSize);
+                success = true;
+            } finally {
+                if (success == false) {
+                    dictBuilder.close();
+                }
+            }
+        }
+
+        void appendNewTsid(BytesRef tsid) {
+            currentOrd++;
+            dictBuilder.appendBytesRef(tsid);
+        }
+
+        void appendOrdinal() {
+            ordinalsBuilder.appendInt(currentOrd);
+        }
+
+        @Override
+        public void close() {
+            Releasables.close(dictBuilder, ordinalsBuilder);
+        }
+
+        BytesRefVector build() throws IOException {
+            BytesRefVector dict = null;
+            BytesRefVector result = null;
+            IntVector ordinals = null;
+            try {
+                dict = dictBuilder.build();
+                ordinals = ordinalsBuilder.build();
+                result = new OrdinalBytesRefVector(ordinals, dict);
+            } finally {
+                if (result == null) {
+                    Releasables.close(dict, ordinalsBuilder);
+                }
+            }
+            return result;
+        }
     }
 }
