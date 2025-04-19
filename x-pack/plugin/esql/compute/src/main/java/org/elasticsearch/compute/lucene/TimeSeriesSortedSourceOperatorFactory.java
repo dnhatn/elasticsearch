@@ -21,18 +21,19 @@ import org.apache.lucene.util.PriorityQueue;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefVector;
 import org.elasticsearch.compute.data.DocVector;
-import org.elasticsearch.compute.data.IntBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongVector;
 import org.elasticsearch.compute.data.OrdinalBytesRefVector;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.SourceOperator;
+import org.elasticsearch.core.Assertions;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
 
@@ -111,7 +112,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             this.blockFactory = blockFactory;
             this.remainingDocs = limit;
             this.docsBuilder = blockFactory.newIntVectorBuilder(Math.min(limit, maxPageSize));
-            this.segmentsBuilder = null;
+            segmentsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
             this.timestampsBuilder = blockFactory.newLongVectorBuilder(Math.min(limit, maxPageSize));
             this.tsHashesBuilder = new TsidBuilder(blockFactory, Math.min(limit, maxPageSize));
             this.sliceQueue = sliceQueue;
@@ -139,7 +140,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             }
 
             Page page = null;
-            IntBlock shards = null;
+            IntVector shards = null;
             IntVector segments = null;
             IntVector docs = null;
             LongVector timestamps = null;
@@ -166,27 +167,23 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                         }
                     }
                     if (queue.size() > 0) {
-                        iterator = new SegmentsIterator(queue);
+                        iterator = new SegmentsIterator(slice, queue);
                     }
                 }
                 iterator.readDocsForNextPage();
                 if (currentPagePos > 0) {
-                    shards = blockFactory.newConstantIntBlockWith(0, currentPagePos);
-                    if (segmentsBuilder != null) {
-                        segments = segmentsBuilder.build();
-                        segmentsBuilder = null;
-                    } else {
-                        segments = blockFactory.newConstantIntVector(iterator.lastVisitedSegment, currentPagePos);
-                    }
+                    shards = blockFactory.newConstantIntVector(iterator.luceneSlice.shardContext().index(), currentPagePos);
                     docs = docsBuilder.build();
                     docsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
                     timestamps = timestampsBuilder.build();
                     timestampsBuilder = blockFactory.newLongVectorBuilder(Math.min(remainingDocs, maxPageSize));
                     tsids = tsHashesBuilder.build();
                     tsHashesBuilder = new TsidBuilder(blockFactory, Math.min(remainingDocs, maxPageSize));
+                    segments = segmentsBuilder.build();
+                    segmentsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
                     page = new Page(
                         currentPagePos,
-                        new DocVector(shards.asVector(), segments, docs, segments.isConstant()).asBlock(),
+                        buildDocVector(shards, segments, docs, iterator.docPerSegments).asBlock(),
                         tsids.asBlock(),
                         timestamps.asBlock()
                     );
@@ -205,17 +202,52 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             return page;
         }
 
+        private DocVector buildDocVector(IntVector shards, IntVector segments, IntVector docs, int[] docPerSegments) {
+            if (segments.isConstant()) {
+                return new DocVector(shards, segments, docs, true);
+            }
+            boolean success = false;
+            int positionCount = shards.getPositionCount();
+            long estimatedSize = DocVector.sizeOfSegmentDocMap(positionCount);
+            blockFactory.adjustBreaker(estimatedSize);
+            try {
+                final int[] forwards = new int[positionCount];
+                final int[] starts = new int[docPerSegments.length];
+                for (int i = 1; i < starts.length; i++) {
+                    starts[i] = starts[i - 1] + docPerSegments[i - 1];
+                }
+                for (int i = 0; i < segments.getPositionCount(); i++) {
+                    final int segment = segments.getInt(i);
+                    assert forwards[starts[segment]] == 0 : "must not set";
+                    forwards[starts[segment]++] = i;
+                }
+                final int[] backwards = new int[forwards.length];
+                for (int p = 0; p < forwards.length; p++) {
+                    backwards[forwards[p]] = p;
+                }
+                final DocVector docVector = new DocVector(shards, segments, docs, forwards, backwards);
+                success = true;
+                return docVector;
+            } finally {
+                if (success == false) {
+                    blockFactory.adjustBreaker(-estimatedSize);
+                }
+            }
+        }
+
         @Override
         public void close() {
             Releasables.closeExpectNoException(docsBuilder, segmentsBuilder, timestampsBuilder, tsHashesBuilder);
         }
 
         class SegmentsIterator {
-            private int lastVisitedSegment = -1;
             private final PriorityQueue<Leaf> mainQueue;
             private final PriorityQueue<Leaf> oneTsidQueue;
+            final int[] docPerSegments;
+            final LuceneSlice luceneSlice;
 
-            SegmentsIterator(PriorityQueue<Leaf> mainQueue) throws IOException {
+            SegmentsIterator(LuceneSlice luceneSlice, PriorityQueue<Leaf> mainQueue) throws IOException {
+                this.luceneSlice = luceneSlice;
                 this.mainQueue = mainQueue;
                 this.oneTsidQueue = new PriorityQueue<>(mainQueue.size()) {
                     @Override
@@ -223,20 +255,15 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                         return a.timestamp > b.timestamp;
                     }
                 };
+                int maxSegmentOrd = 0;
+                for (Leaf leaf : mainQueue) {
+                    maxSegmentOrd = Math.max(maxSegmentOrd, leaf.segmentOrd);
+                }
+                this.docPerSegments = new int[maxSegmentOrd + 1];
             }
 
             void readDocsForNextPage() throws IOException {
-                if (mainQueue.size() == 1) {
-                    Leaf top = mainQueue.top();
-                    readDocsFromSingleLeaf(top);
-                    if (top.docID == DocIdSetIterator.NO_MORE_DOCS) {
-                        mainQueue.pop();
-                    }
-                    return;
-                }
-                if (segmentsBuilder == null) {
-                    segmentsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
-                }
+                Arrays.fill(docPerSegments, 0);
                 Thread executingThread = Thread.currentThread();
                 for (Leaf leaf : mainQueue) {
                     leaf.reinitializeIfNeeded(executingThread);
@@ -262,6 +289,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     currentPagePos++;
                     remainingDocs--;
                     segmentsBuilder.appendInt(top.segmentOrd);
+                    docPerSegments[top.segmentOrd]++;
                     docsBuilder.appendInt(top.docID);
                     tsHashesBuilder.appendOrdinal();
                     timestampsBuilder.appendLong(top.timestamp);
@@ -277,27 +305,6 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     }
                 } while (sub.size() > 0);
                 return false;
-            }
-
-            private void readDocsFromSingleLeaf(Leaf leaf) throws IOException {
-                lastVisitedSegment = leaf.segmentOrd;
-                for (;;) {
-                    currentPagePos++;
-                    remainingDocs--;
-                    if (segmentsBuilder != null) {
-                        segmentsBuilder.appendInt(leaf.segmentOrd);
-                    }
-                    docsBuilder.appendInt(leaf.docID);
-                    tsHashesBuilder.appendOrdinal();
-                    timestampsBuilder.appendLong(leaf.timestamp);
-                    leaf.nextDoc();
-                    if (leaf.docID == DocIdSetIterator.NO_MORE_DOCS) {
-                        break;
-                    }
-                    if (remainingDocs <= 0 || currentPagePos >= maxPageSize) {
-                        break;
-                    }
-                }
             }
 
             private PriorityQueue<Leaf> subQueueForNextTsid() {
@@ -416,6 +423,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         }
 
         void appendOrdinal() {
+            assert currentOrd >= 0;
             ordinalsBuilder.appendInt(currentOrd);
         }
 
@@ -432,9 +440,17 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 dict = dictBuilder.build();
                 ordinals = ordinalsBuilder.build();
                 result = new OrdinalBytesRefVector(ordinals, dict);
+                if (Assertions.ENABLED) {
+                    BytesRef scratch = new BytesRef();
+                    for (int i = 0; i < result.getPositionCount(); i++) {
+                        int ordinal = ordinals.getInt(i);
+                        assert ordinal >= 0 && ordinal <= currentOrd : "ordinal=" + ordinal + ", currentOrd=" + currentOrd;
+                        result.getBytesRef(i, scratch);
+                    }
+                }
             } finally {
                 if (result == null) {
-                    Releasables.close(dict, ordinalsBuilder);
+                    Releasables.close(dict, ordinals);
                 }
             }
             return result;
