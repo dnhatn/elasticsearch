@@ -33,7 +33,9 @@ import org.elasticsearch.core.Releasables;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.function.Function;
 
@@ -146,29 +148,13 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             LongVector timestamps = null;
             BytesRefVector tsids = null;
             try {
-                while (iterator == null) {
+                if (iterator == null) {
                     var slice = sliceQueue.nextSlice();
                     if (slice == null) {
                         doneCollecting = true;
                         return null;
                     }
-                    Weight weight = slice.weight();
-                    PriorityQueue<Leaf> queue = new PriorityQueue<>(slice.numLeaves()) {
-                        @Override
-                        protected boolean lessThan(Leaf a, Leaf b) {
-                            return a.timeSeriesHash.compareTo(b.timeSeriesHash) < 0;
-                        }
-                    };
-                    for (var leafReaderContext : slice.leaves()) {
-                        Leaf leaf = new Leaf(weight, leafReaderContext.leafReaderContext());
-                        leaf.nextDoc();
-                        if (leaf.docID != DocIdSetIterator.NO_MORE_DOCS) {
-                            queue.add(leaf);
-                        }
-                    }
-                    if (queue.size() > 0) {
-                        iterator = new SegmentsIterator(slice, queue);
-                    }
+                    iterator = new SegmentsIterator(slice);
                 }
                 iterator.readDocsForNextPage();
                 if (currentPagePos > 0) {
@@ -241,38 +227,40 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         }
 
         class SegmentsIterator {
-            private final PriorityQueue<Leaf> mainQueue;
+            private final List<Leaf> remainingLeaves;
             private final PriorityQueue<Leaf> oneTsidQueue;
             final int[] docPerSegments;
             final LuceneSlice luceneSlice;
 
-            SegmentsIterator(LuceneSlice luceneSlice, PriorityQueue<Leaf> mainQueue) throws IOException {
+            SegmentsIterator(LuceneSlice luceneSlice) throws IOException {
                 this.luceneSlice = luceneSlice;
-                this.mainQueue = mainQueue;
-                this.oneTsidQueue = new PriorityQueue<>(mainQueue.size()) {
+                this.remainingLeaves = new ArrayList<>(luceneSlice.numLeaves());
+                int maxSegmentOrd = 0;
+                for (var leafReaderContext : luceneSlice.leaves()) {
+                    Leaf leaf = new Leaf(luceneSlice.weight(), leafReaderContext.leafReaderContext());
+                    leaf.nextDoc();
+                    if (leaf.docID != DocIdSetIterator.NO_MORE_DOCS) {
+                        remainingLeaves.add(leaf);
+                        maxSegmentOrd = Math.max(maxSegmentOrd, leaf.segmentOrd);
+                    }
+                }
+                this.oneTsidQueue = new PriorityQueue<>(remainingLeaves.size()) {
                     @Override
                     protected boolean lessThan(Leaf a, Leaf b) {
                         return a.timestamp > b.timestamp;
                     }
                 };
-                int maxSegmentOrd = 0;
-                for (Leaf leaf : mainQueue) {
-                    maxSegmentOrd = Math.max(maxSegmentOrd, leaf.segmentOrd);
-                }
                 this.docPerSegments = new int[maxSegmentOrd + 1];
             }
 
             void readDocsForNextPage() throws IOException {
                 Arrays.fill(docPerSegments, 0);
                 Thread executingThread = Thread.currentThread();
-                for (Leaf leaf : mainQueue) {
-                    leaf.reinitializeIfNeeded(executingThread);
-                }
-                for (Leaf leaf : oneTsidQueue) {
+                for (Leaf leaf : remainingLeaves) {
                     leaf.reinitializeIfNeeded(executingThread);
                 }
                 do {
-                    PriorityQueue<Leaf> sub = subQueueForNextTsid();
+                    PriorityQueue<Leaf> sub = getQueueForNextTsid();
                     if (sub.size() == 0) {
                         break;
                     }
@@ -280,7 +268,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     if (readValuesForOneTsid(sub)) {
                         break;
                     }
-                } while (mainQueue.size() > 0);
+                } while (remainingLeaves.isEmpty() == false);
             }
 
             private boolean readValuesForOneTsid(PriorityQueue<Leaf> sub) throws IOException {
@@ -295,10 +283,8 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     timestampsBuilder.appendLong(top.timestamp);
                     if (top.nextDoc()) {
                         sub.updateTop();
-                    } else if (top.docID == DocIdSetIterator.NO_MORE_DOCS) {
-                        sub.pop();
                     } else {
-                        mainQueue.add(sub.pop());
+                        sub.pop();
                     }
                     if (remainingDocs <= 0 || currentPagePos >= maxPageSize) {
                         return true;
@@ -307,24 +293,39 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 return false;
             }
 
-            private PriorityQueue<Leaf> subQueueForNextTsid() {
-                if (oneTsidQueue.size() == 0 && mainQueue.size() > 0) {
-                    Leaf last = mainQueue.pop();
-                    oneTsidQueue.add(last);
-                    while (mainQueue.size() > 0) {
-                        var top = mainQueue.top();
-                        if (top.timeSeriesHash.equals(last.timeSeriesHash)) {
-                            oneTsidQueue.add(mainQueue.pop());
-                        } else {
-                            break;
+            private PriorityQueue<Leaf> getQueueForNextTsid() {
+                if (oneTsidQueue.size() > 0) {
+                    return oneTsidQueue;
+                }
+                BytesRef lastTsid = null;
+                final List<Leaf> selected = new ArrayList<>(remainingLeaves.size());
+                final Iterator<Leaf> it = remainingLeaves.iterator();
+                while (it.hasNext()) {
+                    Leaf leaf = it.next();
+                    if (leaf.docID == DocIdSetIterator.NO_MORE_DOCS) {
+                        it.remove();
+                        continue;
+                    }
+                    if (lastTsid == null) {
+                        selected.add(leaf);
+                        lastTsid = leaf.timeSeriesHash;
+                    } else {
+                        int cmp = lastTsid.compareTo(leaf.timeSeriesHash);
+                        if (cmp == 0) {
+                            selected.add(leaf);
+                        } else if (cmp > 0) {
+                            lastTsid = leaf.timeSeriesHash;
+                            selected.clear();
+                            selected.add(leaf);
                         }
                     }
                 }
+                oneTsidQueue.addAll(selected);
                 return oneTsidQueue;
             }
 
             boolean completed() {
-                return oneTsidQueue.size() == 0 && mainQueue.size() == 0;
+                return remainingLeaves.isEmpty();
             }
         }
 
