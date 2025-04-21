@@ -42,6 +42,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
     private final int timestampIntervalChannel;
 
     private final BytesRef lastTsid = new BytesRef();
+    private int lastTsidOrdinal = -1;
     private final BytesRefArrayWithSize tsidArray;
 
     private long lastTimestamp;
@@ -72,11 +73,34 @@ public final class TimeSeriesBlockHash extends BlockHash {
         final LongVector timestampVector = Objects.requireNonNull(timestampBlock.asVector(), "timestamp input must be a vector");
         try (var ordsBuilder = blockFactory.newIntVectorBuilder(tsidVector.getPositionCount())) {
             final BytesRef spare = new BytesRef();
-            // TODO: optimize incoming ordinal block
-            for (int i = 0; i < tsidVector.getPositionCount(); i++) {
-                final BytesRef tsid = tsidVector.getBytesRef(i, spare);
-                final long timestamp = timestampVector.getLong(i);
-                ordsBuilder.appendInt(addOnePosition(tsid, timestamp));
+            OrdinalBytesRefVector ordinals = tsidVector.asOrdinals();
+            if (ordinals != null) {
+                BytesRef scratch = new BytesRef();
+                for (int i = 0; i < tsidVector.getPositionCount(); i++) {
+                    int tsidOrdinal = ordinals.getOrdinalsVector().getInt(i);
+                    boolean newGroup = false;
+                    if (positionCount() == 0 || tsidOrdinal != lastTsidOrdinal) {
+                        endTsidGroup();
+                        tsidArray.append(tsidBlock.getBytesRef(i, scratch));
+                        lastTsidOrdinal = tsidOrdinal;
+                        newGroup = true;
+                    }
+                    final long timestamp = timestampVector.getLong(i);
+                    if (newGroup || timestamp != lastTimestamp) {
+                        assert newGroup || lastTimestamp >= timestamp : "@timestamp goes backward " + lastTimestamp + " < " + timestamp;
+                        timestampArray.append(timestamp);
+                        lastTimestamp = timestamp;
+                        currentTimestampCount++;
+                    }
+                    ordsBuilder.appendInt(positionCount() - 1);
+                }
+            } else {
+                // TODO: optimize incoming ordinal block
+                for (int i = 0; i < tsidVector.getPositionCount(); i++) {
+                    final BytesRef tsid = tsidVector.getBytesRef(i, spare);
+                    final long timestamp = timestampVector.getLong(i);
+                    ordsBuilder.appendInt(addOnePosition(tsid, timestamp));
+                }
             }
             try (var ords = ordsBuilder.build()) {
                 addInput.add(0, ords);
@@ -86,8 +110,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
     private int addOnePosition(BytesRef tsid, long timestamp) {
         boolean newGroup = false;
-        if (positionCount() == 0 || lastTsid.equals(tsid) == false) {
-            assert positionCount() == 0 || lastTsid.compareTo(tsid) < 0 : "tsid goes backward ";
+        if ( positionCount() == 0 || lastTsid.equals(tsid) == false) {
             endTsidGroup();
             tsidArray.append(tsid);
             tsidArray.get(tsidArray.count - 1, lastTsid);
