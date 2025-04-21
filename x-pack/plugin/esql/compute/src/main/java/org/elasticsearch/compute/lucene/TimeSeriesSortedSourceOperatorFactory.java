@@ -18,6 +18,12 @@ import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.PriorityQueue;
+import org.elasticsearch.TransportVersion;
+import org.elasticsearch.TransportVersions;
+import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefVector;
 import org.elasticsearch.compute.data.DocVector;
@@ -26,14 +32,17 @@ import org.elasticsearch.compute.data.LongVector;
 import org.elasticsearch.compute.data.OrdinalBytesRefVector;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.DriverContext;
+import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.xcontent.XContentBuilder;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Function;
 
 /**
@@ -105,6 +114,9 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         private LongVector.Builder timestampsBuilder;
         private TsidBuilder tsHashesBuilder;
         private SegmentsIterator iterator;
+        private long loadedDocs = 0;
+        private long loadedTimeSeries = 0;
+        private long processNanos = 0;
 
         Impl(BlockFactory blockFactory, LuceneSliceQueue sliceQueue, int maxPageSize, int limit) {
             this.maxPageSize = maxPageSize;
@@ -129,6 +141,17 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
 
         @Override
         public Page getOutput() {
+            try {
+                long startTime = System.nanoTime();
+                Page page = getOutputUnchecked();
+                processNanos += (System.nanoTime() - startTime);
+                return page;
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        private Page getOutputUnchecked() throws IOException {
             if (isFinished()) {
                 return null;
             }
@@ -175,8 +198,6 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 if (iterator.completed()) {
                     iterator = null;
                 }
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
             } finally {
                 if (page == null) {
                     Releasables.closeExpectNoException(shards, segments, docs, timestamps, tsids);
@@ -288,6 +309,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     docsBuilder.appendInt(top.docID);
                     tsHashesBuilder.appendOrdinal();
                     timestampsBuilder.appendLong(top.timestamp);
+                    loadedDocs++;
                     if (top.nextDoc()) {
                         sub.updateTop();
                     } else if (top.docID == DocIdSetIterator.NO_MORE_DOCS) {
@@ -314,6 +336,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                             break;
                         }
                     }
+                    loadedTimeSeries++;
                 }
                 return oneTsidQueue;
             }
@@ -384,10 +407,86 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         }
 
         @Override
+        public Status status() {
+            return new TimeSeriesSortedSourceOperatorFactory.Status(loadedTimeSeries, loadedTimeSeries, processNanos);
+        }
+
+        @Override
         public String toString() {
             return this.getClass().getSimpleName() + "[" + "maxPageSize=" + maxPageSize + ", remainingDocs=" + remainingDocs + "]";
         }
+    }
 
+    public static class Status implements Operator.Status {
+        public static final NamedWriteableRegistry.Entry ENTRY = new NamedWriteableRegistry.Entry(
+            Operator.Status.class,
+            "time_series_source",
+            Status::new
+        );
+
+        private final long numDocs;
+        private final long numTimeSeries;
+        private final long processNanos;
+
+        Status(long numDocs, long numTimeSeries, long processNanos) {
+            this.numDocs = numDocs;
+            this.numTimeSeries = numTimeSeries;
+            this.processNanos = processNanos;
+        }
+
+        Status(StreamInput in) throws IOException {
+            this.numDocs = in.readVLong();
+            this.numTimeSeries = in.readVLong();
+            this.processNanos = in.readVLong();
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            out.writeVLong(numDocs);
+            out.writeVLong(numTimeSeries);
+            out.writeVLong(processNanos);
+        }
+
+        @Override
+        public String getWriteableName() {
+            return ENTRY.name;
+        }
+
+        @Override
+        public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+            builder.startObject();
+            builder.field("num_docs", numDocs);
+            builder.field("num_time_series", numTimeSeries);
+            builder.field("process_nanos", processNanos);
+            return builder.endObject();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (o == null || getClass() != o.getClass()) return false;
+            Status status = (Status) o;
+            return numDocs == status.numDocs && numTimeSeries == status.numTimeSeries && processNanos == status.processNanos;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(numDocs, numTimeSeries, processNanos);
+        }
+
+        @Override
+        public long documentsFound() {
+            return numDocs;
+        }
+
+        @Override
+        public String toString() {
+            return Strings.toString(this);
+        }
+
+        @Override
+        public TransportVersion getMinimalSupportedVersion() {
+            return TransportVersions.COMPRESS_DELAYABLE_WRITEABLE;
+        }
     }
 
     /**
