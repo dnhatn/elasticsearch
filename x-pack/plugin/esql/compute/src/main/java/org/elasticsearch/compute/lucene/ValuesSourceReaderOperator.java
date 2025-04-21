@@ -21,7 +21,9 @@ import org.elasticsearch.compute.data.BytesRefBlock;
 import org.elasticsearch.compute.data.DocBlock;
 import org.elasticsearch.compute.data.DocVector;
 import org.elasticsearch.compute.data.ElementType;
+import org.elasticsearch.compute.data.FilterLongBlock;
 import org.elasticsearch.compute.data.IntVector;
+import org.elasticsearch.compute.data.LongBlock;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.data.SingletonOrdinalsBuilder;
 import org.elasticsearch.compute.operator.AbstractPageMappingOperator;
@@ -119,6 +121,7 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
 
     int lastShard = -1;
     int lastSegment = -1;
+    private long filterTimes = 0;
 
     /**
      * Creates a new extractor
@@ -382,7 +385,11 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
                     }
                 }
                 try (Block targetBlock = fieldTypeBuilders[f].build()) {
-                    target[f] = targetBlock.filter(backwards);
+                    if (targetBlock instanceof LongBlock longBlock && longBlock.asVector() == null) {
+                        target[f] = new FilterLongBlock(longBlock, backwards);
+                    } else {
+                        target[f] = targetBlock.filter(backwards);
+                    }
                 }
             }
         }

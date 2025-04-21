@@ -25,6 +25,8 @@ import java.io.IOException;
 $if(BytesRef)$
 public sealed interface BytesRefBlock extends Block permits BytesRefArrayBlock, BytesRefVectorBlock, ConstantNullBlock,
     OrdinalBytesRefBlock {
+$elseif(long)$
+public sealed interface $Type$Block extends Block permits $Type$ArrayBlock, $Type$VectorBlock, ConstantNullBlock, $Type$BigArrayBlock, FilterLongBlock {
 $else$
 public sealed interface $Type$Block extends Block permits $Type$ArrayBlock, $Type$VectorBlock, ConstantNullBlock, $Type$BigArrayBlock {
 $endif$
