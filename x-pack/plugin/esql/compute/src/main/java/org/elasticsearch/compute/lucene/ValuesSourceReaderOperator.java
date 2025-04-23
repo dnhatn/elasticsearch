@@ -356,7 +356,11 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
             }
             for (int i = 0; i < builders.length; i++) {
                 try (var block = builders[i].build()) {
-                    blocks[i] = block.filter(backwards);
+                    if (block instanceof LongBlock longBlock) {
+                        blocks[i] = new FilterLongBlock(longBlock, backwards);
+                    } else {
+                        blocks[i] = block.filter(backwards);
+                    }
                 }
             }
         } finally {
