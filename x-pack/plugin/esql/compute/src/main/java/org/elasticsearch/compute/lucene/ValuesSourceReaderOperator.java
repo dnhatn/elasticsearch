@@ -159,6 +159,8 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
                 });
             } else if (docVector.singleSegment()) {
                 loadFromSingleLeafUnsorted(blocks, docVector);
+            } else if (docVector.shards().isConstant() && docVector.getDocsPerSegments() != null) {
+                loadFromManyLeavesFromSingleShard(blocks, docVector);
             } else {
                 try (LoadFromMany many = new LoadFromMany(blocks, docVector)) {
                     many.run();
@@ -311,6 +313,54 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
             Block in = blocks[i];
             blocks[i] = in.filter(backwards);
             in.close();
+        }
+    }
+
+    private void loadFromManyLeavesFromSingleShard(Block[] blocks, DocVector docVector) throws IOException {
+        IntVector docs = docVector.docs();
+        int[] forwards = docVector.shardSegmentDocMapForwards();
+        int[] backwards = docVector.shardSegmentDocMapBackwards();
+        int shard = docVector.shards().getInt(0);
+        int p = 0;
+        Block[] subs = new Block[blocks.length];
+        Block.Builder[] builders = new Block.Builder[blocks.length];
+        try (ComputeBlockLoaderFactory loaderBlockFactory = new ComputeBlockLoaderFactory(blockFactory, docs.getPositionCount())) {
+            while (p < docVector.getPositionCount()) {
+                int start = p;
+                int segment = docVector.segments().getInt(forwards[start]);
+                int numDocs = docVector.getDocsPerSegments()[segment];
+                assert numDocs > 0 : numDocs;
+                loadFromSingleLeaf(subs, shard, segment, new BlockLoader.Docs() {
+                    @Override
+                    public int count() {
+                        return numDocs;
+                    }
+
+                    @Override
+                    public int get(int i) {
+                        return docs.getInt(forwards[start + i]);
+                    }
+                });
+                p += numDocs;
+                if (builders[0] == null) {
+                    for (int f = 0; f < fields.length; f++) {
+                        builders[f] = (Block.Builder) fields[f].loader.builder(loaderBlockFactory, docs.getPositionCount());
+                    }
+                }
+                for (int f = 0; f < fields.length; f++) {
+                    Block in = subs[f];
+                    builders[f].copyFrom(subs[f], 0, in.getPositionCount());
+                    subs[f].close();
+                    subs[f] = null;
+                }
+            }
+            for (int i = 0; i < builders.length; i++) {
+                try (var block = builders[i].build()) {
+                    blocks[i] = block.filter(backwards);
+                }
+            }
+        } finally {
+            Releasables.close(() -> Releasables.close(builders), () -> Releasables.close(subs));
         }
     }
 

@@ -229,7 +229,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 for (int p = 0; p < forwards.length; p++) {
                     backwards[forwards[p]] = p;
                 }
-                final DocVector docVector = new DocVector(shards, segments, docs, forwards, backwards);
+                final DocVector docVector = new DocVector(shards, segments, docs, forwards, backwards, docPerSegments);
                 success = true;
                 return docVector;
             } finally {

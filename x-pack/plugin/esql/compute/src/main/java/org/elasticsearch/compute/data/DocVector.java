@@ -48,6 +48,11 @@ public final class DocVector extends AbstractVector implements Vector {
      */
     private int[] shardSegmentDocMapBackwards;
 
+    /**
+     * If shardSegmentDocMapForwards is set, then this can be used to load docs each segment in bulk manner instead
+     */
+    private int[] docsPerSegments = null;
+
     public DocVector(IntVector shards, IntVector segments, IntVector docs, Boolean singleSegmentNonDecreasing) {
         super(shards.getPositionCount(), shards.blockFactory());
         this.shards = shards;
@@ -67,10 +72,18 @@ public final class DocVector extends AbstractVector implements Vector {
         blockFactory().adjustBreaker(BASE_RAM_BYTES_USED);
     }
 
-    public DocVector(IntVector shards, IntVector segments, IntVector docs, int[] docMapForwards, int[] docMapBackwards) {
+    public DocVector(
+        IntVector shards,
+        IntVector segments,
+        IntVector docs,
+        int[] docMapForwards,
+        int[] docMapBackwards,
+        int[] docsPerSegments
+    ) {
         this(shards, segments, docs, null);
         this.shardSegmentDocMapForwards = docMapForwards;
         this.shardSegmentDocMapBackwards = docMapBackwards;
+        this.docsPerSegments = docsPerSegments;
     }
 
     public IntVector shards() {
@@ -213,6 +226,10 @@ public final class DocVector extends AbstractVector implements Vector {
                 blockFactory().adjustBreaker(-estimatedSize);
             }
         }
+    }
+
+    public int[] getDocsPerSegments() {
+        return docsPerSegments;
     }
 
     public static long sizeOfSegmentDocMap(int positionCount) {
