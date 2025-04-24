@@ -52,6 +52,7 @@ import org.elasticsearch.xpack.esql.core.expression.Attribute;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.core.expression.FieldAttribute;
 import org.elasticsearch.xpack.esql.core.expression.FoldContext;
+import org.elasticsearch.xpack.esql.core.expression.NamedExpression;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.core.type.KeywordEsField;
 import org.elasticsearch.xpack.esql.core.type.MultiTypeEsField;
@@ -216,10 +217,15 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
             );
         } else {
             if (esQueryExec.indexMode() == IndexMode.TIME_SERIES) {
+                List<String> counterFields = esQueryExec.attrs().stream().filter(a -> a.dataType().isCounter()).map(NamedExpression::name).toList();
+                if (counterFields.isEmpty()) {
+                    throw new IllegalArgumentException("TS without counter fields should have translated to FROM ");
+                }
                 luceneFactory = TimeSeriesSortedSourceOperatorFactory.create(
                     limit,
                     context.pageSize(rowEstimatedSize),
                     context.queryPragmas().taskConcurrency(),
+                    counterFields,
                     shardContexts,
                     querySupplier(esQueryExec.query())
                 );

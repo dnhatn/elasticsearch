@@ -37,6 +37,7 @@ public class ReplaceSourceAttributes extends PhysicalOptimizerRules.OptimizerRul
         var isTimeSeries = plan.indexMode() == IndexMode.TIME_SERIES;
         var keepIterating = true;
         Attribute tsid = null, timestamp = null, score = null;
+        final List<Attribute> counterFields = new ArrayList<>();
 
         while (keepIterating && outputIterator.hasNext()) {
             Attribute attr = outputIterator.next();
@@ -48,6 +49,8 @@ public class ReplaceSourceAttributes extends PhysicalOptimizerRules.OptimizerRul
                 }
             } else if (attr.name().equals(MetadataAttribute.TIMESTAMP_FIELD)) {
                 timestamp = attr;
+            } else if (isTimeSeries && attr.dataType().counter() != null) {
+                counterFields.add(attr);
             }
             keepIterating = score == null || (isTimeSeries && (tsid == null || timestamp == null));
         }
@@ -57,6 +60,7 @@ public class ReplaceSourceAttributes extends PhysicalOptimizerRules.OptimizerRul
             }
             attributes.add(tsid);
             attributes.add(timestamp);
+            attributes.addAll(counterFields);
         }
         if (score != null) {
             attributes.add(score);
