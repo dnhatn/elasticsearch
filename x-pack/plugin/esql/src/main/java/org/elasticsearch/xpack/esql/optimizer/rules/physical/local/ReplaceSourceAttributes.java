@@ -49,10 +49,10 @@ public class ReplaceSourceAttributes extends PhysicalOptimizerRules.OptimizerRul
                 }
             } else if (attr.name().equals(MetadataAttribute.TIMESTAMP_FIELD)) {
                 timestamp = attr;
-            } else if (isTimeSeries && attr.dataType().counter() != null) {
+            } else if (isTimeSeries && attr.dataType().isCounter()) {
                 counterFields.add(attr);
             }
-            keepIterating = score == null || (isTimeSeries && (tsid == null || timestamp == null));
+            keepIterating = score == null || isTimeSeries;
         }
         if (isTimeSeries) {
             if (tsid == null || timestamp == null) {
