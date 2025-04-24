@@ -11,6 +11,7 @@ import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
@@ -268,8 +269,11 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     tsHashesBuilder.appendOrdinal();
                     timestampsBuilder.appendLong(top.timestamp);
                     for (int i = 0; i < top.counterValues.length; i++) {
-                        if (top.counterValues[i].advanceExact(top.docID)) {
-                            counterBuilders[i].appendLong(top.counterValues[i].longValue());
+                        SortedNumericDocValues counterValue = top.counterValues[i];
+                        if (counterValue != null && counterValue.advanceExact(top.docID)) {
+                            for (int v = 0; v < counterValue.docValueCount(); v++) {
+                                counterBuilders[i].appendLong(counterValue.nextValue());
+                            }
                         } else {
                             counterBuilders[i].appendNull();
                         }
@@ -323,7 +327,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             private BytesRef timeSeriesHash;
             private int docID = -1;
             private final List<String> counterFields;
-            final NumericDocValues[] counterValues;
+            final SortedNumericDocValues[] counterValues;
 
             LeafIterator(Weight weight, LeafReaderContext leafContext, List<String> counterFields) throws IOException {
                 this.segmentOrd = leafContext.ord;
@@ -335,9 +339,9 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 final Scorer scorer = weight.scorer(leafContext);
                 disi = scorer != null ? scorer.iterator() : DocIdSetIterator.empty();
                 this.counterFields = counterFields;
-                this.counterValues = new NumericDocValues[counterFields.size()];
+                this.counterValues = new SortedNumericDocValues[counterFields.size()];
                 for (int i = 0; i < counterValues.length; i++) {
-                    counterValues[i] = leafContext.reader().getNumericDocValues(counterFields.get(i));
+                    counterValues[i] = leafContext.reader().getSortedNumericDocValues(counterFields.get(i));
                 }
             }
 
@@ -374,7 +378,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     }
                     createdThread = executingThread;
                     for (int i = 0; i < counterValues.length; i++) {
-                        counterValues[i] = leafContext.reader().getNumericDocValues(counterFields.get(i));
+                        counterValues[i] = leafContext.reader().getSortedNumericDocValues(counterFields.get(i));
                     }
                 }
             }
