@@ -181,7 +181,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     results[1] = tsids.asBlock();
                     results[2] = timestamps.asBlock();
                     for (int i = 0; i < counterBuilders.length; i++) {
-                        results[2 + i] = counterBuilders[i].build();
+                        results[3 + i] = counterBuilders[i].build();
                     }
                     page = new Page(currentPagePos, results);
                     for (int i = 0; i < counterBuilders.length; i++) {
