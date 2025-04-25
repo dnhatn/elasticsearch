@@ -11,7 +11,6 @@ import org.elasticsearch.xpack.esql.VerificationException;
 import org.elasticsearch.xpack.esql.common.Failures;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.EnableSpatialDistancePushdown;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.InsertFieldExtraction;
-import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PushFieldExtractionToTimeSeriesSource;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PushFiltersToSource;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PushLimitToSource;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PushSampleToSource;
@@ -20,6 +19,7 @@ import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PushTopNToSou
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.ReplaceSourceAttributes;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.SpatialDocValuesExtraction;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.SpatialShapeBoundsExtraction;
+import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.TimeSeriesRules;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
 import org.elasticsearch.xpack.esql.rule.ParameterizedRuleExecutor;
 import org.elasticsearch.xpack.esql.rule.Rule;
@@ -80,9 +80,15 @@ public class LocalPhysicalPlanOptimizer extends ParameterizedRuleExecutor<Physic
             Limiter.ONCE,
             new InsertFieldExtraction(),
             new SpatialDocValuesExtraction(),
-            new SpatialShapeBoundsExtraction(),
-            new PushFieldExtractionToTimeSeriesSource()
+            new SpatialShapeBoundsExtraction()
         );
-        return List.of(pushdown, fieldExtraction);
+        var timeSeriesRules = new Batch<>(
+            "Time series",
+            Limiter.ONCE,
+            new TimeSeriesRules.ConvertToTimeSeriesSource(),
+            new TimeSeriesRules.PushTimeFieldExtractionToSource(),
+            new TimeSeriesRules.DropDocAttributeFromSource()
+        );
+        return List.of(pushdown, fieldExtraction, timeSeriesRules);
     }
 }

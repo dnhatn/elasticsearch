@@ -8,6 +8,7 @@
 package org.elasticsearch.compute.lucene;
 
 import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
@@ -18,9 +19,9 @@ import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.PriorityQueue;
+import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefVector;
-import org.elasticsearch.compute.data.DocVector;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongVector;
 import org.elasticsearch.compute.data.OrdinalBytesRefVector;
@@ -29,6 +30,11 @@ import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.index.fieldvisitor.StoredFieldLoader;
+import org.elasticsearch.index.mapper.BlockLoader;
+import org.elasticsearch.index.mapper.BlockLoaderStoredFieldsFromLeafLoader;
+import org.elasticsearch.index.mapper.SourceLoader;
+import org.elasticsearch.search.fetch.StoredFieldsSpec;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -51,9 +57,11 @@ import java.util.function.Function;
 public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factory {
 
     private final int maxPageSize;
+    private final ValuesSourceReaderOperator.FieldInfo[] fieldsToExact;
 
     private TimeSeriesSortedSourceOperatorFactory(
         List<? extends ShardContext> contexts,
+        ValuesSourceReaderOperator.FieldInfo[] fieldsToExact,
         Function<ShardContext, Query> queryFunction,
         int taskConcurrency,
         int maxPageSize,
@@ -70,11 +78,12 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             ScoreMode.COMPLETE_NO_SCORES
         );
         this.maxPageSize = maxPageSize;
+        this.fieldsToExact = fieldsToExact;
     }
 
     @Override
     public SourceOperator get(DriverContext driverContext) {
-        return new Impl(driverContext.blockFactory(), sliceQueue, maxPageSize, limit);
+        return new Impl(driverContext.blockFactory(), fieldsToExact, sliceQueue, maxPageSize, limit);
     }
 
     @Override
@@ -86,10 +95,11 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         int limit,
         int maxPageSize,
         int taskConcurrency,
-        List<? extends ShardContext> searchContexts,
+        List<? extends ShardContext> contexts,
+        ValuesSourceReaderOperator.FieldInfo[] fieldsToExact,
         Function<ShardContext, Query> queryFunction
     ) {
-        return new TimeSeriesSortedSourceOperatorFactory(searchContexts, queryFunction, taskConcurrency, maxPageSize, limit);
+        return new TimeSeriesSortedSourceOperatorFactory(contexts, fieldsToExact, queryFunction, taskConcurrency, maxPageSize, limit);
     }
 
     static final class Impl extends SourceOperator {
@@ -100,18 +110,23 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         private int currentPagePos = 0;
         private int remainingDocs;
         private boolean doneCollecting;
-        private IntVector.Builder docsBuilder;
-        private IntVector.Builder segmentsBuilder;
         private LongVector.Builder timestampsBuilder;
         private TsidBuilder tsHashesBuilder;
         private SegmentsIterator iterator;
+        private final ValuesSourceReaderOperator.FieldInfo[] fieldsToExact;
+        private ShardLevelFieldsReader fieldsReader;
 
-        Impl(BlockFactory blockFactory, LuceneSliceQueue sliceQueue, int maxPageSize, int limit) {
+        Impl(
+            BlockFactory blockFactory,
+            ValuesSourceReaderOperator.FieldInfo[] fieldsToExtract,
+            LuceneSliceQueue sliceQueue,
+            int maxPageSize,
+            int limit
+        ) {
             this.maxPageSize = maxPageSize;
             this.blockFactory = blockFactory;
+            this.fieldsToExact = fieldsToExtract;
             this.remainingDocs = limit;
-            this.docsBuilder = blockFactory.newIntVectorBuilder(Math.min(limit, maxPageSize));
-            this.segmentsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
             this.timestampsBuilder = blockFactory.newLongVectorBuilder(Math.min(limit, maxPageSize));
             this.tsHashesBuilder = new TsidBuilder(blockFactory, Math.min(limit, maxPageSize));
             this.sliceQueue = sliceQueue;
@@ -139,11 +154,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             }
 
             Page page = null;
-            IntVector shards = null;
-            IntVector segments = null;
-            IntVector docs = null;
-            LongVector timestamps = null;
-            BytesRefVector tsids = null;
+            Block[] blocks = new Block[2 + fieldsToExact.length];
             try {
                 if (iterator == null) {
                     var slice = sliceQueue.nextSlice();
@@ -151,25 +162,18 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                         doneCollecting = true;
                         return null;
                     }
+                    Releasables.close(fieldsReader);
+                    fieldsReader = new ShardLevelFieldsReader(blockFactory, slice.shardContext(), fieldsToExact);
                     iterator = new SegmentsIterator(slice);
                 }
                 iterator.readDocsForNextPage();
                 if (currentPagePos > 0) {
-                    shards = blockFactory.newConstantIntVector(iterator.luceneSlice.shardContext().index(), currentPagePos);
-                    docs = docsBuilder.build();
-                    docsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
-                    timestamps = timestampsBuilder.build();
-                    timestampsBuilder = blockFactory.newLongVectorBuilder(Math.min(remainingDocs, maxPageSize));
-                    tsids = tsHashesBuilder.build();
+                    blocks[0] = tsHashesBuilder.build().asBlock();
                     tsHashesBuilder = new TsidBuilder(blockFactory, Math.min(remainingDocs, maxPageSize));
-                    segments = segmentsBuilder.build();
-                    segmentsBuilder = blockFactory.newIntVectorBuilder(Math.min(remainingDocs, maxPageSize));
-                    page = new Page(
-                        currentPagePos,
-                        buildDocVector(shards, segments, docs, iterator.docPerSegments).asBlock(),
-                        tsids.asBlock(),
-                        timestamps.asBlock()
-                    );
+                    blocks[1] = timestampsBuilder.build().asBlock();
+                    timestampsBuilder = blockFactory.newLongVectorBuilder(Math.min(remainingDocs, maxPageSize));
+                    System.arraycopy(fieldsReader.buildBlocks(), 0, blocks, 2, fieldsToExact.length);
+                    page = new Page(currentPagePos, blocks);
                     currentPagePos = 0;
                 }
                 if (iterator.completed()) {
@@ -179,58 +183,20 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 throw new UncheckedIOException(e);
             } finally {
                 if (page == null) {
-                    Releasables.closeExpectNoException(shards, segments, docs, timestamps, tsids);
+                    Releasables.closeExpectNoException(blocks);
                 }
             }
             return page;
         }
 
-        private DocVector buildDocVector(IntVector shards, IntVector segments, IntVector docs, int[] docPerSegments) {
-            if (segments.isConstant()) {
-                // DocIds are sorted in each segment. Hence, if docIds come from a single segment, we can mark this DocVector
-                // as singleSegmentNonDecreasing to enable optimizations in the ValuesSourceReaderOperator.
-                return new DocVector(shards, segments, docs, true);
-            }
-            boolean success = false;
-            int positionCount = shards.getPositionCount();
-            long estimatedSize = DocVector.sizeOfSegmentDocMap(positionCount);
-            blockFactory.adjustBreaker(estimatedSize);
-            // Use docPerSegments to build a forward/backward docMap in O(N)
-            // instead of O(N*log(N)) in DocVector#buildShardSegmentDocMapIfMissing.
-            try {
-                final int[] forwards = new int[positionCount];
-                final int[] starts = new int[docPerSegments.length];
-                for (int i = 1; i < starts.length; i++) {
-                    starts[i] = starts[i - 1] + docPerSegments[i - 1];
-                }
-                for (int i = 0; i < segments.getPositionCount(); i++) {
-                    final int segment = segments.getInt(i);
-                    assert forwards[starts[segment]] == 0 : "must not set";
-                    forwards[starts[segment]++] = i;
-                }
-                final int[] backwards = new int[forwards.length];
-                for (int p = 0; p < forwards.length; p++) {
-                    backwards[forwards[p]] = p;
-                }
-                final DocVector docVector = new DocVector(shards, segments, docs, forwards, backwards);
-                success = true;
-                return docVector;
-            } finally {
-                if (success == false) {
-                    blockFactory.adjustBreaker(-estimatedSize);
-                }
-            }
-        }
-
         @Override
         public void close() {
-            Releasables.closeExpectNoException(docsBuilder, segmentsBuilder, timestampsBuilder, tsHashesBuilder);
+            Releasables.closeExpectNoException(timestampsBuilder, tsHashesBuilder, fieldsReader);
         }
 
         class SegmentsIterator {
             private final PriorityQueue<LeafIterator> mainQueue;
             private final PriorityQueue<LeafIterator> oneTsidQueue;
-            final int[] docPerSegments;
             final LuceneSlice luceneSlice;
 
             SegmentsIterator(LuceneSlice luceneSlice) throws IOException {
@@ -257,12 +223,10 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                         return a.timestamp > b.timestamp;
                     }
                 };
-                this.docPerSegments = new int[maxSegmentOrd + 1];
             }
 
             // TODO: add optimize for one leaf?
             void readDocsForNextPage() throws IOException {
-                Arrays.fill(docPerSegments, 0);
                 Thread executingThread = Thread.currentThread();
                 for (LeafIterator leaf : mainQueue) {
                     leaf.reinitializeIfNeeded(executingThread);
@@ -270,6 +234,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 for (LeafIterator leaf : oneTsidQueue) {
                     leaf.reinitializeIfNeeded(executingThread);
                 }
+                fieldsReader.prepareForReading(maxPageSize);
                 do {
                     PriorityQueue<LeafIterator> sub = subQueueForNextTsid();
                     if (sub.size() == 0) {
@@ -287,11 +252,9 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     LeafIterator top = sub.top();
                     currentPagePos++;
                     remainingDocs--;
-                    segmentsBuilder.appendInt(top.segmentOrd);
-                    docPerSegments[top.segmentOrd]++;
-                    docsBuilder.appendInt(top.docID);
                     tsHashesBuilder.appendOrdinal();
                     timestampsBuilder.appendLong(top.timestamp);
+                    fieldsReader.readValues(top.segmentOrd, top.docID);
                     if (top.nextDoc()) {
                         sub.updateTop();
                     } else if (top.docID == DocIdSetIterator.NO_MORE_DOCS) {
@@ -392,6 +355,123 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             return this.getClass().getSimpleName() + "[" + "maxPageSize=" + maxPageSize + ", remainingDocs=" + remainingDocs + "]";
         }
 
+    }
+
+    static class BlockLoaderFactory extends ValuesSourceReaderOperator.DelegatingBlockLoaderFactory {
+        BlockLoaderFactory(BlockFactory factory) {
+            super(factory);
+        }
+
+        @Override
+        public BlockLoader.Block constantNulls() {
+            throw new UnsupportedOperationException("must not be used by column readers");
+        }
+
+        @Override
+        public BlockLoader.Block constantBytes(BytesRef value) {
+            throw new UnsupportedOperationException("must not be used by column readers");
+        }
+
+        @Override
+        public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count) {
+            throw new UnsupportedOperationException("must not be used by column readers");
+        }
+    }
+
+    static final class ShardLevelFieldsReader implements Releasable {
+        private final BlockLoaderFactory blockFactory;
+        private final SegmentLevelFieldsReader[] segments;
+        private final BlockLoader[] loaders;
+        private final Block.Builder[] builders;
+        private final StoredFieldsSpec storedFieldsSpec;
+        private final SourceLoader sourceLoader;
+
+        ShardLevelFieldsReader(BlockFactory blockFactory, ShardContext shardContext, ValuesSourceReaderOperator.FieldInfo[] fields) {
+            this.blockFactory = new BlockLoaderFactory(blockFactory);
+            final IndexReader indexReader = shardContext.searcher().getIndexReader();
+            this.segments = new SegmentLevelFieldsReader[indexReader.leaves().size()];
+            this.loaders = new BlockLoader[fields.length];
+            this.builders = new Block.Builder[loaders.length];
+            StoredFieldsSpec storedFieldsSpec = StoredFieldsSpec.NO_REQUIREMENTS;
+            for (int i = 0; i < fields.length; i++) {
+                BlockLoader loader = fields[i].blockLoader().apply(0);
+                storedFieldsSpec = storedFieldsSpec.merge(loader.rowStrideStoredFieldSpec());
+                loaders[i] = loader;
+            }
+            for (int i = 0; i < indexReader.leaves().size(); i++) {
+                LeafReaderContext leafReaderContext = indexReader.leaves().get(i);
+                segments[i] = new SegmentLevelFieldsReader(leafReaderContext, loaders);
+            }
+            if (storedFieldsSpec.requiresSource()) {
+                sourceLoader = shardContext.newSourceLoader();
+            } else {
+                sourceLoader = null;
+            }
+            this.storedFieldsSpec = storedFieldsSpec;
+        }
+
+        void readValues(int segment, int docID) throws IOException {
+            segments[segment].read(docID, builders);
+        }
+
+        void prepareForReading(int estimateSize) throws IOException {
+            if (this.builders[0] == null) {
+                for (int f = 0; f < builders.length; f++) {
+                    builders[f] = (Block.Builder) loaders[f].builder(blockFactory, estimateSize);
+                }
+            }
+            for (SegmentLevelFieldsReader segment : segments) {
+                if (segment != null) {
+                    segment.reinitializeIfNeeded(sourceLoader, storedFieldsSpec);
+                }
+            }
+        }
+
+        Block[] buildBlocks() {
+            Block[] blocks = Block.Builder.buildAll(builders);
+            Arrays.fill(builders, null);
+            return blocks;
+        }
+
+        @Override
+        public void close() {
+            Releasables.close(builders);
+        }
+    }
+
+    static final class SegmentLevelFieldsReader {
+        private final BlockLoader.RowStrideReader[] rowStride;
+        private final BlockLoader[] loaders;
+        private final LeafReaderContext leafContext;
+        private BlockLoaderStoredFieldsFromLeafLoader storedFields;
+        private Thread loadedThread = null;
+
+        public SegmentLevelFieldsReader(LeafReaderContext leafContext, BlockLoader[] loaders) {
+            this.leafContext = leafContext;
+            this.loaders = loaders;
+            this.rowStride = new BlockLoader.RowStrideReader[loaders.length];
+        }
+
+        private void reinitializeIfNeeded(SourceLoader sourceLoader, StoredFieldsSpec storedFieldsSpec) throws IOException {
+            final Thread currentThread = Thread.currentThread();
+            if (loadedThread != currentThread) {
+                loadedThread = currentThread;
+                for (int f = 0; f < loaders.length; f++) {
+                    rowStride[f] = loaders[f].rowStrideReader(leafContext);
+                }
+                storedFields = new BlockLoaderStoredFieldsFromLeafLoader(
+                    StoredFieldLoader.fromSpec(storedFieldsSpec).getLoader(leafContext, null),
+                    sourceLoader != null ? sourceLoader.leaf(leafContext.reader(), null) : null
+                );
+            }
+        }
+
+        void read(int docId, Block.Builder[] builder) throws IOException {
+            storedFields.advanceTo(docId);
+            for (int i = 0; i < rowStride.length; i++) {
+                rowStride[i].read(docId, storedFields, builder[i]);
+            }
+        }
     }
 
     /**

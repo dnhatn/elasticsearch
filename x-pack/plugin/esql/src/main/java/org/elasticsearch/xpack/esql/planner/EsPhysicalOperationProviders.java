@@ -86,20 +86,11 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
      * Context of each shard we're operating against.
      */
     public interface ShardContext extends org.elasticsearch.compute.lucene.ShardContext {
-        /**
-         * Build something to load source {@code _source}.
-         */
-        SourceLoader newSourceLoader();
 
         /**
          * Convert a {@link QueryBuilder} into a real {@link Query lucene query}.
          */
         Query toQuery(QueryBuilder queryBuilder);
-
-        /**
-         * Returns something to load values from this field into a {@link Block}.
-         */
-        BlockLoader blockLoader(String name, boolean asUnsupportedSource, MappedFieldType.FieldExtractPreference fieldExtractPreference);
     }
 
     private final List<ShardContext> shardContexts;
@@ -239,12 +230,22 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
 
     @Override
     public PhysicalOperation timeSeriesSourceOperation(TimeSeriesSourceExec ts, LocalExecutionPlannerContext context) {
+        var fieldsToExtract = new ValuesSourceReaderOperator.FieldInfo[ts.attributesToExtract().size()];
+        for (int i = 0; i < fieldsToExtract.length; i++) {
+            Attribute attr = ts.attributesToExtract().get(i);
+            DataType dataType = attr.dataType();
+            MappedFieldType.FieldExtractPreference fieldExtractPreference = ts.extractPreferences().fieldExtractPreference(attr);
+            ElementType elementType = PlannerUtils.toElementType(dataType, fieldExtractPreference);
+            IntFunction<BlockLoader> loader = s -> getBlockLoaderFor(s, attr, fieldExtractPreference);
+            fieldsToExtract[i] = new ValuesSourceReaderOperator.FieldInfo(getFieldName(attr), elementType, loader);
+        }
         final int limit = ts.limit() != null ? (Integer) ts.limit().fold(context.foldCtx()) : NO_LIMIT;
         LuceneOperator.Factory luceneFactory = TimeSeriesSortedSourceOperatorFactory.create(
             limit,
             context.pageSize(ts.estimatedRowSize()),
             context.queryPragmas().taskConcurrency(),
             shardContexts,
+            fieldsToExtract,
             querySupplier(ts.query())
         );
         Layout.Builder layout = new Layout.Builder();
