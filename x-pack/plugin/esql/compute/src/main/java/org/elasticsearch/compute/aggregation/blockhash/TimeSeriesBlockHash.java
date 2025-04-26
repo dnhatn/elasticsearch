@@ -70,25 +70,26 @@ public final class TimeSeriesBlockHash extends BlockHash {
         final BytesRefVector tsidVector = Objects.requireNonNull(tsidBlock.asVector(), "tsid input must be a vector");
         final LongBlock timestampBlock = page.getBlock(timestampIntervalChannel);
         final LongVector timestampVector = Objects.requireNonNull(timestampBlock.asVector(), "timestamp input must be a vector");
-        final OrdinalBytesRefBlock tsidBlockOrdinals = tsidBlock.asOrdinals();
+        final OrdinalBytesRefVector tsidBlockOrdinals = tsidVector.asOrdinals();
         if (tsidBlockOrdinals != null) {
-            final IntBlock tsidOrdinals = tsidBlockOrdinals.getOrdinalsBlock();
+            final IntVector tsidOrdinals = tsidBlockOrdinals.getOrdinalsVector();
             final BytesRefVector tsidDict = tsidBlockOrdinals.getDictionaryVector();
             int lastOrdinal = -1;
             try (var ordsBuilder = blockFactory.newIntVectorBuilder(tsidVector.getPositionCount())) {
                 final BytesRef spare = new BytesRef();
                 for (int i = 0; i < tsidVector.getPositionCount(); i++) {
                     final int ordinal = tsidOrdinals.getInt(i);
-                    boolean changed = false;
+                    boolean newGroup = false;
                     if (ordinal != lastOrdinal) {
                         lastOrdinal = ordinal;
                         endTsidGroup();
                         final BytesRef tsid = tsidDict.getBytesRef(ordinal, spare);
                         tsidArray.append(tsid);
                         tsidArray.get(tsidArray.count - 1, lastTsid);
+                        newGroup = true;
                     }
                     final long timestamp = timestampVector.getLong(i);
-                    ordsBuilder.appendInt(addOnePosition(changed, timestamp));
+                    ordsBuilder.appendInt(addOnePosition(newGroup, timestamp));
                 }
                 try (var ords = ordsBuilder.build()) {
                     addInput.add(0, ords);
