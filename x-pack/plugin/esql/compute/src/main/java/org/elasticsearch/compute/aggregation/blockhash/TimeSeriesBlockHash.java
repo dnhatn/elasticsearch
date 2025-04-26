@@ -70,16 +70,42 @@ public final class TimeSeriesBlockHash extends BlockHash {
         final BytesRefVector tsidVector = Objects.requireNonNull(tsidBlock.asVector(), "tsid input must be a vector");
         final LongBlock timestampBlock = page.getBlock(timestampIntervalChannel);
         final LongVector timestampVector = Objects.requireNonNull(timestampBlock.asVector(), "timestamp input must be a vector");
-        try (var ordsBuilder = blockFactory.newIntVectorBuilder(tsidVector.getPositionCount())) {
-            final BytesRef spare = new BytesRef();
-            // TODO: optimize incoming ordinal block
-            for (int i = 0; i < tsidVector.getPositionCount(); i++) {
-                final BytesRef tsid = tsidVector.getBytesRef(i, spare);
-                final long timestamp = timestampVector.getLong(i);
-                ordsBuilder.appendInt(addOnePosition(tsid, timestamp));
+        final OrdinalBytesRefBlock tsidBlockOrdinals = tsidBlock.asOrdinals();
+        if (tsidBlockOrdinals != null) {
+            final IntBlock tsidOrdinals = tsidBlockOrdinals.getOrdinalsBlock();
+            final BytesRefVector tsidDict = tsidBlockOrdinals.getDictionaryVector();
+            int lastOrdinal = -1;
+            try (var ordsBuilder = blockFactory.newIntVectorBuilder(tsidVector.getPositionCount())) {
+                final BytesRef spare = new BytesRef();
+                for (int i = 0; i < tsidVector.getPositionCount(); i++) {
+                    final int ordinal = tsidOrdinals.getInt(i);
+                    boolean changed = false;
+                    if (ordinal != lastOrdinal) {
+                        lastOrdinal = ordinal;
+                        endTsidGroup();
+                        final BytesRef tsid = tsidDict.getBytesRef(ordinal, spare);
+                        tsidArray.append(tsid);
+                        tsidArray.get(tsidArray.count - 1, lastTsid);
+                    }
+                    final long timestamp = timestampVector.getLong(i);
+                    ordsBuilder.appendInt(addOnePosition(changed, timestamp));
+                }
+                try (var ords = ordsBuilder.build()) {
+                    addInput.add(0, ords);
+                }
             }
-            try (var ords = ordsBuilder.build()) {
-                addInput.add(0, ords);
+        } else {
+            try (var ordsBuilder = blockFactory.newIntVectorBuilder(tsidVector.getPositionCount())) {
+                final BytesRef spare = new BytesRef();
+                // TODO: optimize incoming ordinal block
+                for (int i = 0; i < tsidVector.getPositionCount(); i++) {
+                    final BytesRef tsid = tsidVector.getBytesRef(i, spare);
+                    final long timestamp = timestampVector.getLong(i);
+                    ordsBuilder.appendInt(addOnePosition(tsid, timestamp));
+                }
+                try (var ords = ordsBuilder.build()) {
+                    addInput.add(0, ords);
+                }
             }
         }
     }
@@ -87,12 +113,22 @@ public final class TimeSeriesBlockHash extends BlockHash {
     private int addOnePosition(BytesRef tsid, long timestamp) {
         boolean newGroup = false;
         if (positionCount() == 0 || lastTsid.equals(tsid) == false) {
-            assert positionCount() == 0 || lastTsid.compareTo(tsid) < 0 : "tsid goes backward ";
+            assert newGroup || positionCount() == 0 || lastTsid.compareTo(tsid) < 0 : "tsid goes backward ";
             endTsidGroup();
             tsidArray.append(tsid);
             tsidArray.get(tsidArray.count - 1, lastTsid);
             newGroup = true;
         }
+        if (newGroup || timestamp != lastTimestamp) {
+            assert newGroup || lastTimestamp >= timestamp : "@timestamp goes backward " + lastTimestamp + " < " + timestamp;
+            timestampArray.append(timestamp);
+            lastTimestamp = timestamp;
+            currentTimestampCount++;
+        }
+        return positionCount() - 1;
+    }
+
+    private int addOnePosition(boolean newGroup, long timestamp) {
         if (newGroup || timestamp != lastTimestamp) {
             assert newGroup || lastTimestamp >= timestamp : "@timestamp goes backward " + lastTimestamp + " < " + timestamp;
             timestampArray.append(timestamp);
