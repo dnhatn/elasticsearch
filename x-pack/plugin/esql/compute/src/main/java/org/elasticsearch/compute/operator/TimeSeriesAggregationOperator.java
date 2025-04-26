@@ -39,23 +39,18 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         @Override
         public Operator get(DriverContext driverContext) {
             // TODO: use TimeSeriesBlockHash when possible
-            return new TimeSeriesAggregationOperator(
-                timeBucket,
-                aggregators,
-                () -> {
-                    if (groups.size() == 2) {
-                        return new TimeSeriesBlockHash(groups.get(0).channel(), groups.get(1).channel(), driverContext.blockFactory());
-                    } else {
-                        return BlockHash.build(
-                            groups,
-                            driverContext.blockFactory(),
-                            maxPageSize,
-                            true // we can enable optimizations as the inputs are vectors
-                        );
-                    }
-                },
-                driverContext
-            );
+            return new TimeSeriesAggregationOperator(timeBucket, aggregators, () -> {
+                if (groups.size() == 2) {
+                    return new TimeSeriesBlockHash(groups.get(0).channel(), groups.get(1).channel(), driverContext.blockFactory());
+                } else {
+                    return BlockHash.build(
+                        groups,
+                        driverContext.blockFactory(),
+                        maxPageSize,
+                        true // we can enable optimizations as the inputs are vectors
+                    );
+                }
+            }, driverContext);
         }
 
         @Override
