@@ -19,6 +19,8 @@ import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.PriorityQueue;
+import org.elasticsearch.TransportVersion;
+import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefVector;
@@ -36,6 +38,7 @@ import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.BlockLoaderStoredFieldsFromLeafLoader;
 import org.elasticsearch.index.mapper.SourceLoader;
 import org.elasticsearch.search.fetch.StoredFieldsSpec;
+import org.elasticsearch.xcontent.XContentBuilder;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -131,6 +134,9 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         private final List<ValuesSourceReaderOperator.FieldInfo> fieldsToExtracts;
         private ShardLevelFieldsReader fieldsReader;
         private DocIdCollector docCollector;
+        private int totalDocs;
+        private int totalPages;
+        private long nanoTimes;
 
         Impl(
             BlockFactory blockFactory,
@@ -162,6 +168,20 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
 
         @Override
         public Page getOutput() {
+            long startTime = System.nanoTime();
+            try {
+                Page page = nextPage();
+                if (page != null) {
+                    totalPages++;
+                    totalDocs += page.getPositionCount();
+                }
+                return page;
+            }finally {
+                nanoTimes += System.nanoTime() - startTime;
+            }
+        }
+
+        Page nextPage() {
             if (isFinished()) {
                 return null;
             }
@@ -217,6 +237,48 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                 }
             }
             return page;
+        }
+
+        static class TSStatus implements Status {
+            private final int totalDocs;
+            private final int totalPages;
+            private final long nanoTimes;
+
+            TSStatus(int totalDocs, int totalPages, long nanoTimes) {
+                this.totalDocs = totalDocs;
+                this.totalPages = totalPages;
+                this.nanoTimes = nanoTimes;
+            }
+
+            @Override
+            public String getWriteableName() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public TransportVersion getMinimalSupportedVersion() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void writeTo(StreamOutput out) throws IOException {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+                builder.startObject();
+                builder.field("total_docs", totalDocs);
+                builder.field("total_pages", totalPages);
+                builder.field("total_time", nanoTimes);
+                builder.endObject();
+                return builder;
+            }
+        }
+
+        @Override
+        public Status status() {
+            return new TSStatus(totalDocs, totalPages, nanoTimes);
         }
 
         @Override
@@ -649,4 +711,5 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             Releasables.close(docsBuilder, segmentsBuilder);
         }
     }
+
 }
