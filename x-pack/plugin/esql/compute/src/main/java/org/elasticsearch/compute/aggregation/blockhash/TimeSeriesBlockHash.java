@@ -48,6 +48,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
     private int currentTimestampCount;
     private final IntArrayWithSize perTsidCountArray;
 
+    // TODO: should we have two them then pass around?
     public TimeSeriesBlockHash(int tsHashChannel, int timestampIntervalChannel, BlockFactory blockFactory) {
         super(blockFactory);
         this.tsHashChannel = tsHashChannel;
@@ -150,6 +151,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         endTsidGroup();
         final Block[] blocks = new Block[2];
         try {
+            // TODO: ignore tsid key
             if (OrdinalBytesRefBlock.isDense(positionCount(), tsidArray.count)) {
                 blocks[0] = buildTsidBlockWithOrdinal();
             } else {
@@ -160,6 +162,97 @@ public final class TimeSeriesBlockHash extends BlockHash {
         } finally {
             if (blocks[blocks.length - 1] == null) {
                 Releasables.close(blocks);
+            }
+        }
+    }
+
+    public record Keys(IntVector selected, BytesRefBlock tsids, LongBlock timeBuckets) {
+        public int positionCount() {
+            return selected.getPositionCount();
+        }
+    }
+
+    public Keys finalKeys(long bucketStartTime, long bucketEndTime) {
+        // TODO: shortcut with minTime and maxTime
+        endTsidGroup();
+        try (
+            IntVector.Builder groupBuilder = blockFactory.newIntVectorBuilder(positionCount());
+            LongVector.Builder timeBucketBuilder = blockFactory.newLongVectorBuilder(positionCount());
+        ) {
+            int groupId = 0;
+            for (int i = 0; i < tsidArray.count; i++) {
+                final int numTimestamps = perTsidCountArray.array.get(i);
+                for (int t = 0; t < numTimestamps; t++) {
+                    final long timestamp = timestampArray.array.get(groupId);
+                    // TODO: two entries per group (and check multiple condition)
+                    if (canReduce(timestamp, bucketStartTime, bucketEndTime)) {
+                        groupBuilder.appendInt(groupId);
+                        timeBucketBuilder.appendLong(timestamp);
+                    }
+                    ++groupId;
+                }
+            }
+            assert groupId == positionCount() : groupId + "!=" + positionCount();
+            IntVector groups = null;
+            BytesRefBlock tsids = null;
+            LongVector timeBuckets = null;
+            Keys keys = null;
+            try {
+                groups = groupBuilder.build();
+                tsids = blockFactory.newConstantBytesRefBlockWith(new BytesRef(), groups.getPositionCount());
+                timeBuckets = timeBucketBuilder.build();
+                keys = new Keys(groups, tsids, timeBuckets.asBlock());
+                return keys;
+            } finally {
+                if (keys == null) {
+                    Releasables.close(groups, tsids, timeBuckets);
+                }
+            }
+        }
+    }
+
+    private static boolean canReduce(long timestamp, long bucketStartTime, long bucketEndTime) {
+        return bucketStartTime < timestamp && timestamp < bucketEndTime;
+    }
+
+    public Keys partialKeys(long bucketStartTime, long bucketEndTime) {
+        endTsidGroup();
+        int estimatedSize = tsidArray.count * 2;
+        try (
+            IntVector.Builder groupBuilder = blockFactory.newIntVectorBuilder(estimatedSize);
+            BytesRefBlock.Builder tsidBuilder = blockFactory.newBytesRefBlockBuilder(estimatedSize);
+            LongVector.Builder timeBucketBuilder = blockFactory.newLongVectorBuilder(estimatedSize)
+        ) {
+            int groupId = 0;
+            BytesRef spare = new BytesRef();
+            for (int i = 0; i < tsidArray.count; i++) {
+                final int numTimestamps = perTsidCountArray.array.get(i);
+                for (int t = 0; t < numTimestamps; t++) {
+                    final long timestamp = timestampArray.array.get(groupId);
+                    // TODO: two entries per group (and check multiple condition)
+                    if (canReduce(timestamp, bucketStartTime, bucketEndTime) == false) {
+                        groupBuilder.appendInt(groupId);
+                        timeBucketBuilder.appendLong(timestamp);
+                        tsidBuilder.appendBytesRef(tsidArray.array.get(i, spare));
+                    }
+                    ++groupId;
+                }
+            }
+            assert groupId == positionCount() : groupId + "!=" + positionCount();
+            IntVector groups = null;
+            LongVector timeBuckets = null;
+            BytesRefBlock tsids = null;
+            Keys keys = null;
+            try {
+                groups = groupBuilder.build();
+                timeBuckets = timeBucketBuilder.build();
+                tsids = tsidBuilder.build();
+                keys = new Keys(groups, tsids, timeBuckets.asBlock());
+                return keys;
+            } finally {
+                if (keys == null) {
+                    Releasables.close(groups, timeBuckets, tsids);
+                }
             }
         }
     }
@@ -202,7 +295,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         }
     }
 
-    private int positionCount() {
+    public int positionCount() {
         return timestampArray.count;
     }
 

@@ -13,11 +13,11 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
+import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.logging.HeaderWarning;
 import org.elasticsearch.compute.aggregation.AggregatorMode;
 import org.elasticsearch.compute.aggregation.GroupingAggregator;
 import org.elasticsearch.compute.aggregation.blockhash.BlockHash;
-import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.lucene.DataPartitioning;
 import org.elasticsearch.compute.lucene.LuceneCountOperator;
@@ -71,6 +71,7 @@ import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.LocalExecution
 import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.PhysicalOperation;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -311,9 +312,29 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         List<BlockHash.GroupSpec> groupSpecs,
         LocalExecutionPlannerContext context
     ) {
+        Rounding.Prepared timeBucket = ts.timeBucketRounding(context.foldCtx());
+        Instant timeSeriesStartTime = null;
+        Instant timeSeriesEndTime = null;
+        for (ShardContext shardContext : shardContexts) {
+            final Instant start = shardContext.getTimeSeriesStart();
+            final Instant end = shardContext.getTimeSeriesEnd();
+            if (start == null || end == null) {
+                timeSeriesStartTime = null;
+                timeSeriesEndTime = null;
+                break;
+            }
+            if (timeSeriesStartTime == null || start.isAfter(timeSeriesStartTime)) {
+                timeSeriesStartTime = start;
+            }
+            if (timeSeriesEndTime == null || end.isBefore(timeSeriesEndTime)) {
+                timeSeriesEndTime = end;
+            }
+        }
         return new TimeSeriesAggregationOperator.Factory(
-            ts.timeBucketRounding(context.foldCtx()),
             shardContexts.size() == 1 && ts.anyMatch(p -> p instanceof TimeSeriesSourceExec),
+            timeBucket,
+            timeSeriesStartTime,
+            timeSeriesEndTime,
             groupSpecs,
             aggregatorMode,
             aggregatorFactories,
@@ -439,6 +460,16 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         protected @Nullable MappedFieldType fieldType(String name) {
             return ctx.getFieldType(name);
         }
+
+        @Override
+        public Instant getTimeSeriesStart() {
+            return ctx.getIndexSettings().getIndexMetadata().getTimeSeriesStart();
+        }
+
+        @Override
+        public Instant getTimeSeriesEnd() {
+            return ctx.getIndexSettings().getIndexMetadata().getTimeSeriesEnd();
+        }
     }
 
     private static class TypeConvertingBlockLoader implements BlockLoader {
@@ -513,5 +544,6 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         public final String toString() {
             return "TypeConvertingBlockLoader[delegate=" + delegate + ", typeConverter=" + typeConverter + "]";
         }
+
     }
 }

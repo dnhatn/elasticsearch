@@ -38,6 +38,7 @@ import org.elasticsearch.xpack.esql.plan.QueryPlan;
 import org.elasticsearch.xpack.esql.plan.logical.EsRelation;
 import org.elasticsearch.xpack.esql.plan.logical.Filter;
 import org.elasticsearch.xpack.esql.plan.logical.Project;
+import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesAggregate;
 import org.elasticsearch.xpack.esql.plan.physical.AggregateExec;
 import org.elasticsearch.xpack.esql.plan.physical.EsSourceExec;
 import org.elasticsearch.xpack.esql.plan.physical.EstimatesRowSize;
@@ -47,6 +48,7 @@ import org.elasticsearch.xpack.esql.plan.physical.ExchangeSourceExec;
 import org.elasticsearch.xpack.esql.plan.physical.FragmentExec;
 import org.elasticsearch.xpack.esql.plan.physical.MergeExec;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
+import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesAggregateExec;
 import org.elasticsearch.xpack.esql.planner.mapper.LocalMapper;
 import org.elasticsearch.xpack.esql.planner.mapper.Mapper;
 import org.elasticsearch.xpack.esql.session.Configuration;
@@ -131,6 +133,15 @@ public class PlannerUtils {
             reducePlan = agg.withMode(AggregatorMode.INITIAL); // force to emit intermediate outputs
         }
         return EstimatesRowSize.estimateRowSize(fragment.estimatedRowSize(), reducePlan);
+    }
+
+    public static boolean hasTimeSeriesAggregation(PhysicalPlan plan) {
+        return plan.anyMatch(p -> {
+            if (p instanceof FragmentExec f) {
+                return f.fragment().anyMatch(l -> l instanceof TimeSeriesAggregate);
+            }
+            return p instanceof TimeSeriesAggregateExec;
+        });
     }
 
     /**

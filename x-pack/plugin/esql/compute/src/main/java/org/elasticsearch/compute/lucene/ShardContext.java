@@ -9,6 +9,8 @@ package org.elasticsearch.compute.lucene;
 
 import org.apache.lucene.search.IndexSearcher;
 import org.elasticsearch.compute.data.Block;
+import org.elasticsearch.core.Nullable;
+import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.SourceLoader;
@@ -16,6 +18,7 @@ import org.elasticsearch.search.sort.SortAndFormats;
 import org.elasticsearch.search.sort.SortBuilder;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -53,4 +56,30 @@ public interface ShardContext {
      * Returns something to load values from this field into a {@link Block}.
      */
     BlockLoader blockLoader(String name, boolean asUnsupportedSource, MappedFieldType.FieldExtractPreference fieldExtractPreference);
+
+    /**
+     * If this index is in {@link IndexMode#TIME_SERIES} then this returns the lower boundary of the time series time range.
+     * Together with {@link #getTimeSeriesEnd()} this defines the time series time range this index has and the range of
+     * timestamps all documents in this index have.
+     *
+     * @return If this index is in {@link IndexMode#TIME_SERIES} then this returns the lower boundary of the time series time range.
+     *         If this index isn't in {@link IndexMode#TIME_SERIES} then <code>null</code> is returned.
+     */
+    @Nullable
+    default Instant getTimeSeriesStart() {
+        return null;
+    }
+
+    /**
+     * If this index is in {@link IndexMode#TIME_SERIES} then this returns the upper boundary of the time series time range.
+     * Together with {@link #getTimeSeriesStart()} this defines the time series time range this index has and the range of
+     * timestamps all documents in this index have.
+     *
+     * @return If this index is in {@link IndexMode#TIME_SERIES} then this returns the upper boundary of the time series time range.
+     *         If this index isn't in {@link IndexMode#TIME_SERIES} then <code>null</code> is returned.
+     */
+    @Nullable
+    default Instant getTimeSeriesEnd() {
+        return null;
+    }
 }

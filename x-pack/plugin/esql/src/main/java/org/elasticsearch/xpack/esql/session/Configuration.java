@@ -118,6 +118,23 @@ public class Configuration implements Writeable {
         }
     }
 
+    public Configuration withQueryPragmas(QueryPragmas newQueryPragmas) {
+        return new Configuration(
+            zoneId,
+            locale,
+            username,
+            clusterName,
+            newQueryPragmas,
+            resultTruncationMaxSize,
+            resultTruncationDefaultSize,
+            query,
+            profile,
+            tables,
+            queryStartTimeNanos,
+            allowPartialResults
+        );
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeZoneId(zoneId);

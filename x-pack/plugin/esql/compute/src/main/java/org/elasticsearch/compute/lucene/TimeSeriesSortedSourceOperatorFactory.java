@@ -176,7 +176,7 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     totalDocs += page.getPositionCount();
                 }
                 return page;
-            }finally {
+            } finally {
                 nanoTimes += System.nanoTime() - startTime;
             }
         }
@@ -240,12 +240,14 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
         }
 
         static class TSStatus implements Status {
-            private final int totalDocs;
-            private final int totalPages;
+            private final long totalDocs;
+            private final long valuesLoaded;
+            private final long totalPages;
             private final long nanoTimes;
 
-            TSStatus(int totalDocs, int totalPages, long nanoTimes) {
+            TSStatus(long totalDocs, long valuesLoaded, long totalPages, long nanoTimes) {
                 this.totalDocs = totalDocs;
+                this.valuesLoaded = valuesLoaded;
                 this.totalPages = totalPages;
                 this.nanoTimes = nanoTimes;
             }
@@ -269,16 +271,34 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
             public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
                 builder.startObject();
                 builder.field("total_docs", totalDocs);
+                builder.field("values_loaded", valuesLoaded);
                 builder.field("total_pages", totalPages);
                 builder.field("total_time", nanoTimes);
                 builder.endObject();
                 return builder;
             }
+
+            @Override
+            public long documentsFound() {
+                return totalDocs;
+            }
+
+            @Override
+            public long valuesLoaded() {
+                return valuesLoaded;
+            }
         }
 
         @Override
         public Status status() {
-            return new TSStatus(totalDocs, totalPages, nanoTimes);
+            // TODO: more accurate loaded-values
+            final long valuesLoaded = totalDocs * (2L + fieldsToExtracts.size());
+            return new TSStatus(totalDocs, valuesLoaded, totalPages, nanoTimes);
+        }
+
+        @Override
+        public String toString() {
+            return "TimeSeriesSource[" + fieldsToExtracts + "]";
         }
 
         @Override
@@ -442,11 +462,6 @@ public class TimeSeriesSortedSourceOperatorFactory extends LuceneOperator.Factor
                     createdThread = executingThread;
                 }
             }
-        }
-
-        @Override
-        public String toString() {
-            return this.getClass().getSimpleName() + "[" + "maxPageSize=" + maxPageSize + ", remainingDocs=" + remainingDocs + "]";
         }
 
     }

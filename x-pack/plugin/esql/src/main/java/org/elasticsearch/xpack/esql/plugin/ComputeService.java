@@ -14,6 +14,7 @@ import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.cluster.RemoteException;
 import org.elasticsearch.cluster.project.ProjectResolver;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.concurrent.RunOnce;
 import org.elasticsearch.compute.data.BlockFactory;
@@ -206,7 +207,17 @@ public class ComputeService {
             collectedPages.forEach(p -> Releasables.closeExpectNoException(p::releaseBlocks));
             l.onFailure(e);
         });
-
+        // Temporarily disable node-level and cluster-level reduction to execute target shards sequentially with time-series aggregation.
+        // This allows us to enable specific optimizations. Once these optimizations are implemented, parallelism will be re-enabled,
+        // although it may differ from the regular FROM command behavior.
+        if (PlannerUtils.hasTimeSeriesAggregation(physicalPlan)) {
+            Settings queryPragmaSettings = Settings.builder()
+                .put(configuration.pragmas().getSettings())
+                .put(QueryPragmas.NODE_LEVEL_REDUCTION.getKey(), false)
+                .put(QueryPragmas.MAX_CONCURRENT_SHARDS_PER_NODE.getKey(), 1)
+                .build();
+            configuration = configuration.withQueryPragmas(new QueryPragmas(queryPragmaSettings));
+        }
         var mainSessionId = newChildSession(sessionId);
         QueryPragmas queryPragmas = configuration.pragmas();
 

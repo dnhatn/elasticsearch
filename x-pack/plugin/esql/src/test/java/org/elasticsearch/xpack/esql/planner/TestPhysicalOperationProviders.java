@@ -165,8 +165,10 @@ public class TestPhysicalOperationProviders extends AbstractPhysicalOperationPro
         LocalExecutionPlannerContext context
     ) {
         return new TimeSeriesAggregationOperator.Factory(
-            ts.timeBucketRounding(context.foldCtx()),
             false,
+            ts.timeBucketRounding(context.foldCtx()),
+            null,
+            null,
             groupSpecs,
             aggregatorMode,
             aggregatorFactories,
@@ -401,7 +403,7 @@ public class TestPhysicalOperationProviders extends AbstractPhysicalOperationPro
         }
 
         @Override
-        protected Page wrapPage(Page page) {
+        protected Page wrapInputPage(Page page) {
             return page.appendBlock(getBlock(page.getBlock(0), attribute, FieldExtractPreference.NONE));
         }
     }
