@@ -161,6 +161,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
             final long bucketStartTime = timeBucket.round(timeSeriesStartTime.toEpochMilli());
             final long bucketEndTime = timeBucket.round(timeSeriesEndTime.toEpochMilli());
             var finalKeys = ts.finalKeys(bucketStartTime, bucketEndTime);
+            System.err.println("--> final keys " + finalKeys.positionCount() + " / " + ts.positionCount());
             if (finalKeys.positionCount() == 0) {
                 Releasables.close(finalKeys.tsids(), finalKeys.timeBuckets(), finalKeys.selected());
             } else {
