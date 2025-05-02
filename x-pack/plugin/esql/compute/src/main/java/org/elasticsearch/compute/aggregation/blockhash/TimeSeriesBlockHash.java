@@ -397,6 +397,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         private final BlockFactory blockFactory;
         private BytesRefArray array;
         private int count = 0;
+        private final BytesRef EMPTY = new BytesRef();
 
         BytesRefArrayWithSize(BlockFactory blockFactory) {
             this.blockFactory = blockFactory;
@@ -404,7 +405,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         }
 
         void append(BytesRef value) {
-            array.append(value);
+            array.append(EMPTY);
             count++;
         }
 
