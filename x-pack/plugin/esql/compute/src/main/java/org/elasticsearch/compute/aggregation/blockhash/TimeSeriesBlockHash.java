@@ -47,6 +47,8 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
     private int currentTimestampCount;
     private final IntArrayWithSize perTsidCountArray;
+    private long actualMinTime = Long.MAX_VALUE;
+    private long actualMaxTime = Long.MIN_VALUE;
 
     // TODO: should we have two them then pass around?
     public TimeSeriesBlockHash(int tsHashChannel, int timestampIntervalChannel, BlockFactory blockFactory) {
@@ -124,6 +126,8 @@ public final class TimeSeriesBlockHash extends BlockHash {
                     assert newGroup || lastTimestamp >= timestamp : "@timestamp goes backward " + lastTimestamp + " < " + timestamp;
                     timestampArray.append(timestamp);
                     lastTimestamp = timestamp;
+                    actualMinTime = Math.min(actualMinTime, timestamp);
+                    actualMaxTime = Math.max(actualMaxTime, timestamp);
                     currentTimestampCount++;
                 }
                 ordsBuilder.appendInt(timestampArray.count - 1);
@@ -168,6 +172,23 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
     public Keys finalKeys(long bucketStartTime, long bucketEndTime) {
         endTsidGroup();
+        if (bucketStartTime < actualMinTime && actualMaxTime < bucketEndTime) {
+            IntVector groups = null;
+            BytesRefBlock tsids = null;
+            LongBlock timeBuckets = null;
+            Keys keys = null;
+            try {
+                groups = nonEmpty();
+                tsids = blockFactory.newConstantBytesRefBlockWith(new BytesRef(), groups.getPositionCount());
+                timeBuckets = timestampArray.toBlock();
+                keys = new Keys(groups, tsids, timeBuckets);
+                return keys;
+            } finally {
+                if (keys == null) {
+                    Releasables.close(groups, tsids, timeBuckets);
+                }
+            }
+        }
         try (
             IntVector.Builder groupBuilder = blockFactory.newIntVectorBuilder(positionCount());
             LongVector.Builder timeBucketBuilder = blockFactory.newLongVectorBuilder(positionCount());
@@ -301,7 +322,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
     @Override
     public IntVector nonEmpty() {
         long endExclusive = positionCount();
-        return IntVector.range(0, Math.toIntExact(endExclusive), blockFactory);
+        return blockFactory.newIntRangeVector(0, Math.toIntExact(endExclusive));
     }
 
     @Override
