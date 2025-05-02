@@ -157,6 +157,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         }
         finished = true;
         if (timeSeriesStartTime != null && timeSeriesEndTime != null && blockHash instanceof TimeSeriesBlockHash ts) {
+            long startNanos = System.nanoTime();
             final long bucketStartTime = timeBucket.round(timeSeriesStartTime.toEpochMilli());
             final long bucketEndTime = timeBucket.round(timeSeriesEndTime.toEpochMilli());
             var finalKeys = ts.finalKeys(bucketStartTime, bucketEndTime);
@@ -171,6 +172,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
                     : partialKeys.positionCount() + " + " + finalKeys.positionCount() + " != " + ts.positionCount();
                 passThroughPages.add(emitSubResults(partialKeys.selected(), partialKeys.tsids(), partialKeys.timeBuckets(), true));
             }
+            outputNanos += System.nanoTime() - startNanos;
         } else {
             Page page = super.emitOutput();
             try {

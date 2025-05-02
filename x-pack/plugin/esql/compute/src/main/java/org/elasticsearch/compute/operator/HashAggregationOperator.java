@@ -96,6 +96,8 @@ public class HashAggregationOperator implements Operator {
      * Nanoseconds this operator has spent running the aggregations.
      */
     private long aggregationNanos;
+
+    protected long outputNanos;
     /**
      * Count of pages this operator has processed.
      */
@@ -216,7 +218,9 @@ public class HashAggregationOperator implements Operator {
             return;
         }
         finished = true;
+        long startNanos = System.nanoTime();
         output = emitOutput();
+        outputNanos += System.nanoTime() - startNanos;
     }
 
     protected Page emitOutput() {
@@ -269,7 +273,7 @@ public class HashAggregationOperator implements Operator {
 
     @Override
     public Operator.Status status() {
-        return new Status(hashNanos, aggregationNanos, pagesProcessed, rowsReceived, rowsEmitted);
+        return new Status(hashNanos, aggregationNanos, outputNanos, pagesProcessed, rowsReceived, rowsEmitted);
     }
 
     protected static void checkState(boolean condition, String msg) {
@@ -307,6 +311,8 @@ public class HashAggregationOperator implements Operator {
          * Nanoseconds this operator has spent running the aggregations.
          */
         private final long aggregationNanos;
+        private final long outputNanos;
+
         /**
          * Count of pages this operator has processed.
          */
@@ -328,9 +334,10 @@ public class HashAggregationOperator implements Operator {
          * @param rowsReceived Count of rows this operator has received.
          * @param rowsEmitted Count of rows this operator has emitted.
          */
-        public Status(long hashNanos, long aggregationNanos, int pagesProcessed, long rowsReceived, long rowsEmitted) {
+        public Status(long hashNanos, long aggregationNanos, long outputNanos, int pagesProcessed, long rowsReceived, long rowsEmitted) {
             this.hashNanos = hashNanos;
             this.aggregationNanos = aggregationNanos;
+            this.outputNanos = outputNanos;
             this.pagesProcessed = pagesProcessed;
             this.rowsReceived = rowsReceived;
             this.rowsEmitted = rowsEmitted;
@@ -412,6 +419,10 @@ public class HashAggregationOperator implements Operator {
             builder.field("aggregation_nanos", aggregationNanos);
             if (builder.humanReadable()) {
                 builder.field("aggregation_time", TimeValue.timeValueNanos(aggregationNanos));
+            }
+            builder.field("output_nanos", outputNanos);
+            if (builder.humanReadable()) {
+                builder.field("output_time", TimeValue.timeValueNanos(outputNanos));
             }
             builder.field("pages_processed", pagesProcessed);
             builder.field("rows_received", rowsReceived);
