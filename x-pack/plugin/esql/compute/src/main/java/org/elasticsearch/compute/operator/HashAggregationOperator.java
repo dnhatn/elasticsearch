@@ -355,6 +355,7 @@ public class HashAggregationOperator implements Operator {
                 rowsReceived = 0;
                 rowsEmitted = 0;
             }
+            outputNanos = in.readVLong();
         }
 
         @Override
