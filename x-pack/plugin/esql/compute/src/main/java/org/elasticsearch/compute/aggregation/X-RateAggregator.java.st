@@ -387,10 +387,10 @@ public class Rate$Type$Aggregator {
                         rates.appendNull();
                         continue;
                     }
-                    int len = state.entries();
                     final double rate;
                     if (evalContext instanceof TimeSeriesGroupingAggregatorEvaluationContext tsContext) {
-                        rate = extrapolateRate(state, tsContext.rangeStartInMillis(groupId), tsContext.rangeEndInMillis(groupId));
+                        var lastTS = state.timestamps[0];
+                        rate = extrapolateRate(state, tsContext.rangeStartInMillis(lastTS), tsContext.rangeEndInMillis(lastTS));
                     } else {
                         rate = computeRateWithoutExtrapolate(state);
                     }

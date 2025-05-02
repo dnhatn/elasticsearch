@@ -165,8 +165,10 @@ public class TestPhysicalOperationProviders extends AbstractPhysicalOperationPro
         LocalExecutionPlannerContext context
     ) {
         return new TimeSeriesAggregationOperator.Factory(
-            ts.timeBucketRounding(context.foldCtx()),
             false,
+            ts.timeBucketRounding(context.foldCtx()),
+            null,
+            null,
             groupSpecs,
             aggregatorMode,
             aggregatorFactories,

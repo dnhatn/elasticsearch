@@ -31,7 +31,6 @@ import org.elasticsearch.common.Randomness;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.breaker.NoopCircuitBreaker;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.collect.Iterators;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.BigArrays;
@@ -60,9 +59,7 @@ import org.elasticsearch.compute.test.CannedSourceOperator;
 import org.elasticsearch.compute.test.SequenceLongBlockSourceOperator;
 import org.elasticsearch.compute.test.TestBlockFactory;
 import org.elasticsearch.compute.test.TestDriverFactory;
-import org.elasticsearch.compute.test.TestResultPageSinkOperator;
 import org.elasticsearch.core.IOUtils;
-import org.elasticsearch.core.Releasables;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.IndexVersion;
@@ -96,7 +93,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1485,31 +1481,6 @@ public class ValueSourceReaderTypeConversionTests extends AnyOperatorTestCase {
         } finally {
             IOUtils.close(closeMe);
         }
-    }
-
-    protected final List<Page> drive(Operator operator, Iterator<Page> input, DriverContext driverContext) {
-        return drive(List.of(operator), input, driverContext);
-    }
-
-    protected final List<Page> drive(List<Operator> operators, Iterator<Page> input, DriverContext driverContext) {
-        List<Page> results = new ArrayList<>();
-        boolean success = false;
-        try (
-            Driver d = TestDriverFactory.create(
-                driverContext,
-                new CannedSourceOperator(input),
-                operators,
-                new TestResultPageSinkOperator(results::add)
-            )
-        ) {
-            runDriver(d);
-            success = true;
-        } finally {
-            if (success == false) {
-                Releasables.closeExpectNoException(Releasables.wrap(() -> Iterators.map(results.iterator(), p -> p::releaseBlocks)));
-            }
-        }
-        return results;
     }
 
     public static void runDriver(Driver driver) {

@@ -31,7 +31,11 @@ public class GroupingAggregator implements Releasable {
 
     /** The number of Blocks required for evaluation. */
     public int evaluateBlockCount() {
-        return mode.isOutputPartial() ? aggregatorFunction.intermediateBlockCount() : 1;
+        return evaluateBlockCount(mode.isOutputPartial());
+    }
+
+    public int evaluateBlockCount(boolean partialOutput) {
+        return partialOutput ? aggregatorFunction.intermediateBlockCount() : 1;
     }
 
     /**
@@ -72,10 +76,18 @@ public class GroupingAggregator implements Releasable {
      */
     public void evaluate(Block[] blocks, int offset, IntVector selected, GroupingAggregatorEvaluationContext evaluationContext) {
         if (mode.isOutputPartial()) {
-            aggregatorFunction.evaluateIntermediate(blocks, offset, selected);
+            evaluateIntermediate(blocks, offset, selected);
         } else {
-            aggregatorFunction.evaluateFinal(blocks, offset, selected, evaluationContext);
+            evaluateFinal(blocks, offset, selected, evaluationContext);
         }
+    }
+
+    public void evaluateIntermediate(Block[] blocks, int offset, IntVector selected) {
+        aggregatorFunction.evaluateIntermediate(blocks, offset, selected);
+    }
+
+    public void evaluateFinal(Block[] blocks, int offset, IntVector selected, GroupingAggregatorEvaluationContext evaluationContext) {
+        aggregatorFunction.evaluateFinal(blocks, offset, selected, evaluationContext);
     }
 
     @Override

@@ -14,7 +14,7 @@ public abstract class TimeSeriesGroupingAggregatorEvaluationContext extends Grou
         super(driverContext);
     }
 
-    public abstract long rangeStartInMillis(int groupId);
+    public abstract long rangeStartInMillis(long timestamp);
 
-    public abstract long rangeEndInMillis(int groupId);
+    public abstract long rangeEndInMillis(long timestamp);
 }

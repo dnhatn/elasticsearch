@@ -79,12 +79,12 @@ public class HashAggregationOperator implements Operator {
         }
     }
 
-    private boolean finished;
+    protected boolean finished;
     private Page output;
 
-    private final BlockHash blockHash;
+    protected final BlockHash blockHash;
 
-    private final List<GroupingAggregator> aggregators;
+    protected final List<GroupingAggregator> aggregators;
 
     protected final DriverContext driverContext;
 
@@ -216,6 +216,10 @@ public class HashAggregationOperator implements Operator {
             return;
         }
         finished = true;
+        output = emitOutputPage();
+    }
+
+    protected Page emitOutputPage() {
         Block[] blocks = null;
         IntVector selected = null;
         boolean success = false;
@@ -232,8 +236,9 @@ public class HashAggregationOperator implements Operator {
                 aggregator.evaluate(blocks, offset, selected, evaluationContext);
                 offset += aggBlockCounts[i];
             }
-            output = new Page(blocks);
+            var page = new Page(blocks);
             success = true;
+            return page;
         } finally {
             // selected should always be closed
             if (selected != null) {

@@ -11,7 +11,6 @@ import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
-import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.compute.operator.SinkOperator;
@@ -118,18 +117,5 @@ public abstract class AnyOperatorTestCase extends ComputeTestCase {
                 }
             }
         }
-    }
-
-    /**
-     * A {@link DriverContext} with a nonBreakingBigArrays.
-     */
-    protected DriverContext driverContext() { // TODO make this final once all operators support memory tracking
-        BlockFactory blockFactory = blockFactory();
-        return new DriverContext(blockFactory.bigArrays(), blockFactory);
-    }
-
-    protected final DriverContext crankyDriverContext() {
-        BlockFactory blockFactory = crankyBlockFactory();
-        return new DriverContext(blockFactory.bigArrays(), blockFactory);
     }
 }

@@ -250,14 +250,6 @@ public abstract class LuceneQueryEvaluatorTests<T extends Vector, U extends Vect
         return values;
     }
 
-    /**
-     * A {@link DriverContext} with a non-breaking-BigArrays.
-     */
-    private DriverContext driverContext() {
-        BlockFactory blockFactory = blockFactory();
-        return new DriverContext(blockFactory.bigArrays(), blockFactory);
-    }
-
     // Returns the initial block index, ignoring the score block if scoring is enabled
     protected int termsBlockIndex(Page page) {
         assert page.getBlock(0) instanceof DocBlock : "expected doc block at index 0";

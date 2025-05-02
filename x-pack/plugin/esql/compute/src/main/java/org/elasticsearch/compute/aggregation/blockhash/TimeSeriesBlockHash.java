@@ -29,6 +29,7 @@ import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.ReleasableIterator;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.core.Tuple;
 
 /**
  * An optimized block hash that receives two blocks: tsid and timestamp, which are sorted.
@@ -48,6 +49,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
     private int currentTimestampCount;
     private final IntArrayWithSize perTsidCountArray;
 
+    // TODO: should we have two them then pass around?
     public TimeSeriesBlockHash(int tsHashChannel, int timestampIntervalChannel, BlockFactory blockFactory) {
         super(blockFactory);
         this.tsHashChannel = tsHashChannel;
@@ -150,6 +152,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         endTsidGroup();
         final Block[] blocks = new Block[2];
         try {
+            // TODO: ignore tsid key
             if (OrdinalBytesRefBlock.isDense(positionCount(), tsidArray.count)) {
                 blocks[0] = buildTsidBlockWithOrdinal();
             } else {
@@ -162,6 +165,96 @@ public final class TimeSeriesBlockHash extends BlockHash {
                 Releasables.close(blocks);
             }
         }
+    }
+
+    public record Keys(IntVector selected, BytesRefBlock tsids, LongBlock timeBuckets) implements Releasable {
+        public Keys {
+            assert selected.getPositionCount() == tsids.getPositionCount();
+            assert selected.getPositionCount() == timeBuckets.getPositionCount();
+        }
+
+        public int positionCount() {
+            return selected.getPositionCount();
+        }
+
+        @Override
+        public void close() {
+            Releasables.closeExpectNoException(selected, tsids, timeBuckets);
+        }
+    }
+
+    /**
+     * Partitions the buckets into two groups. The first group contains selected IDs where final reduction can be performed
+     * because the buckets are non-overlapping with data from other indices. The second group contains selected IDs requiring
+     * partial reduction because the buckets may overlap with data from other indices.
+     */
+    public Tuple<Keys, Keys> partitionBuckets(long bucketStartTime, long bucketEndTime) {
+        endTsidGroup();
+        try (
+            BytesRefBlock.Builder partialTsidBuilder = blockFactory.newBytesRefBlockBuilder(Math.toIntExact(tsidArray.array.size()));
+            IntVector.Builder partialGroupBuilder = blockFactory.newIntVectorBuilder(tsidArray.count * 2);
+            LongVector.Builder partialTimeBucketBuilder = blockFactory.newLongVectorBuilder(tsidArray.count * 2);
+            IntVector.Builder finalGroupBuilder = blockFactory.newIntVectorBuilder(positionCount());
+            LongVector.Builder finalTimeBucketBuilder = blockFactory.newLongVectorBuilder(positionCount());
+        ) {
+            int groupId = 0;
+            BytesRef spare = new BytesRef();
+            for (int i = 0; i < tsidArray.count; i++) {
+                final int numTimestamps = perTsidCountArray.array.get(i);
+                for (int t = 0; t < numTimestamps; t++) {
+                    final long timestamp = timestampArray.array.get(groupId);
+                    if (nonOverlapping(timestamp, bucketStartTime, bucketEndTime)) {
+                        finalGroupBuilder.appendInt(groupId);
+                        finalTimeBucketBuilder.appendLong(timestamp);
+                    } else {
+                        partialGroupBuilder.appendInt(groupId);
+                        partialTimeBucketBuilder.appendLong(timestamp);
+                        partialTsidBuilder.appendBytesRef(tsidArray.array.get(i, spare));
+                    }
+                    ++groupId;
+                }
+            }
+            assert groupId == positionCount() : groupId + "!=" + positionCount();
+            Keys finalKeys = null;
+            {
+                IntVector groups = null;
+                BytesRefBlock tsids = null;
+                LongVector timeBuckets = null;
+                try {
+                    groups = finalGroupBuilder.build();
+                    timeBuckets = finalTimeBucketBuilder.build();
+                    tsids = (BytesRefBlock) blockFactory.newConstantNullBlock(groups.getPositionCount()); // discard tsids
+                    finalKeys = new Keys(groups, tsids, timeBuckets.asBlock());
+                } finally {
+                    if (finalKeys == null) {
+                        Releasables.close(groups, timeBuckets, tsids);
+                    }
+                }
+            }
+            Keys partialKeys = null;
+            {
+                IntVector groups = null;
+                BytesRefBlock tsids = null;
+                LongVector timeBuckets = null;
+                try {
+                    groups = partialGroupBuilder.build();
+                    timeBuckets = partialTimeBucketBuilder.build();
+                    tsids = partialTsidBuilder.build();
+                    partialKeys = new Keys(groups, tsids, timeBuckets.asBlock());
+                } finally {
+                    if (partialKeys == null) {
+                        Releasables.close(groups, timeBuckets, tsids, finalKeys);
+                    }
+                }
+            }
+            assert finalKeys.positionCount() + partialKeys.positionCount() == positionCount()
+                : finalKeys.positionCount() + " + " + partialKeys.positionCount() + "!=" + positionCount();
+            return Tuple.tuple(finalKeys, partialKeys);
+        }
+    }
+
+    private static boolean nonOverlapping(long timestamp, long bucketStartTime, long bucketEndTime) {
+        return bucketStartTime < timestamp && timestamp < bucketEndTime;
     }
 
     private BytesRefBlock buildTsidBlockWithOrdinal() {
@@ -202,7 +295,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         }
     }
 
-    private int positionCount() {
+    public int positionCount() {
         return timestampArray.count;
     }
 
