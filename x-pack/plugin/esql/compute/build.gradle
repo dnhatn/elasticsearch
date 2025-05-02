@@ -885,4 +885,27 @@ tasks.named('stringTemplates').configure {
     it.outputFile = "org/elasticsearch/compute/aggregation/LastOverTimeDoubleAggregator.java"
   }
 
+  // TODO: add last_over_time for other types: boolean, bytes_refs
+  File firstOverTimeAggregatorInputFile = file("src/main/java/org/elasticsearch/compute/aggregation/X-FirstOverTimeAggregator.java.st")
+  template {
+    it.properties = intProperties
+    it.inputFile = firstOverTimeAggregatorInputFile
+    it.outputFile = "org/elasticsearch/compute/aggregation/FirstOverTimeIntAggregator.java"
+  }
+  template {
+    it.properties = longProperties
+    it.inputFile = firstOverTimeAggregatorInputFile
+    it.outputFile = "org/elasticsearch/compute/aggregation/FirstOverTimeLongAggregator.java"
+  }
+  template {
+    it.properties = floatProperties
+    it.inputFile = firstOverTimeAggregatorInputFile
+    it.outputFile = "org/elasticsearch/compute/aggregation/FirstOverTimeFloatAggregator.java"
+  }
+  template {
+    it.properties = doubleProperties
+    it.inputFile = firstOverTimeAggregatorInputFile
+    it.outputFile = "org/elasticsearch/compute/aggregation/FirstOverTimeDoubleAggregator.java"
+  }
+
 }
