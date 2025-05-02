@@ -16,7 +16,7 @@ import static org.hamcrest.Matchers.equalTo;
 
 public class HashAggregationOperatorStatusTests extends AbstractWireSerializingTestCase<HashAggregationOperator.Status> {
     public static HashAggregationOperator.Status simple() {
-        return new HashAggregationOperator.Status(500012, 200012, 123, 111, 222);
+        return new HashAggregationOperator.Status(500012, 200012, 100, 123, 111, 222);
     }
 
     public static String simpleToJson() {
@@ -46,6 +46,7 @@ public class HashAggregationOperatorStatusTests extends AbstractWireSerializingT
         return new HashAggregationOperator.Status(
             randomNonNegativeLong(),
             randomNonNegativeLong(),
+            randomNonNegativeLong(),
             randomNonNegativeInt(),
             randomNonNegativeLong(),
             randomNonNegativeLong()
@@ -67,6 +68,6 @@ public class HashAggregationOperatorStatusTests extends AbstractWireSerializingT
             case 4 -> rowsEmitted = randomValueOtherThan(rowsEmitted, ESTestCase::randomNonNegativeLong);
             default -> throw new UnsupportedOperationException();
         }
-        return new HashAggregationOperator.Status(hashNanos, aggregationNanos, pagesProcessed, rowsReceived, rowsEmitted);
+        return new HashAggregationOperator.Status(hashNanos, aggregationNanos, 0, pagesProcessed, rowsReceived, rowsEmitted);
     }
 }

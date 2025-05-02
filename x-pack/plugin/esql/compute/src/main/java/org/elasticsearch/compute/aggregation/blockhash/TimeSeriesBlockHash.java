@@ -47,8 +47,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
     private int currentTimestampCount;
     private final IntArrayWithSize perTsidCountArray;
-    private long minTimestamp = Long.MAX_VALUE;
-    private long maxTimestamp = Long.MIN_VALUE;
 
     // TODO: should we have two them then pass around?
     public TimeSeriesBlockHash(int tsHashChannel, int timestampIntervalChannel, BlockFactory blockFactory) {
@@ -127,8 +125,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
                     timestampArray.append(timestamp);
                     lastTimestamp = timestamp;
                     currentTimestampCount++;
-                    minTimestamp = Math.min(minTimestamp, timestamp);
-                    maxTimestamp = Math.max(maxTimestamp, timestamp);
                 }
                 ordsBuilder.appendInt(timestampArray.count - 1);
             }
@@ -172,23 +168,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
     public Keys finalKeys(long bucketStartTime, long bucketEndTime) {
         endTsidGroup();
-        if (bucketStartTime < minTimestamp && maxTimestamp < bucketEndTime) {
-            IntVector groups = null;
-            BytesRefBlock tsids = null;
-            LongBlock timeBuckets = null;
-            Keys keys = null;
-            try {
-                groups = nonEmpty();
-                tsids = blockFactory.newConstantBytesRefBlockWith(new BytesRef(), groups.getPositionCount());
-                timeBuckets = timestampArray.toBlock();
-                keys = new Keys(groups, tsids, timeBuckets);
-            } finally {
-                if (keys == null) {
-                    Releasables.close(groups, tsids, timeBuckets);
-                }
-            }
-            return keys;
-        }
         try (
             IntVector.Builder groupBuilder = blockFactory.newIntVectorBuilder(positionCount());
             LongVector.Builder timeBucketBuilder = blockFactory.newLongVectorBuilder(positionCount());
@@ -397,7 +376,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
         private final BlockFactory blockFactory;
         private BytesRefArray array;
         private int count = 0;
-        private final BytesRef EMPTY = new BytesRef();
 
         BytesRefArrayWithSize(BlockFactory blockFactory) {
             this.blockFactory = blockFactory;
@@ -405,7 +383,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         }
 
         void append(BytesRef value) {
-            array.append(EMPTY);
+            array.append(value);
             count++;
         }
 

@@ -432,6 +432,13 @@ public class BlockFactory {
         return b;
     }
 
+    public IntVector newIntRangeVector(int lowerInclusive, int upperExclusive) {
+        adjustBreaker(IntRangeVector.BASE_RAM_BYTES_USED);
+        IntRangeVector vector = new IntRangeVector(this, lowerInclusive, upperExclusive);
+        assert vector.ramBytesUsed() == IntRangeVector.BASE_RAM_BYTES_USED;
+        return vector;
+    }
+
     public AggregateMetricDoubleBlockBuilder newAggregateMetricDoubleBlockBuilder(int estimatedSize) {
         return new AggregateMetricDoubleBlockBuilder(estimatedSize, this);
     }

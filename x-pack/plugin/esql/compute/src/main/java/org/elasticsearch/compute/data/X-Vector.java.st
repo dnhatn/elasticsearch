@@ -31,6 +31,9 @@ public sealed interface $Type$Vector extends Vector permits Constant$Type$Vector
 $elseif(double)$
 public sealed interface $Type$Vector extends Vector permits Constant$Type$Vector, $Type$ArrayVector, $Type$BigArrayVector,
     ConstantNullVector {
+$elseif(int)$
+public sealed interface $Type$Vector extends Vector permits Constant$Type$Vector, $Type$ArrayVector, $Type$BigArrayVector,
+        ConstantNullVector, IntRangeVector {
 $else$
 public sealed interface $Type$Vector extends Vector permits Constant$Type$Vector, $Type$ArrayVector, $Type$BigArrayVector, ConstantNullVector {
 $endif$
