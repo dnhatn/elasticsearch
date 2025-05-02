@@ -173,7 +173,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
     }
 
     public Keys finalKeys(long bucketStartTime, long bucketEndTime) {
-        // TODO: shortcut with minTime and maxTime
         endTsidGroup();
         try (
             IntVector.Builder groupBuilder = blockFactory.newIntVectorBuilder(positionCount());
