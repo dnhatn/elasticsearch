@@ -75,7 +75,7 @@ public abstract class LuceneOperator extends SourceOperator {
     /**
      * Count of rows this operator has emitted.
      */
-    private long rowsEmitted;
+    long rowsEmitted;
 
     protected LuceneOperator(BlockFactory blockFactory, int maxPageSize, LuceneSliceQueue sliceQueue) {
         this.blockFactory = blockFactory;
@@ -277,7 +277,7 @@ public abstract class LuceneOperator extends SourceOperator {
         private final long rowsEmitted;
         private final Map<String, LuceneSliceQueue.PartitioningStrategy> partitioningStrategies;
 
-        private Status(LuceneOperator operator) {
+        protected Status(LuceneOperator operator) {
             processedSlices = operator.processedSlices;
             processedQueries = operator.processedQueries.stream().map(Query::toString).collect(Collectors.toCollection(TreeSet::new));
             processNanos = operator.processingNanos;
@@ -447,6 +447,11 @@ public abstract class LuceneOperator extends SourceOperator {
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.startObject();
+            doToXContent(builder, params);
+            return builder.endObject();
+        }
+
+        protected void doToXContent(XContentBuilder builder, Params params) throws IOException {
             builder.field("processed_slices", processedSlices);
             builder.field("processed_queries", processedQueries);
             builder.field("processed_shards", processedShards);
@@ -462,7 +467,6 @@ public abstract class LuceneOperator extends SourceOperator {
             builder.field("current", current);
             builder.field("rows_emitted", rowsEmitted);
             builder.field("partitioning_strategies", new TreeMap<>(this.partitioningStrategies));
-            return builder.endObject();
         }
 
         @Override

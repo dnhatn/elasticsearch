@@ -11,6 +11,8 @@ import org.elasticsearch.Build;
 import org.elasticsearch.common.Randomness;
 import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.compute.lucene.TimeSeriesSourceOperator;
+import org.elasticsearch.compute.operator.OperatorStatus;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.xpack.esql.EsqlTestUtils;
 import org.elasticsearch.xpack.esql.core.type.DataType;
@@ -27,8 +29,10 @@ import java.util.Objects;
 import static org.elasticsearch.index.mapper.DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 
 public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
 
@@ -728,5 +732,34 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             run(request).close();
         });
         assertThat(failure.getMessage(), containsString("Unknown index [hosts-old]"));
+    }
+
+    public void testProfile() {
+        EsqlQueryRequest request = new EsqlQueryRequest();
+        request.query("""
+            TS hosts
+            | STATS avg(rate(request_count)) BY ts=bucket(@timestamp, 1minute), cluster
+            | SORT ts, cluster
+            | LIMIT 5""");
+        request.profile(true);
+        try (var resp = run(request)) {
+            assertThat(
+                resp.columns(),
+                equalTo(
+                    List.of(
+                        new ColumnInfoImpl("avg(rate(request_count))", "double", null),
+                        new ColumnInfoImpl("ts", "date", null),
+                        new ColumnInfoImpl("cluster", "keyword", null)
+                    )
+                )
+            );
+            EsqlQueryResponse.Profile profile = resp.profile();
+            var statuses = profile.drivers()
+                .stream()
+                .flatMap(d -> d.operators().stream().map(OperatorStatus::status))
+                .filter(status -> status instanceof TimeSeriesSourceOperator.Status ts && ts.valuesLoaded() > 0)
+                .toList();
+            assertThat(statuses, not(empty()));
+        }
     }
 }
