@@ -134,7 +134,7 @@ public class TestBlock implements BlockLoader.Block {
             }
 
             @Override
-            public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count) {
+            public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count, boolean sorted) {
                 class SingletonOrdsBuilder extends TestBlock.Builder implements BlockLoader.SingletonOrdinalsBuilder {
                     @Override
                     public SingletonOrdsBuilder appendOrd(int value) {

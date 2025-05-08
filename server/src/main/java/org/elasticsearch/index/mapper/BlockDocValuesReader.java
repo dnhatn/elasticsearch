@@ -16,6 +16,7 @@ import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
+import org.apache.lucene.search.Sort;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.io.stream.ByteArrayStreamInput;
 import org.elasticsearch.index.mapper.BlockLoader.BlockFactory;
@@ -522,13 +523,13 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
             if (docValues != null) {
                 SortedDocValues singleton = DocValues.unwrapSingleton(docValues);
                 if (singleton != null) {
-                    return new SingletonOrdinals(singleton);
+                    return new SingletonOrdinals(singleton, fieldSorted(context, fieldName));
                 }
                 return new Ordinals(docValues);
             }
             SortedDocValues singleton = context.reader().getSortedDocValues(fieldName);
             if (singleton != null) {
-                return new SingletonOrdinals(singleton);
+                return new SingletonOrdinals(singleton, fieldSorted(context, fieldName));
             }
             return new ConstantNullsReader();
         }
@@ -549,11 +550,25 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
         }
     }
 
+    private static boolean fieldSorted(LeafReaderContext context, String field) throws IOException {
+        Sort sort = context.reader().getMetaData().sort();
+        if (sort != null) {
+            final var sortFields = sort.getSort();
+            if (sortFields != null) {
+                // descending should be okay, but lookup ords can be expensive so ignore now
+                return sortFields[0].getField().equals(field) && sortFields[1].getReverse() == false;
+            }
+        }
+        return false;
+    }
+
     private static class SingletonOrdinals extends BlockDocValuesReader {
         private final SortedDocValues ordinals;
+        private final boolean sorted;
 
-        SingletonOrdinals(SortedDocValues ordinals) {
+        SingletonOrdinals(SortedDocValues ordinals, boolean sorted) {
             this.ordinals = ordinals;
+            this.sorted = sorted;
         }
 
         private BlockLoader.Block readSingleDoc(BlockFactory factory, int docId) throws IOException {
@@ -571,7 +586,7 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
             if (docs.count() == 1) {
                 return readSingleDoc(factory, docs.get(0));
             }
-            try (BlockLoader.SingletonOrdinalsBuilder builder = factory.singletonOrdinalsBuilder(ordinals, docs.count())) {
+            try (BlockLoader.SingletonOrdinalsBuilder builder = factory.singletonOrdinalsBuilder(ordinals, docs.count(), sorted)) {
                 for (int i = 0; i < docs.count(); i++) {
                     int doc = docs.get(i);
                     if (doc < ordinals.docID()) {

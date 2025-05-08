@@ -327,7 +327,7 @@ public final class TimeSeriesSourceOperator extends SourceOperator {
         }
 
         @Override
-        public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count) {
+        public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count, boolean sorted) {
             throw new UnsupportedOperationException("must not be used by column readers");
         }
     }

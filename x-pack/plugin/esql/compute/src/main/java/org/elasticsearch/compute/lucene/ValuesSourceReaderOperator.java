@@ -24,6 +24,7 @@ import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.data.SingletonOrdinalsBuilder;
+import org.elasticsearch.compute.data.SortedSingletonOrdinalsBuilder;
 import org.elasticsearch.compute.operator.AbstractPageMappingOperator;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Operator;
@@ -738,8 +739,12 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
         }
 
         @Override
-        public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count) {
-            return new SingletonOrdinalsBuilder(factory, ordinals, count);
+        public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count, boolean sorted) {
+            if (sorted) {
+                return new SortedSingletonOrdinalsBuilder(factory, ordinals, count);
+            } else {
+                return new SingletonOrdinalsBuilder(factory, ordinals, count);
+            }
         }
 
         @Override

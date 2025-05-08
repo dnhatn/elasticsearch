@@ -414,7 +414,7 @@ public interface BlockLoader {
         /**
          * Build a reader for reading keyword ordinals.
          */
-        SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count);
+        SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count, boolean valuesSorted);
 
         // TODO support non-singleton ords
 
