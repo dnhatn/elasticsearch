@@ -22,6 +22,8 @@ import java.util.Arrays;
 public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuilder, Releasable, Block.Builder {
     private final BlockFactory blockFactory;
     private final SortedDocValues docValues;
+    private int minOrd = Integer.MAX_VALUE;
+    private int maxOrd = Integer.MIN_VALUE;
     private final int[] ords;
     private int count;
 
@@ -41,6 +43,8 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
     @Override
     public SingletonOrdinalsBuilder appendOrd(int value) {
         ords[count++] = value;
+        minOrd = Math.min(minOrd, value);
+        maxOrd = Math.max(maxOrd, value);
         return this;
     }
 
@@ -55,7 +59,7 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
     }
 
     BytesRefBlock buildOrdinal() {
-        int valueCount = docValues.getValueCount();
+        int valueCount = maxOrd - minOrd + 1;
         long breakerSize = ordsSize(valueCount);
         blockFactory.adjustBreaker(breakerSize);
         BytesRefVector bytesVector = null;
@@ -86,7 +90,7 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
                     if (ord == -1) {
                         ordinalsBuilder.appendNull();
                     } else {
-                        ordinalsBuilder.appendInt(newOrds[ord]);
+                        ordinalsBuilder.appendInt(newOrds[minOrd + ord]);
                     }
                 }
                 ordinalBlock = ordinalsBuilder.build();
@@ -167,7 +171,11 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
     }
 
     boolean shouldBuildOrdinalsBlock() {
-        return ords.length >= 2 * docValues.getValueCount() && ords.length >= 32;
+        if (maxOrd >= minOrd) {
+            return ords.length >= 2 * (maxOrd - minOrd + 1) && ords.length >= 32;
+        } else {
+            return false;
+        }
     }
 
     @Override

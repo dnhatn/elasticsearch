@@ -25,6 +25,7 @@ import org.elasticsearch.compute.test.MockBlockFactory;
 import org.elasticsearch.indices.CrankyCircuitBreakerService;
 import org.elasticsearch.test.ESTestCase;
 import org.junit.After;
+import org.junit.Test;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -152,6 +153,10 @@ public class SingletonOrdinalsBuilderTests extends ESTestCase {
                 }
             }
         }
+    }
+
+    public void testHighCardinality() {
+
     }
 
     static BytesRefBlock buildOrdinalsBuilder(SingletonOrdinalsBuilder builder) {
