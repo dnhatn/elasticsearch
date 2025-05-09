@@ -22,29 +22,33 @@ import java.util.Arrays;
 public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuilder, Releasable, Block.Builder {
     private final BlockFactory blockFactory;
     private final SortedDocValues docValues;
-    private int minOrd = Integer.MAX_VALUE;
-    private int maxOrd = Integer.MIN_VALUE;
     private final int[] ords;
+    private int uniqueCount;
+    private final int[] positions;
     private int count;
 
-    public SingletonOrdinalsBuilder(BlockFactory blockFactory, SortedDocValues docValues, int count) {
+    public SingletonOrdinalsBuilder(BlockFactory blockFactory, SortedDocValues docValues, int count, int[] ords) {
         this.blockFactory = blockFactory;
         this.docValues = docValues;
         blockFactory.adjustBreaker(ordsSize(count));
-        this.ords = new int[count];
+        this.positions = new int[count];
+        Arrays.fill(positions, -1);
+        this.ords = ords;
     }
 
     @Override
     public SingletonOrdinalsBuilder appendNull() {
-        ords[count++] = -1; // real ords can't be < 0, so we use -1 as null
+        positions[count++] = -1; // real ords can't be < 0, so we use -1 as null
         return this;
     }
 
     @Override
     public SingletonOrdinalsBuilder appendOrd(int ord) {
-        ords[count++] = ord;
-        minOrd = Math.min(minOrd, ord);
-        maxOrd = Math.max(maxOrd, ord);
+        positions[count++] = ord;
+        if (ords[ord] == -1) {
+            ords[ord] = 0;
+            uniqueCount++;
+        }
         return this;
     }
 
@@ -59,38 +63,29 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
     }
 
     BytesRefBlock buildOrdinal() {
-        int valueCount = maxOrd - minOrd + 1;
-        long breakerSize = ordsSize(valueCount);
-        blockFactory.adjustBreaker(breakerSize);
         BytesRefVector bytesVector = null;
         IntBlock ordinalBlock = null;
+        int valueCount = docValues.getValueCount();
         try {
-            int[] newOrds = new int[valueCount];
-            Arrays.fill(newOrds, -1);
-            for (int ord : ords) {
-                if (ord != -1) {
-                    newOrds[ord - minOrd] = 0;
-                }
-            }
             // resolve the ordinals and remaps the ordinals
             int nextOrd = -1;
-            try (BytesRefVector.Builder bytesBuilder = blockFactory.newBytesRefVectorBuilder(Math.min(valueCount, ords.length))) {
-                for (int i = 0; i < newOrds.length; i++) {
-                    if (newOrds[i] != -1) {
-                        newOrds[i] = ++nextOrd;
-                        bytesBuilder.appendBytesRef(docValues.lookupOrd(i + minOrd));
+            try (BytesRefVector.Builder bytesBuilder = blockFactory.newBytesRefVectorBuilder(Math.min(valueCount, positions.length))) {
+                for (int i = 0; i < valueCount; i++) {
+                    if (ords[i] != -1) {
+                        ords[i] = ++nextOrd;
+                        bytesBuilder.appendBytesRef(docValues.lookupOrd(i));
                     }
                 }
                 bytesVector = bytesBuilder.build();
             } catch (IOException e) {
                 throw new UncheckedIOException("error resolving ordinals", e);
             }
-            try (IntBlock.Builder ordinalsBuilder = blockFactory.newIntBlockBuilder(ords.length)) {
-                for (int ord : ords) {
+            try (IntBlock.Builder ordinalsBuilder = blockFactory.newIntBlockBuilder(positions.length)) {
+                for (int ord : positions) {
                     if (ord == -1) {
                         ordinalsBuilder.appendNull();
                     } else {
-                        ordinalsBuilder.appendInt(newOrds[ord - minOrd]);
+                        ordinalsBuilder.appendInt(ords[ord]);
                     }
                 }
                 ordinalBlock = ordinalsBuilder.build();
@@ -100,47 +95,43 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
             ordinalBlock = null;
             return result;
         } finally {
-            Releasables.close(() -> blockFactory.adjustBreaker(-breakerSize), ordinalBlock, bytesVector);
+            Releasables.close(ordinalBlock, bytesVector);
         }
     }
 
     BytesRefBlock buildRegularBlock() {
         try {
-            long breakerSize = ordsSize(ords.length);
+            long breakerSize = ordsSize(positions.length);
             // Increment breaker for sorted ords.
             blockFactory.adjustBreaker(breakerSize);
             try {
-                int[] sortedOrds = ords.clone();
-                int uniqueCount = compactToUnique(sortedOrds);
-
                 try (BreakingBytesRefBuilder copies = new BreakingBytesRefBuilder(blockFactory.breaker(), "ords")) {
                     long offsetsAndLength = RamUsageEstimator.NUM_BYTES_ARRAY_HEADER + (uniqueCount + 1) * Integer.BYTES;
                     blockFactory.adjustBreaker(offsetsAndLength);
                     breakerSize += offsetsAndLength;
+                    int nextOrd = -1;
                     int[] offsets = new int[uniqueCount + 1];
-                    for (int o = 0; o < uniqueCount; o++) {
-                        BytesRef v = docValues.lookupOrd(sortedOrds[o]);
-                        offsets[o] = copies.length();
-                        copies.append(v);
+                    for (int o = 0; o < docValues.getValueCount(); o++) {
+                        if (ords[o] != -1) {
+                            int ord = ++nextOrd;
+                            ords[o] = ord;
+                            BytesRef v = docValues.lookupOrd(ord);
+                            offsets[o] = copies.length();
+                            copies.append(v);
+                        }
                     }
                     offsets[uniqueCount] = copies.length();
-
-                    /*
-                     * It'd be better if BytesRefBlock could run off of a deduplicated list of
-                     * blocks. It can't at the moment. So we copy many times.
-                     */
                     BytesRef scratch = new BytesRef();
                     scratch.bytes = copies.bytes();
-                    try (BytesRefBlock.Builder builder = blockFactory.newBytesRefBlockBuilder(ords.length)) {
-                        for (int i = 0; i < ords.length; i++) {
-                            if (ords[i] == -1) {
+                    try (BytesRefBlock.Builder builder = blockFactory.newBytesRefBlockBuilder(positions.length)) {
+                        for (int ord : positions) {
+                            if (ord == -1) {
                                 builder.appendNull();
                                 continue;
                             }
-                            int o = Arrays.binarySearch(sortedOrds, 0, uniqueCount, ords[i]);
-                            assert 0 <= o && o < uniqueCount;
-                            scratch.offset = offsets[o];
-                            scratch.length = offsets[o + 1] - scratch.offset;
+                            int pos = ords[ord];
+                            scratch.offset = offsets[pos];
+                            scratch.length = offsets[pos + 1] - scratch.offset;
                             builder.appendBytesRef(scratch);
                         }
                         return builder.build();
@@ -161,7 +152,7 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
          * values in the ordinals are.
          */
         long overhead = shouldBuildOrdinalsBlock() ? 5 : 20;
-        return ords.length * overhead;
+        return positions.length * overhead;
     }
 
     @Override
@@ -170,17 +161,12 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
     }
 
     boolean shouldBuildOrdinalsBlock() {
-        if (minOrd <= maxOrd) {
-            int numOrds = maxOrd - minOrd + 1;
-            return OrdinalBytesRefBlock.isDense(ords.length, numOrds);
-        } else {
-            return false;
-        }
+        return OrdinalBytesRefBlock.isDense(positions.length, uniqueCount);
     }
 
     @Override
     public void close() {
-        blockFactory.adjustBreaker(-ordsSize(ords.length));
+        blockFactory.adjustBreaker(-ordsSize(positions.length));
     }
 
     @Override
@@ -195,17 +181,5 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
 
     private static long ordsSize(int ordsCount) {
         return RamUsageEstimator.NUM_BYTES_ARRAY_HEADER + ordsCount * Integer.BYTES;
-    }
-
-    static int compactToUnique(int[] sortedOrds) {
-        Arrays.sort(sortedOrds);
-        int uniqueSize = 0;
-        int prev = -1;
-        for (int i = 0; i < sortedOrds.length; i++) {
-            if (sortedOrds[i] != prev) {
-                sortedOrds[uniqueSize++] = prev = sortedOrds[i];
-            }
-        }
-        return uniqueSize;
     }
 }
