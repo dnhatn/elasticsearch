@@ -235,6 +235,20 @@ $endif$
         return new MultivalueDedupe$Type$(block).hashLookup(blockFactory, hash);
     }
 
+$if(BytesRef)$
+    BytesRefVector dictVector() {
+        final var bytes = hash.takeBytesRefsOwnership();
+        BytesRefVector key = null;
+        try {
+            key = blockFactory.newBytesRefArrayVector(bytes, Math.toIntExact(hash.size()));
+            return key;
+        } finally {
+            if (key == null) {
+                bytes.close();
+            }
+        }
+    }
+$endif$
     @Override
     public $Type$Block[] getKeys() {
 $if(BytesRef)$
@@ -253,11 +267,15 @@ $if(BytesRef)$
                 return new BytesRefBlock[] { builder.build() };
             }
         }
-        try (var builder = blockFactory.newBytesRefBlockBuilder(Math.toIntExact(hash.size()))) {
-            for (long i = 0; i < hash.size(); i++) {
-                builder.appendBytesRef(hash.get(i, spare));
+        final var bytes = hash.takeBytesRefsOwnership();
+        final BytesRefBlock[] results = new BytesRefBlock[1];
+        try {
+            results[0] = blockFactory.newBytesRefArrayVector(bytes, Math.toIntExact(hash.size())).asBlock();
+            return results;
+        } finally {
+            if (results[0] == null) {
+                bytes.close();
             }
-            return new BytesRefBlock[] { builder.build() };
         }
 $else$
         if (seenNull) {
@@ -317,7 +335,7 @@ $endif$
         b.append("$Type$BlockHash{channel=").append(channel);
         b.append(", entries=").append(hash.size());
 $if(BytesRef)$
-        b.append(", size=").append(ByteSizeValue.ofBytes(hash.ramBytesUsed()));
+        b.append(", size=").append(ByteSizeValue.ofBytes(0));
 $endif$
         b.append(", seenNull=").append(seenNull);
         return b.append('}').toString();

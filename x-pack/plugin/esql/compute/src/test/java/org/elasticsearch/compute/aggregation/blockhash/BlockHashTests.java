@@ -1482,17 +1482,19 @@ public class BlockHashTests extends BlockHashTestCase {
      */
     private void hash(Consumer<OrdsAndKeys> callback, Block... values) {
         boolean[] called = new boolean[] { false };
-        try (BlockHash hash = buildBlockHash(16 * 1024, values)) {
-            hash(true, hash, ordsAndKeys -> {
+        try (BlockHash hash1 = buildBlockHash(16 * 1024, values);
+             BlockHash hash2 = buildBlockHash(16 * 1024, values)
+        ) {
+            hash(true, hash1, ordsAndKeys -> {
                 if (called[0]) {
                     throw new IllegalStateException("hash produced more than one block");
                 }
                 called[0] = true;
                 callback.accept(ordsAndKeys);
-                if (hash instanceof LongLongBlockHash == false
-                    && hash instanceof BytesRefLongBlockHash == false
-                    && hash instanceof BytesRef3BlockHash == false) {
-                    try (ReleasableIterator<IntBlock> lookup = hash.lookup(new Page(values), ByteSizeValue.ofKb(between(1, 100)))) {
+                if (hash2 instanceof LongLongBlockHash == false
+                    && hash2 instanceof BytesRefLongBlockHash == false
+                    && hash2 instanceof BytesRef3BlockHash == false) {
+                    try (ReleasableIterator<IntBlock> lookup = hash2.lookup(new Page(values), ByteSizeValue.ofKb(between(1, 100)))) {
                         assertThat(lookup.hasNext(), equalTo(true));
                         try (IntBlock ords = lookup.next()) {
                             assertThat(ords, equalTo(ordsAndKeys.ords));

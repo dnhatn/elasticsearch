@@ -22,6 +22,7 @@ import org.elasticsearch.compute.data.IntBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongBlock;
 import org.elasticsearch.compute.data.LongVector;
+import org.elasticsearch.compute.data.OrdinalBytesRefBlock;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.mvdedupe.IntLongBlockAdd;
 import org.elasticsearch.core.ReleasableIterator;
@@ -113,11 +114,12 @@ final class BytesRefLongBlockHash extends BlockHash {
 
     @Override
     public Block[] getKeys() {
-        int positions = (int) finalHash.size();
+        int positions = Math.toIntExact(finalHash.size());
         BytesRefBlock k1 = null;
         LongVector k2 = null;
+
         try (
-            BytesRefBlock.Builder keys1 = blockFactory.newBytesRefBlockBuilder(positions);
+            IntBlock.Builder keys1 = blockFactory.newIntBlockBuilder(positions);
             LongVector.Builder keys2 = blockFactory.newLongVectorBuilder(positions)
         ) {
             BytesRef scratch = new BytesRef();
@@ -127,10 +129,10 @@ final class BytesRefLongBlockHash extends BlockHash {
                 if (h1 == 0) {
                     keys1.appendNull();
                 } else {
-                    keys1.appendBytesRef(bytesHash.hash.get(h1 - 1, scratch));
+                    keys1.appendInt(Math.toIntExact(h1 - 1));
                 }
             }
-            k1 = keys1.build();
+            k1 = new OrdinalBytesRefBlock(keys1.build(), bytesHash.dictVector());
             k2 = keys2.build();
         } finally {
             if (k2 == null) {
@@ -163,7 +165,7 @@ final class BytesRefLongBlockHash extends BlockHash {
             + "]], entries="
             + finalHash.size()
             + ", size="
-            + bytesHash.hash.ramBytesUsed()
+            + 0
             + "b}";
     }
 }

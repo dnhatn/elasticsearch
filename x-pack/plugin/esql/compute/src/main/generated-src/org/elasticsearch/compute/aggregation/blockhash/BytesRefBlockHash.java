@@ -185,6 +185,18 @@ final class BytesRefBlockHash extends BlockHash {
         return new MultivalueDedupeBytesRef(block).hashLookup(blockFactory, hash);
     }
 
+    BytesRefVector dictVector() {
+        final var bytes = hash.takeBytesRefsOwnership();
+        BytesRefVector key = null;
+        try {
+            key = blockFactory.newBytesRefArrayVector(bytes, Math.toIntExact(hash.size()));
+            return key;
+        } finally {
+            if (key == null) {
+                bytes.close();
+            }
+        }
+    }
     @Override
     public BytesRefBlock[] getKeys() {
         /*
@@ -202,11 +214,15 @@ final class BytesRefBlockHash extends BlockHash {
                 return new BytesRefBlock[] { builder.build() };
             }
         }
-        try (var builder = blockFactory.newBytesRefBlockBuilder(Math.toIntExact(hash.size()))) {
-            for (long i = 0; i < hash.size(); i++) {
-                builder.appendBytesRef(hash.get(i, spare));
+        final var bytes = hash.takeBytesRefsOwnership();
+        final BytesRefBlock[] results = new BytesRefBlock[1];
+        try {
+            results[0] = blockFactory.newBytesRefArrayVector(bytes, Math.toIntExact(hash.size())).asBlock();
+            return results;
+        } finally {
+            if (results[0] == null) {
+                bytes.close();
             }
-            return new BytesRefBlock[] { builder.build() };
         }
     }
 
@@ -230,7 +246,7 @@ final class BytesRefBlockHash extends BlockHash {
         StringBuilder b = new StringBuilder();
         b.append("BytesRefBlockHash{channel=").append(channel);
         b.append(", entries=").append(hash.size());
-        b.append(", size=").append(ByteSizeValue.ofBytes(hash.ramBytesUsed()));
+        b.append(", size=").append(ByteSizeValue.ofBytes(0));
         b.append(", seenNull=").append(seenNull);
         return b.append('}').toString();
     }
