@@ -118,7 +118,7 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
                             int ord = ++nextOrd;
                             ords[o] = ord;
                             BytesRef v = docValues.lookupOrd(ord);
-                            offsets[o] = copies.length();
+                            offsets[ord] = copies.length();
                             copies.append(v);
                         }
                     }
