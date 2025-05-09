@@ -677,10 +677,11 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
 
     public abstract static class DelegatingBlockLoaderFactory implements BlockLoader.BlockFactory, Releasable {
         protected final BlockFactory factory;
-        private int[] buffer;
+        private final SingletonOrdinalsBuilder.Buffers buffers;
 
         protected DelegatingBlockLoaderFactory(BlockFactory factory) {
             this.factory = factory;
+            this.buffers = new SingletonOrdinalsBuilder.Buffers();
         }
 
         @Override
@@ -745,10 +746,7 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
 
         @Override
         public BlockLoader.SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count) {
-            if (buffer == null || buffer.length < count) {
-                buffer = new int[count];
-            }
-            return new SingletonOrdinalsBuilder(factory, ordinals, count, buffer);
+            return new SingletonOrdinalsBuilder(factory, ordinals, count, buffers);
         }
 
         @Override

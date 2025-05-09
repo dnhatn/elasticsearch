@@ -24,16 +24,17 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
     private final SortedDocValues docValues;
     private final int[] ords;
     private int uniqueCount;
+    private final int totalCount;
     private final int[] positions;
     private int count;
 
-    public SingletonOrdinalsBuilder(BlockFactory blockFactory, SortedDocValues docValues, int count, int[] ords) {
+    public SingletonOrdinalsBuilder(BlockFactory blockFactory, SortedDocValues docValues, int totalCount, Buffers buffer) {
         this.blockFactory = blockFactory;
         this.docValues = docValues;
-        blockFactory.adjustBreaker(ordsSize(count));
-        this.positions = new int[count];
-        Arrays.fill(positions, -1);
-        this.ords = ords;
+        this.totalCount = totalCount;
+        this.positions = buffer.getPositions(totalCount);
+        this.ords = buffer.getOrds(docValues.getValueCount());
+        Arrays.fill(ords, -1);
     }
 
     @Override
@@ -69,7 +70,7 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
         try {
             // resolve the ordinals and remaps the ordinals
             int nextOrd = -1;
-            try (BytesRefVector.Builder bytesBuilder = blockFactory.newBytesRefVectorBuilder(Math.min(valueCount, positions.length))) {
+            try (BytesRefVector.Builder bytesBuilder = blockFactory.newBytesRefVectorBuilder(Math.min(valueCount, totalCount))) {
                 for (int i = 0; i < valueCount; i++) {
                     if (ords[i] != -1) {
                         ords[i] = ++nextOrd;
@@ -80,8 +81,9 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
             } catch (IOException e) {
                 throw new UncheckedIOException("error resolving ordinals", e);
             }
-            try (IntBlock.Builder ordinalsBuilder = blockFactory.newIntBlockBuilder(positions.length)) {
-                for (int ord : positions) {
+            try (IntBlock.Builder ordinalsBuilder = blockFactory.newIntBlockBuilder(totalCount)) {
+                for (int i = 0; i < totalCount; i++) {
+                    int ord = positions[i];
                     if (ord == -1) {
                         ordinalsBuilder.appendNull();
                     } else {
@@ -123,8 +125,9 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
                     offsets[uniqueCount] = copies.length();
                     BytesRef scratch = new BytesRef();
                     scratch.bytes = copies.bytes();
-                    try (BytesRefBlock.Builder builder = blockFactory.newBytesRefBlockBuilder(positions.length)) {
-                        for (int ord : positions) {
+                    try (BytesRefBlock.Builder builder = blockFactory.newBytesRefBlockBuilder(totalCount)) {
+                        for (int i = 0; i < totalCount; i++) {
+                            int ord = positions[i];
                             if (ord == -1) {
                                 builder.appendNull();
                                 continue;
@@ -161,12 +164,12 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
     }
 
     boolean shouldBuildOrdinalsBlock() {
-        return OrdinalBytesRefBlock.isDense(positions.length, uniqueCount);
+        return OrdinalBytesRefBlock.isDense(totalCount, uniqueCount);
     }
 
     @Override
     public void close() {
-        blockFactory.adjustBreaker(-ordsSize(positions.length));
+
     }
 
     @Override
@@ -181,5 +184,26 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
 
     private static long ordsSize(int ordsCount) {
         return RamUsageEstimator.NUM_BYTES_ARRAY_HEADER + ordsCount * Integer.BYTES;
+    }
+
+    public static class Buffers {
+        private int[] ords;
+        private int[] positions;
+
+        int[] getOrds(int numOrds) {
+            if (ords == null || ords.length < numOrds) {
+                return this.ords = new int[numOrds];
+            } else {
+                return ords;
+            }
+        }
+
+        int[] getPositions(int numPositions) {
+            if (positions == null || positions.length < numPositions) {
+                return this.positions = new int[numPositions];
+            } else {
+                return positions;
+            }
+        }
     }
 }
