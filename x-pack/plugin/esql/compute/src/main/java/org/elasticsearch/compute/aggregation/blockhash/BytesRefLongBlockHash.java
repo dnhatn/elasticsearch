@@ -116,21 +116,11 @@ final class BytesRefLongBlockHash extends BlockHash {
         int positions = (int) finalHash.size();
         BytesRefBlock k1 = null;
         LongVector k2 = null;
-        try (
-            BytesRefBlock.Builder keys1 = blockFactory.newBytesRefBlockBuilder(positions);
-            LongVector.Builder keys2 = blockFactory.newLongVectorBuilder(positions)
-        ) {
-            BytesRef scratch = new BytesRef();
+        try (LongVector.Builder keys2 = blockFactory.newLongVectorFixedBuilder(positions)) {
             for (long i = 0; i < positions; i++) {
                 keys2.appendLong(finalHash.getKey2(i));
-                long h1 = finalHash.getKey1(i);
-                if (h1 == 0) {
-                    keys1.appendNull();
-                } else {
-                    keys1.appendBytesRef(bytesHash.hash.get(h1 - 1, scratch));
-                }
             }
-            k1 = keys1.build();
+            k1 = blockFactory.newConstantBytesRefBlockWith(new BytesRef(""), positions);
             k2 = keys2.build();
         } finally {
             if (k2 == null) {

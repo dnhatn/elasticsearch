@@ -23,7 +23,6 @@ import org.elasticsearch.compute.data.IntBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongBlock;
 import org.elasticsearch.compute.data.LongVector;
-import org.elasticsearch.compute.data.OrdinalBytesRefBlock;
 import org.elasticsearch.compute.data.OrdinalBytesRefVector;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.core.Releasable;
@@ -150,11 +149,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         endTsidGroup();
         final Block[] blocks = new Block[2];
         try {
-            if (OrdinalBytesRefBlock.isDense(positionCount(), tsidArray.count)) {
-                blocks[0] = buildTsidBlockWithOrdinal();
-            } else {
-                blocks[0] = buildTsidBlock();
-            }
+            blocks[0] = blockFactory.newConstantBytesRefBlockWith(new BytesRef(""), positionCount());
             blocks[1] = timestampArray.toBlock();
             return blocks;
         } finally {

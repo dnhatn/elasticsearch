@@ -80,12 +80,12 @@ public class HashAggregationOperator implements Operator {
         }
     }
 
-    private boolean finished;
+    boolean finished;
     private Page output;
 
-    private final BlockHash blockHash;
+    final BlockHash blockHash;
 
-    private final List<GroupingAggregator> aggregators;
+    final List<GroupingAggregator> aggregators;
 
     protected final DriverContext driverContext;
 

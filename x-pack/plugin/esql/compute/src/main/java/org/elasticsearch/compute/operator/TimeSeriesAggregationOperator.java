@@ -17,9 +17,15 @@ import org.elasticsearch.compute.aggregation.blockhash.BlockHash;
 import org.elasticsearch.compute.aggregation.blockhash.TimeSeriesBlockHash;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.ElementType;
+import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongBlock;
+import org.elasticsearch.compute.data.Page;
+import org.elasticsearch.core.Releasables;
 
+import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Queue;
 import java.util.function.Supplier;
 
 import static java.util.stream.Collectors.joining;
@@ -40,7 +46,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         @Override
         public Operator get(DriverContext driverContext) {
             // TODO: use TimeSeriesBlockHash when possible
-            return new TimeSeriesAggregationOperator(timeBucket, aggregators, () -> {
+            return new TimeSeriesAggregationOperator(aggregatorMode, timeBucket, aggregators, () -> {
                 if (sortedInput && groups.size() == 2) {
                     return new TimeSeriesBlockHash(groups.get(0).channel(), groups.get(1).channel(), driverContext.blockFactory());
                 } else {
@@ -64,16 +70,96 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         }
     }
 
+    private final AggregatorMode aggregatorMode;
     private final Rounding.Prepared timeBucket;
+    private final Queue<Page> passThroughPages = new ArrayDeque<>();
 
     public TimeSeriesAggregationOperator(
+        AggregatorMode aggregatorMode,
         Rounding.Prepared timeBucket,
         List<GroupingAggregator.Factory> aggregators,
         Supplier<BlockHash> blockHash,
         DriverContext driverContext
     ) {
         super(aggregators, blockHash, driverContext);
+        this.aggregatorMode = aggregatorMode;
         this.timeBucket = timeBucket;
+    }
+
+    @Override
+    public void addInput(Page page) {
+        // accumulate the input page
+        if (aggregatorMode.isInputPartial()) {
+            passThroughPages.add(page);
+        } else {
+            super.addInput(page);
+        }
+    }
+
+    @Override
+    public void finish() {
+        if (aggregatorMode.isOutputPartial()) {
+            forceEmitFinal();
+        } else {
+            super.finish();
+        }
+    }
+
+    private void forceEmitFinal() {
+        if (finished) {
+            return;
+        }
+        finished = true;
+        Block[] blocks = null;
+        IntVector selected = null;
+        boolean success = false;
+        try {
+            selected = blockHash.nonEmpty();
+            Block[] keys = blockHash.getKeys();
+            int[] aggBlockCounts = aggregators.stream().mapToInt(n -> 1).toArray();
+            blocks = new Block[keys.length + Arrays.stream(aggBlockCounts).sum()];
+            System.arraycopy(keys, 0, blocks, 0, keys.length);
+            int offset = keys.length;
+            var evaluationContext = evaluationContext(keys);
+            for (int i = 0; i < aggregators.size(); i++) {
+                var aggregator = aggregators.get(i);
+                aggregator.evaluateFinal(blocks, offset, selected, evaluationContext);
+                offset += aggBlockCounts[i];
+            }
+            passThroughPages.add(new Page(blocks));
+            success = true;
+        } finally {
+            // selected should always be closed
+            if (selected != null) {
+                selected.close();
+            }
+            if (success == false && blocks != null) {
+                Releasables.closeExpectNoException(blocks);
+            }
+        }
+    }
+
+    @Override
+    public boolean isFinished() {
+        return super.isFinished() && passThroughPages.isEmpty();
+    }
+
+    @Override
+    public void close() {
+        Page p;
+        while ((p = passThroughPages.poll()) != null) {
+            p.releaseBlocks();
+        }
+        super.close();
+    }
+
+    @Override
+    public Page getOutput() {
+        Page p = super.getOutput();
+        if (p != null) {
+            return p;
+        }
+        return passThroughPages.poll();
     }
 
     @Override
