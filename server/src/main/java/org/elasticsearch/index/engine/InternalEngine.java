@@ -10,7 +10,6 @@
 package org.elasticsearch.index.engine;
 
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexCommit;
@@ -3448,7 +3447,7 @@ public class InternalEngine extends Engine {
         final IndexSearcher searcher = new IndexSearcher(directoryReader);
         searcher.setQueryCache(null);
         final Query query = new BooleanQuery.Builder().add(
-            LongPoint.newRangeQuery(SeqNoFieldMapper.NAME, getPersistedLocalCheckpoint() + 1, Long.MAX_VALUE),
+            SeqNoFieldMapper.range(getPersistedLocalCheckpoint() + 1, Long.MAX_VALUE),
             BooleanClause.Occur.MUST
         )
             .add(Queries.newNonNestedFilter(indexVersionCreated), BooleanClause.Occur.MUST) // exclude non-root nested documents

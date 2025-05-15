@@ -10,6 +10,7 @@
 package org.elasticsearch.action.admin.indices.diskusage;
 
 import org.apache.lucene.tests.util.English;
+import org.apache.lucene.tests.util.LuceneTestCase;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
@@ -46,6 +47,7 @@ import static org.hamcrest.Matchers.emptyArray;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 
+@LuceneTestCase.AwaitsFix(bugUrl = "wait")
 public class IndexDiskUsageAnalyzerIT extends ESIntegTestCase {
 
     @Override

@@ -11,8 +11,9 @@ package org.elasticsearch.index.mapper;
 
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.SortedNumericDocValuesField;
+import org.apache.lucene.index.DocValuesSkipIndexType;
 import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
@@ -44,6 +45,7 @@ import java.util.Collections;
  * as a key-value lookup.
 
  */
+// TODO: only switch to doc_values for new indices with time_series or logsdb
 public class SeqNoFieldMapper extends MetadataFieldMapper {
 
     // Like Lucene's LongField but single-valued (NUMERIC doc values instead of SORTED_NUMERIC doc values)
@@ -52,21 +54,14 @@ public class SeqNoFieldMapper extends MetadataFieldMapper {
         private static final FieldType FIELD_TYPE;
         static {
             FieldType ft = new FieldType();
-            ft.setDimensions(1, Long.BYTES);
             ft.setDocValuesType(DocValuesType.NUMERIC);
+            ft.setDocValuesSkipIndexType(DocValuesSkipIndexType.RANGE);
             FIELD_TYPE = freezeAndDeduplicateFieldType(ft);
         }
 
         SingleValueLongField(String field) {
             super(field, FIELD_TYPE);
             fieldsData = SequenceNumbers.UNASSIGNED_SEQ_NO;
-        }
-
-        @Override
-        public BytesRef binaryValue() {
-            final byte[] pointValue = new byte[Long.BYTES];
-            NumericUtils.longToSortableBytes((Long) fieldsData, pointValue, 0);
-            return new BytesRef(pointValue);
         }
 
         @Override
@@ -84,7 +79,7 @@ public class SeqNoFieldMapper extends MetadataFieldMapper {
 
         private static final Field TOMBSTONE_FIELD = new NumericDocValuesField(TOMBSTONE_NAME, 1);
 
-        private final Field seqNo = new SingleValueLongField(NAME);
+        private final Field seqNo = new NumericDocValuesField(SeqNoFieldMapper.NAME, 0);
         private final Field primaryTerm = new NumericDocValuesField(PRIMARY_TERM_NAME, 0);
         private final boolean isTombstone;
 
@@ -174,13 +169,13 @@ public class SeqNoFieldMapper extends MetadataFieldMapper {
         @Override
         public Query termQuery(Object value, @Nullable SearchExecutionContext context) {
             long v = parse(value);
-            return LongPoint.newExactQuery(name(), v);
+            return range(v, v);
         }
 
         @Override
         public Query termsQuery(Collection<?> values, @Nullable SearchExecutionContext context) {
             long[] v = values.stream().mapToLong(SeqNoFieldType::parse).toArray();
-            return LongPoint.newSetQuery(name(), v);
+            return NumericDocValuesField.newSlowSetQuery(name(), v);
         }
 
         @Override
@@ -211,7 +206,7 @@ public class SeqNoFieldMapper extends MetadataFieldMapper {
                     --u;
                 }
             }
-            return LongPoint.newRangeQuery(name(), l, u);
+            return range(l, u);
         }
 
         @Override
@@ -244,5 +239,14 @@ public class SeqNoFieldMapper extends MetadataFieldMapper {
     @Override
     protected String contentType() {
         return CONTENT_TYPE;
+    }
+
+    // pass the index settings to determine the query
+    public static Query range(long l, long u) {
+        return NumericDocValuesField.newSlowRangeQuery(
+            SeqNoFieldMapper.NAME,
+            l,
+            u
+        );
     }
 }
