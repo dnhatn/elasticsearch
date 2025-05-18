@@ -110,7 +110,8 @@ public class ReverseNestedAggregatorTests extends AggregatorTestCase {
                     document.add(new StringField(NestedPathFieldMapper.NAME, "test", Field.Store.NO));
                     long value = randomNonNegativeLong() % 10000;
                     document.add(new SortedNumericDocValuesField(VALUE_FIELD_NAME, value));
-                    SeqNoFieldMapper.SequenceIDFields.emptySeqID().addFields(document);
+                    SeqNoFieldMapper.SequenceIDFields.emptySeqID(randomFrom(SeqNoFieldMapper.SeqNoIndexOptions.values()))
+                        .addFields(document);
                     if (numNestedDocs > 0) {
                         expectedMaxValue = Math.max(expectedMaxValue, value);
                         expectedParentDocs++;
@@ -172,7 +173,8 @@ public class ReverseNestedAggregatorTests extends AggregatorTestCase {
 
                     long value = randomNonNegativeLong() % 10000;
                     document.add(new SortedNumericDocValuesField(VALUE_FIELD_NAME, value));
-                    SeqNoFieldMapper.SequenceIDFields.emptySeqID().addFields(document);
+                    SeqNoFieldMapper.SequenceIDFields.emptySeqID(randomFrom(SeqNoFieldMapper.SeqNoIndexOptions.values()))
+                        .addFields(document);
                     documents.add(document);
                     iw.addDocuments(documents);
                 }
