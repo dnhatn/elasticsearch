@@ -460,7 +460,7 @@ public class IpFieldMapper extends FieldMapper {
         @Override
         public BlockLoader blockLoader(BlockLoaderContext blContext) {
             if (hasDocValues() && (blContext.fieldExtractPreference() != FieldExtractPreference.STORED || isSyntheticSource)) {
-                return new BlockDocValuesReader.BytesRefsFromOrdsBlockLoader(name(), isDimension());
+                return new BlockDocValuesReader.BytesRefsFromOrdsBlockLoader(name(), false);
             }
 
             if (isStored()) {
