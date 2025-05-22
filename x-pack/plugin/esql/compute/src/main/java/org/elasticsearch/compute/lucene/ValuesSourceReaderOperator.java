@@ -22,6 +22,7 @@ import org.elasticsearch.compute.data.DocBlock;
 import org.elasticsearch.compute.data.DocVector;
 import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.IntVector;
+import org.elasticsearch.compute.data.OrdinalBytesRefBlockBuilder;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.data.SingletonOrdinalsBuilder;
 import org.elasticsearch.compute.operator.AbstractPageMappingOperator;
@@ -745,6 +746,11 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
         @Override
         public BlockLoader.AggregateMetricDoubleBuilder aggregateMetricDoubleBuilder(int count) {
             return factory.newAggregateMetricDoubleBlockBuilder(count);
+        }
+
+        @Override
+        public BlockLoader.OrdinalBytesRefBuilder ordinalBytes(int count) {
+            return new OrdinalBytesRefBlockBuilder(factory, count);
         }
     }
 }

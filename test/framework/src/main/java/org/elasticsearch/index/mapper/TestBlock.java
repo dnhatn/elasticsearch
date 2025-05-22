@@ -153,6 +153,11 @@ public class TestBlock implements BlockLoader.Block {
             public BlockLoader.AggregateMetricDoubleBuilder aggregateMetricDoubleBuilder(int count) {
                 return new AggregateMetricDoubleBlockBuilder();
             }
+
+            @Override
+            public BlockLoader.OrdinalBytesRefBuilder ordinalBytes(int count) {
+                throw new UnsupportedOperationException();
+            }
         };
     }
 

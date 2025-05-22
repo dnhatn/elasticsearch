@@ -97,7 +97,7 @@ public final class IgnoredFieldMapper extends MetadataFieldMapper {
 
         @Override
         public BlockLoader blockLoader(BlockLoaderContext blContext) {
-            return new BlockDocValuesReader.BytesRefsFromOrdsBlockLoader(NAME);
+            return new BlockDocValuesReader.BytesRefsFromOrdsBlockLoader(NAME, false);
         }
 
         @Override

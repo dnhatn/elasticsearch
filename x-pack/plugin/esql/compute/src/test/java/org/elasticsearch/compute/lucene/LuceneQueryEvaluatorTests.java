@@ -203,7 +203,7 @@ public abstract class LuceneQueryEvaluatorTests<T extends Vector, U extends Vect
                         new ValuesSourceReaderOperator.FieldInfo(
                             FIELD,
                             ElementType.BYTES_REF,
-                            unused -> new BlockDocValuesReader.BytesRefsFromOrdsBlockLoader(FIELD)
+                            unused -> new BlockDocValuesReader.BytesRefsFromOrdsBlockLoader(FIELD, false)
                         )
                     ),
                     List.of(new ValuesSourceReaderOperator.ShardContext(reader, () -> {

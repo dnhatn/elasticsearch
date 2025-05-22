@@ -506,9 +506,11 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
 
     public static class BytesRefsFromOrdsBlockLoader extends DocValuesBlockLoader {
         private final String fieldName;
+        private final boolean sorted;
 
-        public BytesRefsFromOrdsBlockLoader(String fieldName) {
+        public BytesRefsFromOrdsBlockLoader(String fieldName, boolean sorted) {
             this.fieldName = fieldName;
+            this.sorted = sorted;
         }
 
         @Override
@@ -522,13 +524,13 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
             if (docValues != null) {
                 SortedDocValues singleton = DocValues.unwrapSingleton(docValues);
                 if (singleton != null) {
-                    return new SingletonOrdinals(singleton);
+                    return new SingletonOrdinals(singleton, sorted);
                 }
                 return new Ordinals(docValues);
             }
             SortedDocValues singleton = context.reader().getSortedDocValues(fieldName);
             if (singleton != null) {
-                return new SingletonOrdinals(singleton);
+                return new SingletonOrdinals(singleton, sorted);
             }
             return new ConstantNullsReader();
         }
@@ -551,9 +553,11 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
 
     private static class SingletonOrdinals extends BlockDocValuesReader {
         private final SortedDocValues ordinals;
+        private final boolean sorted;
 
-        SingletonOrdinals(SortedDocValues ordinals) {
+        SingletonOrdinals(SortedDocValues ordinals, boolean sorted) {
             this.ordinals = ordinals;
+            this.sorted = sorted;
         }
 
         private BlockLoader.Block readSingleDoc(BlockFactory factory, int docId) throws IOException {
@@ -571,6 +575,9 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
             if (docs.count() == 1) {
                 return readSingleDoc(factory, docs.get(0));
             }
+            if (sorted) {
+                return readSorted(factory, docs);
+            }
             try (BlockLoader.SingletonOrdinalsBuilder builder = factory.singletonOrdinalsBuilder(ordinals, docs.count())) {
                 for (int i = 0; i < docs.count(); i++) {
                     int doc = docs.get(i);
@@ -582,6 +589,36 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
                     } else {
                         builder.appendNull();
                     }
+                }
+                return builder.build();
+            }
+        }
+
+        BlockLoader.Block readSorted(BlockFactory factory, Docs docs) throws IOException{
+            int[] ords = new int[docs.count()];
+            for (int i = 0; i < docs.count(); i++) {
+                int doc = docs.get(i);
+                if (ordinals.advanceExact(doc)) {
+                    ords[i] = ordinals.ordValue();
+                } else {
+                    ords[i] = -1;
+                }
+            }
+            try (var builder = factory.ordinalBytes(docs.count())) {
+                int mappedOrd = -1;
+                int lastOrd = -1;
+                for (int ord : ords) {
+                    if (ord == -1) {
+                        builder.appendNull();
+                        continue;
+                    }
+                    if (lastOrd != ord) {
+                        lastOrd = ord;
+                        BytesRef v = ordinals.lookupOrd(ord);
+                        mappedOrd = builder.appendBytesRef(v);
+                    }
+                    assert mappedOrd >= 0 : mappedOrd;
+                    builder.appendOrd(mappedOrd);
                 }
                 return builder.build();
             }

@@ -419,6 +419,11 @@ public interface BlockLoader {
         // TODO support non-singleton ords
 
         AggregateMetricDoubleBuilder aggregateMetricDoubleBuilder(int count);
+
+        /**
+         * Build a builder to load {@link BytesRef}s preferred as ordinal-based block.
+         */
+        OrdinalBytesRefBuilder ordinalBytes(int count);
     }
 
     /**
@@ -514,5 +519,11 @@ public interface BlockLoader {
 
         IntBuilder count();
 
+    }
+
+    interface OrdinalBytesRefBuilder extends Builder {
+        void appendOrd(int ord);
+
+        int appendBytesRef(BytesRef bytes);
     }
 }
