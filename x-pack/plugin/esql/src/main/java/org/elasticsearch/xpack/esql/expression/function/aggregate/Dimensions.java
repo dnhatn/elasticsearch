@@ -10,6 +10,7 @@ package org.elasticsearch.xpack.esql.expression.function.aggregate;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.compute.aggregation.AggregatorFunctionSupplier;
+import org.elasticsearch.compute.aggregation.DimensionsBytesRefAggregatorFunctionSupplier;
 import org.elasticsearch.compute.aggregation.ValuesBytesRefAggregatorFunctionSupplier;
 import org.elasticsearch.xpack.esql.EsqlIllegalArgumentException;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
@@ -36,7 +37,7 @@ public class Dimensions extends AggregateFunction implements ToAggregator {
     );
 
     private static final Map<DataType, Supplier<AggregatorFunctionSupplier>> SUPPLIERS = Map.ofEntries(
-        Map.entry(DataType.KEYWORD, ValuesBytesRefAggregatorFunctionSupplier::new)
+        Map.entry(DataType.KEYWORD, DimensionsBytesRefAggregatorFunctionSupplier::new)
     );
 
     public Dimensions(Source source, Expression v) {

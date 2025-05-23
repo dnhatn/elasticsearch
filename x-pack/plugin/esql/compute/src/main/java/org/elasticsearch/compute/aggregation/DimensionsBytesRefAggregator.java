@@ -21,7 +21,7 @@ import org.elasticsearch.compute.operator.DriverContext;
 @GroupingAggregator
 class DimensionsBytesRefAggregator {
     // ungrouped
-    public static SingleState initSingle(DriverContext driverContext, double percentile) {
+    public static SingleState initSingle(DriverContext driverContext) {
         throw new UnsupportedOperationException("dimensions aggregation is not supported");
     }
 

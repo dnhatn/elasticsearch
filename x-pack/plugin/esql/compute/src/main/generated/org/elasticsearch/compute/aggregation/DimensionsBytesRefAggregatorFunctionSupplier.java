@@ -15,10 +15,7 @@ import org.elasticsearch.compute.operator.DriverContext;
  * This class is generated. Edit {@code AggregatorFunctionSupplierImplementer} instead.
  */
 public final class DimensionsBytesRefAggregatorFunctionSupplier implements AggregatorFunctionSupplier {
-  private final double percentile;
-
-  public DimensionsBytesRefAggregatorFunctionSupplier(double percentile) {
-    this.percentile = percentile;
+  public DimensionsBytesRefAggregatorFunctionSupplier() {
   }
 
   @Override
@@ -34,7 +31,7 @@ public final class DimensionsBytesRefAggregatorFunctionSupplier implements Aggre
   @Override
   public DimensionsBytesRefAggregatorFunction aggregator(DriverContext driverContext,
       List<Integer> channels) {
-    return DimensionsBytesRefAggregatorFunction.create(driverContext, channels, percentile);
+    return DimensionsBytesRefAggregatorFunction.create(driverContext, channels);
   }
 
   @Override
