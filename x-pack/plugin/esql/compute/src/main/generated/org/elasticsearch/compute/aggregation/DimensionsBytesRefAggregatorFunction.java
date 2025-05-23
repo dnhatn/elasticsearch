@@ -32,19 +32,16 @@ public final class DimensionsBytesRefAggregatorFunction implements AggregatorFun
 
   private final List<Integer> channels;
 
-  private final double percentile;
-
   public DimensionsBytesRefAggregatorFunction(DriverContext driverContext, List<Integer> channels,
-      DimensionsBytesRefAggregator.SingleState state, double percentile) {
+      DimensionsBytesRefAggregator.SingleState state) {
     this.driverContext = driverContext;
     this.channels = channels;
     this.state = state;
-    this.percentile = percentile;
   }
 
   public static DimensionsBytesRefAggregatorFunction create(DriverContext driverContext,
-      List<Integer> channels, double percentile) {
-    return new DimensionsBytesRefAggregatorFunction(driverContext, channels, DimensionsBytesRefAggregator.initSingle(driverContext, percentile), percentile);
+      List<Integer> channels) {
+    return new DimensionsBytesRefAggregatorFunction(driverContext, channels, DimensionsBytesRefAggregator.initSingle(driverContext));
   }
 
   public static List<IntermediateStateDesc> intermediateStateDesc() {
