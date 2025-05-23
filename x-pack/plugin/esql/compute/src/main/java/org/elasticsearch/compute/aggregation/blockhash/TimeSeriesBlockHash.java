@@ -21,6 +21,7 @@ import org.elasticsearch.compute.data.BytesRefBlock;
 import org.elasticsearch.compute.data.BytesRefVector;
 import org.elasticsearch.compute.data.IntBlock;
 import org.elasticsearch.compute.data.IntVector;
+import org.elasticsearch.compute.data.LongBigArrayVector;
 import org.elasticsearch.compute.data.LongBlock;
 import org.elasticsearch.compute.data.LongVector;
 import org.elasticsearch.compute.data.OrdinalBytesRefBlock;
@@ -244,12 +245,10 @@ public final class TimeSeriesBlockHash extends BlockHash {
         }
 
         LongBlock toBlock() {
-            try (var builder = blockFactory.newLongVectorFixedBuilder(count)) {
-                for (int i = 0; i < count; i++) {
-                    builder.appendLong(array.get(i));
-                }
-                return builder.build().asBlock();
-            }
+            LongBlock block = new LongBigArrayVector(array, count, blockFactory).asBlock();
+            blockFactory.adjustBreaker(block.ramBytesUsed() - array.ramBytesUsed());
+            array = null;
+            return block;
         }
 
         @Override
