@@ -28,11 +28,17 @@ public class ExchangeSourceExec extends LeafExec {
 
     private final List<Attribute> output;
     private final boolean intermediateAgg;
+    private final transient PhysicalPlan original;
 
     public ExchangeSourceExec(Source source, List<Attribute> output, boolean intermediateAgg) {
+        this(source, output, intermediateAgg, null);
+    }
+
+    public ExchangeSourceExec(Source source, List<Attribute> output, boolean intermediateAgg, PhysicalPlan original) {
         super(source);
         this.output = output;
         this.intermediateAgg = intermediateAgg;
+        this.original = original;
     }
 
     private ExchangeSourceExec(StreamInput in) throws IOException {
@@ -76,5 +82,9 @@ public class ExchangeSourceExec extends LeafExec {
     @Override
     public int hashCode() {
         return Objects.hash(output, intermediateAgg);
+    }
+
+    public PhysicalPlan original() {
+        return original;
     }
 }

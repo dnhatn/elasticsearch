@@ -274,7 +274,7 @@ public class LocalExecutionPlanner {
         } else if (node instanceof ExchangeSourceExec exchangeSource) {
             return planExchangeSource(exchangeSource, context);
         } else if (node instanceof TimeSeriesSourceExec ts) {
-            return planTimeSeriesNode(ts, context);
+            return planTimeSeriesSource(ts, context);
         }
         // lookups and joins
         else if (node instanceof EnrichExec enrich) {
@@ -332,7 +332,7 @@ public class LocalExecutionPlanner {
         return physicalOperationProviders.sourcePhysicalOperation(esQueryExec, context);
     }
 
-    private PhysicalOperation planTimeSeriesNode(TimeSeriesSourceExec esQueryExec, LocalExecutionPlannerContext context) {
+    private PhysicalOperation planTimeSeriesSource(TimeSeriesSourceExec esQueryExec, LocalExecutionPlannerContext context) {
         return physicalOperationProviders.timeSeriesSourceOperation(esQueryExec, context);
     }
 

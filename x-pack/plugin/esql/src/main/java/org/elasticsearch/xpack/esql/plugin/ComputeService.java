@@ -23,6 +23,7 @@ import org.elasticsearch.compute.operator.Driver;
 import org.elasticsearch.compute.operator.DriverCompletionInfo;
 import org.elasticsearch.compute.operator.DriverTaskRunner;
 import org.elasticsearch.compute.operator.FailureCollector;
+import org.elasticsearch.compute.operator.exchange.ExchangeBuffer;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.compute.operator.exchange.ExchangeSink;
 import org.elasticsearch.compute.operator.exchange.ExchangeSinkHandler;
@@ -532,61 +533,12 @@ public class ComputeService {
 
     void runCompute(CancellableTask task, ComputeContext context, PhysicalPlan plan, ActionListener<DriverCompletionInfo> listener) {
         listener = ActionListener.runBefore(listener, () -> Releasables.close(context.searchContexts()));
-        List<EsPhysicalOperationProviders.ShardContext> contexts = new ArrayList<>(context.searchContexts().size());
-        for (int i = 0; i < context.searchContexts().size(); i++) {
-            SearchContext searchContext = context.searchContexts().get(i);
-            var searchExecutionContext = new SearchExecutionContext(searchContext.getSearchExecutionContext()) {
-
-                @Override
-                public SourceProvider createSourceProvider() {
-                    final Supplier<SourceProvider> supplier = () -> super.createSourceProvider();
-                    return new ReinitializingSourceProvider(supplier);
-
-                }
-            };
-            contexts.add(
-                new EsPhysicalOperationProviders.DefaultShardContext(i, searchExecutionContext, searchContext.request().getAliasFilter())
-            );
-        }
-        EsPhysicalOperationProviders physicalOperationProviders = new EsPhysicalOperationProviders(
-            context.foldCtx(),
-            contexts,
-            searchService.getIndicesService().getAnalysis(),
-            defaultDataPartitioning
-        );
         final List<Driver> drivers;
         try {
-            LocalExecutionPlanner planner = new LocalExecutionPlanner(
-                context.sessionId(),
-                context.clusterAlias(),
-                task,
-                bigArrays,
-                blockFactory,
-                clusterService.getSettings(),
-                context.configuration(),
-                context.exchangeSourceSupplier(),
-                context.exchangeSinkSupplier(),
-                enrichLookupService,
-                lookupFromIndexService,
-                inferenceRunner,
-                physicalOperationProviders,
-                contexts
-            );
-
             LOGGER.debug("Received physical plan:\n{}", plan);
-
             plan = PlannerUtils.localPlan(context.searchExecutionContexts(), context.configuration(), context.foldCtx(), plan);
-            // the planner will also set the driver parallelism in LocalExecutionPlanner.LocalExecutionPlan (used down below)
-            // it's doing this in the planning of EsQueryExec (the source of the data)
-            // see also EsPhysicalOperationProviders.sourcePhysicalOperation
-            LocalExecutionPlanner.LocalExecutionPlan localExecutionPlan = planner.plan(context.description(), context.foldCtx(), plan);
-            if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug("Local execution plan:\n{}", localExecutionPlan.describe());
-            }
-            drivers = localExecutionPlan.createDrivers(context.sessionId());
-            if (drivers.isEmpty()) {
-                throw new IllegalStateException("no drivers created");
-            }
+            List<PhysicalPlan> subPlans = PlannerUtils.splitPlansForParallelism(plan);
+            drivers = createDrivers(task, context, subPlans);
             LOGGER.debug("using {} drivers", drivers.size());
         } catch (Exception e) {
             listener.onFailure(e);
@@ -606,6 +558,95 @@ public class ComputeService {
             transportService.getThreadPool().executor(ESQL_WORKER_THREAD_POOL_NAME),
             listenerCollectingStatus
         );
+    }
+
+    private List<Driver> createDrivers(CancellableTask task, ComputeContext rootContext, List<PhysicalPlan> plans) {
+        final List<ComputeContext> computeContexts = new ArrayList<>();
+        if (plans.size() == 1) {
+            computeContexts.add(rootContext);
+        } else {
+            final List<ExchangeBuffer> exchangeBuffers = new ArrayList<>();
+            for (int i = 0; i < plans.size() - 1; i++) {
+                exchangeBuffers.add(new ExchangeBuffer(rootContext.configuration().pragmas().exchangeBufferSize()));
+            }
+            for (int i = 0; i < plans.size(); i++) {
+                ComputeContext subContext = new ComputeContext(
+                    rootContext.sessionId(),
+                    rootContext.description() + "." + i,
+                    rootContext.clusterAlias(),
+                    rootContext.searchContexts(),
+                    rootContext.configuration(),
+                    rootContext.foldCtx(),
+                    i == plans.size() - 1 ? rootContext.exchangeSourceSupplier() : exchangeBuffers.get(i)::newExchangeSource,
+                    i == 0 ? rootContext.exchangeSinkSupplier() : exchangeBuffers.get(i - 1)::newExchangeSink
+                );
+                computeContexts.add(subContext);
+            }
+        }
+        List<Driver> allDrivers = new ArrayList<>();
+        boolean success = false;
+        try {
+            List<EsPhysicalOperationProviders.ShardContext> shardContexts = new ArrayList<>(rootContext.searchContexts().size());
+            for (int i = 0; i < rootContext.searchContexts().size(); i++) {
+                SearchContext searchContext = rootContext.searchContexts().get(i);
+                var searchExecutionContext = new SearchExecutionContext(searchContext.getSearchExecutionContext()) {
+
+                    @Override
+                    public SourceProvider createSourceProvider() {
+                        final Supplier<SourceProvider> supplier = () -> super.createSourceProvider();
+                        return new ReinitializingSourceProvider(supplier);
+                    }
+                };
+                shardContexts.add(
+                    new EsPhysicalOperationProviders.DefaultShardContext(
+                        i,
+                        searchExecutionContext,
+                        searchContext.request().getAliasFilter()
+                    )
+                );
+            }
+            for (int i = 0; i < plans.size(); i++) {
+                PhysicalPlan plan = plans.get(i);
+                ComputeContext context = computeContexts.get(i);
+                EsPhysicalOperationProviders physicalOperationProviders = new EsPhysicalOperationProviders(
+                    context.foldCtx(),
+                    shardContexts,
+                    searchService.getIndicesService().getAnalysis(),
+                    defaultDataPartitioning
+                );
+                LocalExecutionPlanner planner = new LocalExecutionPlanner(
+                    context.sessionId(),
+                    context.clusterAlias(),
+                    task,
+                    bigArrays,
+                    blockFactory,
+                    clusterService.getSettings(),
+                    context.configuration(),
+                    context.exchangeSourceSupplier(),
+                    context.exchangeSinkSupplier(),
+                    enrichLookupService,
+                    lookupFromIndexService,
+                    inferenceRunner,
+                    physicalOperationProviders,
+                    shardContexts
+                );
+                LocalExecutionPlanner.LocalExecutionPlan localExecutionPlan = planner.plan(context.description(), context.foldCtx(), plan);
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("Local execution plan:\n{}", localExecutionPlan.describe());
+                }
+                var drivers = localExecutionPlan.createDrivers(context.sessionId());
+                if (drivers.isEmpty()) {
+                    throw new IllegalStateException("no drivers created");
+                }
+                allDrivers.addAll(drivers);
+            }
+            success = true;
+            return allDrivers;
+        } finally {
+            if (success == false) {
+                Releasables.close(allDrivers);
+            }
+        }
     }
 
     static PhysicalPlan reductionPlan(ExchangeSinkExec plan, boolean enable) {

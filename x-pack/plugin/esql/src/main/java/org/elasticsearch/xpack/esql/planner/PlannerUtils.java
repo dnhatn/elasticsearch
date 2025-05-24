@@ -48,6 +48,8 @@ import org.elasticsearch.xpack.esql.plan.physical.ExchangeSourceExec;
 import org.elasticsearch.xpack.esql.plan.physical.FragmentExec;
 import org.elasticsearch.xpack.esql.plan.physical.MergeExec;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
+import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesSourceExec;
+import org.elasticsearch.xpack.esql.plan.physical.UnaryExec;
 import org.elasticsearch.xpack.esql.planner.mapper.LocalMapper;
 import org.elasticsearch.xpack.esql.planner.mapper.Mapper;
 import org.elasticsearch.xpack.esql.session.Configuration;
@@ -129,9 +131,27 @@ public class PlannerUtils {
         final LocalMapper mapper = new LocalMapper();
         PhysicalPlan reducePlan = mapper.map(pipelineBreaker);
         if (reducePlan instanceof AggregateExec agg) {
-            reducePlan = agg.withMode(AggregatorMode.INITIAL); // force to emit intermediate outputs
+            reducePlan = agg.withMode(AggregatorMode.INTERMEDIATE); // force to emit intermediate outputs
         }
         return EstimatesRowSize.estimateRowSize(fragment.estimatedRowSize(), reducePlan);
+    }
+
+    public static List<PhysicalPlan> splitPlansForParallelism(PhysicalPlan plan) {
+        List<PhysicalPlan> subPlans = new ArrayList<>();
+        PhysicalPlan first = plan.transformDown(p -> {
+            if (p instanceof UnaryExec u && u.child() instanceof TimeSeriesSourceExec ts) {
+                subPlans.add(new ExchangeSinkExec(ts.source(), ts.output(), false, ts));
+                return u.replaceChild(new ExchangeSourceExec(ts.source(), ts.output(), false, ts));
+            } else {
+                return p;
+            }
+        });
+        if (subPlans.isEmpty() == false) {
+            subPlans.addFirst(first);
+            return subPlans;
+        } else {
+            return List.of(plan);
+        }
     }
 
     /**

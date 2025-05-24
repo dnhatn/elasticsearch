@@ -33,7 +33,6 @@ import org.elasticsearch.xpack.esql.expression.function.aggregate.AggregateFunct
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Count;
 import org.elasticsearch.xpack.esql.expression.function.grouping.Categorize;
 import org.elasticsearch.xpack.esql.plan.physical.AggregateExec;
-import org.elasticsearch.xpack.esql.plan.physical.ExchangeSourceExec;
 import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesAggregateExec;
 import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.LocalExecutionPlannerContext;
 import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.PhysicalOperation;
@@ -73,10 +72,6 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
 
         if (aggregatorMode != AggregatorMode.INITIAL && aggregatorMode != AggregatorMode.FINAL) {
             assert false : "Invalid aggregator mode [" + aggregatorMode + "]";
-        }
-        if (aggregatorMode == AggregatorMode.INITIAL && aggregateExec.child() instanceof ExchangeSourceExec) {
-            // the reducer step at data node (local) level
-            aggregatorMode = AggregatorMode.INTERMEDIATE;
         }
 
         if (aggregateExec.groupings().isEmpty()) {
@@ -323,8 +318,12 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
                     }
 
                     AggregatorFunctionSupplier aggSupplier = supplier(aggregateFunction);
-
-                    List<Integer> inputChannels = sourceAttr.stream().map(attr -> layout.get(attr.id()).channel()).toList();
+                    List<Integer> inputChannels;
+                    try {
+                        inputChannels = sourceAttr.stream().map(attr -> layout.get(attr.id()).channel()).toList();
+                    } catch (Exception e) {
+                        throw e;
+                    }
                     assert inputChannels.stream().allMatch(i -> i >= 0) : inputChannels;
 
                     // apply the filter only in the initial phase - as the rest of the data is already filtered

@@ -62,6 +62,7 @@ import org.elasticsearch.xpack.esql.expression.function.scalar.convert.AbstractC
 import org.elasticsearch.xpack.esql.plan.physical.AggregateExec;
 import org.elasticsearch.xpack.esql.plan.physical.EsQueryExec;
 import org.elasticsearch.xpack.esql.plan.physical.EsQueryExec.Sort;
+import org.elasticsearch.xpack.esql.plan.physical.ExchangeSourceExec;
 import org.elasticsearch.xpack.esql.plan.physical.FieldExtractExec;
 import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesAggregateExec;
 import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesSourceExec;
@@ -246,7 +247,6 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
 
     @Override
     public PhysicalOperation timeSeriesSourceOperation(TimeSeriesSourceExec ts, LocalExecutionPlannerContext context) {
-
         final int limit = ts.limit() != null ? (Integer) ts.limit().fold(context.foldCtx()) : NO_LIMIT;
         final boolean emitDocIds = ts.attrs().stream().anyMatch(EsQueryExec::isSourceAttribute);
         LuceneOperator.Factory luceneFactory = TimeSeriesSourceOperatorFactory.create(
@@ -334,9 +334,14 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         List<BlockHash.GroupSpec> groupSpecs,
         LocalExecutionPlannerContext context
     ) {
+        boolean sortedInput = shardContexts.size() == 1
+            && ts.anyMatch(
+                p -> p instanceof TimeSeriesSourceExec
+                    || (p instanceof ExchangeSourceExec e && e.original() instanceof TimeSeriesSourceExec)
+            );
         return new TimeSeriesAggregationOperator.Factory(
             ts.timeBucketRounding(context.foldCtx()),
-            shardContexts.size() == 1 && ts.anyMatch(p -> p instanceof TimeSeriesSourceExec),
+            sortedInput,
             groupSpecs,
             aggregatorMode,
             aggregatorFactories,

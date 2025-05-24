@@ -17,7 +17,7 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
-final class ExchangeBuffer {
+public final class ExchangeBuffer {
 
     private final Queue<Page> queue = new ConcurrentLinkedQueue<>();
     // uses a separate counter for size for CAS; and ConcurrentLinkedQueue#size is not a constant time operation.
@@ -34,7 +34,7 @@ final class ExchangeBuffer {
 
     private volatile boolean noMoreInputs = false;
 
-    ExchangeBuffer(int maxSize) {
+    public ExchangeBuffer(int maxSize) {
         if (maxSize < 1) {
             throw new IllegalArgumentException("max_buffer_size must be at least one; got=" + maxSize);
         }
@@ -160,5 +160,65 @@ final class ExchangeBuffer {
      */
     void addCompletionListener(ActionListener<Void> listener) {
         completionFuture.addListener(listener);
+    }
+
+    public ExchangeSource newExchangeSource() {
+        final ExchangeBuffer buffer = this;
+        return new ExchangeSource() {
+            @Override
+            public Page pollPage() {
+                return buffer.pollPage();
+            }
+
+            @Override
+            public void finish() {
+                buffer.finish(true);
+            }
+
+            @Override
+            public boolean isFinished() {
+                return buffer.isFinished();
+            }
+
+            @Override
+            public int bufferSize() {
+                return buffer.size();
+            }
+
+            @Override
+            public IsBlockedResult waitForReading() {
+                return buffer.waitForReading();
+            }
+        };
+    }
+
+    public ExchangeSink newExchangeSink() {
+        final ExchangeBuffer buffer = this;
+        return new ExchangeSink() {
+            @Override
+            public void addPage(Page page) {
+                buffer.addPage(page);
+            }
+
+            @Override
+            public void finish() {
+                buffer.finish(false);
+            }
+
+            @Override
+            public boolean isFinished() {
+                return buffer.isFinished();
+            }
+
+            @Override
+            public void addCompletionListener(ActionListener<Void> listener) {
+                buffer.addCompletionListener(listener);
+            }
+
+            @Override
+            public IsBlockedResult waitForWriting() {
+                return buffer.waitForWriting();
+            }
+        };
     }
 }
