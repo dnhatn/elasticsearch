@@ -28,15 +28,10 @@ import java.util.function.Function;
  * in order to read tsdb indices in parallel.
  */
 public class TimeSeriesSourceOperatorFactory extends LuceneOperator.Factory {
-
     private final int maxPageSize;
-    private final boolean emitDocIds;
-    private final List<ValuesSourceReaderOperator.FieldInfo> fieldsToExact;
 
     private TimeSeriesSourceOperatorFactory(
         List<? extends ShardContext> contexts,
-        boolean emitDocIds,
-        List<ValuesSourceReaderOperator.FieldInfo> fieldsToExact,
         Function<ShardContext, Query> queryFunction,
         int taskConcurrency,
         int maxPageSize,
@@ -53,13 +48,11 @@ public class TimeSeriesSourceOperatorFactory extends LuceneOperator.Factory {
             ScoreMode.COMPLETE_NO_SCORES
         );
         this.maxPageSize = maxPageSize;
-        this.emitDocIds = emitDocIds;
-        this.fieldsToExact = fieldsToExact;
     }
 
     @Override
     public SourceOperator get(DriverContext driverContext) {
-        return new TimeSeriesSourceOperator(driverContext.blockFactory(), emitDocIds, fieldsToExact, sliceQueue, maxPageSize, limit);
+        return new TimeSeriesSourceOperator(driverContext.blockFactory(), sliceQueue, maxPageSize, limit);
     }
 
     @Override
@@ -71,11 +64,9 @@ public class TimeSeriesSourceOperatorFactory extends LuceneOperator.Factory {
         int limit,
         int maxPageSize,
         int taskConcurrency,
-        boolean emitDocIds,
         List<? extends ShardContext> contexts,
-        List<ValuesSourceReaderOperator.FieldInfo> fieldsToExact,
         Function<ShardContext, Query> queryFunction
     ) {
-        return new TimeSeriesSourceOperatorFactory(contexts, emitDocIds, fieldsToExact, queryFunction, taskConcurrency, maxPageSize, limit);
+        return new TimeSeriesSourceOperatorFactory(contexts, queryFunction, taskConcurrency, maxPageSize, limit);
     }
 }

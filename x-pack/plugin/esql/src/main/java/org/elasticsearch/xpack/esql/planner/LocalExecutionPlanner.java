@@ -967,7 +967,7 @@ public class LocalExecutionPlanner {
         Settings settings,
         List<EsPhysicalOperationProviders.ShardContext> shardContexts
     ) {
-        void addDriverFactory(DriverFactory driverFactory) {
+        public void addDriverFactory(DriverFactory driverFactory) {
             driverFactories.add(driverFactory);
         }
 

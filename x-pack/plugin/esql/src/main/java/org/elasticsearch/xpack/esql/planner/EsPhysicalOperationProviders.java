@@ -14,6 +14,7 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.common.logging.HeaderWarning;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.compute.aggregation.AggregatorMode;
 import org.elasticsearch.compute.aggregation.GroupingAggregator;
 import org.elasticsearch.compute.aggregation.blockhash.BlockHash;
@@ -23,13 +24,18 @@ import org.elasticsearch.compute.lucene.LuceneCountOperator;
 import org.elasticsearch.compute.lucene.LuceneOperator;
 import org.elasticsearch.compute.lucene.LuceneSourceOperator;
 import org.elasticsearch.compute.lucene.LuceneTopNSourceOperator;
+import org.elasticsearch.compute.lucene.TimeSeriesExtractFieldOperatorFactory;
 import org.elasticsearch.compute.lucene.TimeSeriesSourceOperatorFactory;
 import org.elasticsearch.compute.lucene.ValuesSourceReaderOperator;
 import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.compute.operator.OrdinalsGroupingOperator;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.compute.operator.TimeSeriesAggregationOperator;
+import org.elasticsearch.compute.operator.exchange.DirectExchange;
+import org.elasticsearch.compute.operator.exchange.ExchangeSinkOperator;
+import org.elasticsearch.compute.operator.exchange.ExchangeSourceOperator;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.analysis.AnalysisRegistry;
@@ -246,23 +252,56 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
 
     @Override
     public PhysicalOperation timeSeriesSourceOperation(TimeSeriesSourceExec ts, LocalExecutionPlannerContext context) {
+        DirectExchange exchange = new DirectExchange(context.queryPragmas().exchangeBufferSize());
+        // driver for source
+        {
+            final int limit = ts.limit() != null ? (Integer) ts.limit().fold(context.foldCtx()) : NO_LIMIT;
+            LuceneOperator.Factory luceneFactory = TimeSeriesSourceOperatorFactory.create(
+                limit,
+                context.pageSize(ts.estimatedRowSize()),
+                context.queryPragmas().taskConcurrency(),
+                shardContexts,
+                querySupplier(ts.query())
+            );
+            PhysicalOperation sourceOperator = PhysicalOperation.fromSource(luceneFactory, new Layout.Builder().build());
+            var sinkOperator = sourceOperator.withSink(
+                new ExchangeSinkOperator.ExchangeSinkOperatorFactory(exchange::exchangeSink),
+                sourceOperator.layout
+            );
+            final TimeValue statusInterval = context.queryPragmas().statusInterval();
+            context.addDriverFactory(
+                new LocalExecutionPlanner.DriverFactory(
+                    new LocalExecutionPlanner.DriverSupplier(
+                        "test",
+                        "cluster",
+                        "node",
+                        context.blockFactory().bigArrays(),
+                        context.blockFactory(),
+                        sinkOperator,
+                        statusInterval,
+                        Settings.EMPTY
+                    ),
+                    DriverParallelism.SINGLE
+                )
+            );
+        }
+        // driver for field-extract
+        {
+            PhysicalOperation exchangeSource = PhysicalOperation.fromSource(
+                new ExchangeSourceOperator.ExchangeSourceOperatorFactory(exchange::exchangeSource),
+                new Layout.Builder().build()
+            );
+            final boolean emitDocIds = ts.attrs().stream().anyMatch(EsQueryExec::isSourceAttribute);
+            TimeSeriesExtractFieldOperatorFactory fieldExtract = new TimeSeriesExtractFieldOperatorFactory(
+                shardContexts,
+                emitDocIds,
+                extractFields(ts.attributesToExtract(), ts::fieldExtractPreference)
+            );
 
-        final int limit = ts.limit() != null ? (Integer) ts.limit().fold(context.foldCtx()) : NO_LIMIT;
-        final boolean emitDocIds = ts.attrs().stream().anyMatch(EsQueryExec::isSourceAttribute);
-        LuceneOperator.Factory luceneFactory = TimeSeriesSourceOperatorFactory.create(
-            limit,
-            context.pageSize(ts.estimatedRowSize()),
-            context.queryPragmas().taskConcurrency(),
-            emitDocIds,
-            shardContexts,
-            extractFields(ts.attributesToExtract(), ts::fieldExtractPreference),
-            querySupplier(ts.query())
-        );
-        Layout.Builder layout = new Layout.Builder();
-        layout.append(ts.output());
-        int instanceCount = Math.max(1, luceneFactory.taskConcurrency());
-        context.driverParallelism(new DriverParallelism(DriverParallelism.Type.DATA_PARALLELISM, instanceCount));
-        return PhysicalOperation.fromSource(luceneFactory, layout.build());
+            Layout.Builder layout = new Layout.Builder();
+            layout.append(ts.output());
+            return exchangeSource.with(fieldExtract, layout.build());
+        }
     }
 
     private List<ValuesSourceReaderOperator.FieldInfo> extractFields(
