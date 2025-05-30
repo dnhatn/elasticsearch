@@ -80,12 +80,12 @@ public class HashAggregationOperator implements Operator {
         }
     }
 
-    private boolean finished;
+    boolean finished;
     private Page output;
 
-    private final BlockHash blockHash;
+    final BlockHash blockHash;
 
-    private final List<GroupingAggregator> aggregators;
+    protected final List<GroupingAggregator> aggregators;
 
     protected final DriverContext driverContext;
 
@@ -213,9 +213,6 @@ public class HashAggregationOperator implements Operator {
     @Override
     public Page getOutput() {
         Page p = output;
-        if (p != null) {
-            rowsEmitted += p.getPositionCount();
-        }
         output = null;
         return p;
     }
@@ -226,6 +223,10 @@ public class HashAggregationOperator implements Operator {
             return;
         }
         finished = true;
+        output = emitOutput();
+    }
+
+    protected Page emitOutput() {
         Block[] blocks = null;
         IntVector selected = null;
         long startInNanos = System.nanoTime();
@@ -243,8 +244,10 @@ public class HashAggregationOperator implements Operator {
                 aggregator.evaluate(blocks, offset, selected, evaluationContext);
                 offset += aggBlockCounts[i];
             }
-            output = new Page(blocks);
+            Page output = new Page(blocks);
+            rowsEmitted += output.getPositionCount();
             success = true;
+            return output;
         } finally {
             // selected should always be closed
             if (selected != null) {

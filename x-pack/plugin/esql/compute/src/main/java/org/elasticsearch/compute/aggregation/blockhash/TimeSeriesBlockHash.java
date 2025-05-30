@@ -42,7 +42,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
     private int lastTsidPosition = 0;
     private final BytesRefArrayWithSize tsidArray;
 
-    private long lastTimestamp;
+    private long lastTimestamp = -1L;
     private final LongArrayWithSize timestampArray;
 
     private int currentTimestampCount;
@@ -155,12 +155,19 @@ public final class TimeSeriesBlockHash extends BlockHash {
             } else {
                 blocks[0] = buildTsidBlock();
             }
+            tsidArray.reset();
             blocks[1] = timestampArray.toBlock();
+            timestampArray.count = 0;
             return blocks;
         } finally {
             if (blocks[blocks.length - 1] == null) {
                 Releasables.close(blocks);
             }
+            perTsidCountArray.count = 0;
+            timestampArray.count = 0;
+            lastTsidPosition = 0;
+            currentTimestampCount = 0;
+            lastTimestamp = -1L;
         }
     }
 
@@ -202,7 +209,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
         }
     }
 
-    private int positionCount() {
+    public int positionCount() {
         return timestampArray.count;
     }
 
@@ -297,6 +304,12 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
         void get(int index, BytesRef dest) {
             array.get(index, dest);
+        }
+
+        void reset() {
+            count = 0;
+            Releasables.close(array);
+            this.array = new BytesRefArray(1, blockFactory.bigArrays());
         }
 
         BytesRefVector toVector() {

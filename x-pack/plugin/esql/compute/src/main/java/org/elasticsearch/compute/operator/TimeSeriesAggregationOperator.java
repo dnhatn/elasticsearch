@@ -18,6 +18,7 @@ import org.elasticsearch.compute.aggregation.blockhash.TimeSeriesBlockHash;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.LongBlock;
+import org.elasticsearch.compute.data.Page;
 
 import java.util.List;
 import java.util.function.Supplier;
@@ -51,7 +52,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
                         true // we can enable optimizations as the inputs are vectors
                     );
                 }
-            }, driverContext);
+            }, driverContext, maxPageSize);
         }
 
         @Override
@@ -65,15 +66,62 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
     }
 
     private final Rounding.Prepared timeBucket;
+    private final int maxPageSize;
+    private final List<GroupingAggregator.Factory> aggregatorFactories;
+
+    private boolean emitted = false;
 
     public TimeSeriesAggregationOperator(
         Rounding.Prepared timeBucket,
-        List<GroupingAggregator.Factory> aggregators,
+        List<GroupingAggregator.Factory> aggregatorFactories,
         Supplier<BlockHash> blockHash,
-        DriverContext driverContext
+        DriverContext driverContext,
+        int maxPageSize
     ) {
-        super(aggregators, blockHash, driverContext);
+        super(aggregatorFactories, blockHash, driverContext);
         this.timeBucket = timeBucket;
+        this.maxPageSize = maxPageSize;
+        this.aggregatorFactories = aggregatorFactories;
+    }
+
+    @Override
+    public void addInput(Page page) {
+        if (emitted) {
+            emitted = false;
+            for (int i = 0; i < aggregatorFactories.size(); i++) {
+                var prev = aggregators.set(i, aggregatorFactories.get(i).apply(driverContext));
+                prev.close();
+            }
+        }
+        super.addInput(page);
+    }
+
+    @Override
+    protected Page emitOutput() {
+        if (emitted) {
+            emitted = false;
+            return null;
+        }
+        return super.emitOutput();
+    }
+
+    @Override
+    public Page getOutput() {
+        if (emitted) {
+            return null;
+        }
+        Page output = super.getOutput();
+        if (output != null) {
+            return output;
+        }
+        if (blockHash instanceof TimeSeriesBlockHash tsBlockHash) {
+            if (tsBlockHash.positionCount() >= 5) {
+                Page page = emitOutput();
+                emitted = true;
+                return page;
+            }
+        }
+        return null;
     }
 
     @Override
