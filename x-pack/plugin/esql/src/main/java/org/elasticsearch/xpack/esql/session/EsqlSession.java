@@ -177,6 +177,7 @@ public class EsqlSession {
     public void execute(EsqlQueryRequest request, EsqlExecutionInfo executionInfo, PlanRunner planRunner, ActionListener<Result> listener) {
         assert executionInfo != null : "Null EsqlExecutionInfo";
         LOGGER.debug("ESQL query:\n{}", request.query());
+        long startTime = System.nanoTime();
         analyzedPlan(
             parse(request.query(), request.params()),
             executionInfo,
@@ -184,10 +185,13 @@ public class EsqlSession {
             new EsqlCCSUtils.CssPartialErrorsActionListener(executionInfo, listener) {
                 @Override
                 public void onResponse(LogicalPlan analyzedPlan) {
+                    System.err.println("--> analyzing plan took " + (System.nanoTime() - startTime));
                     preMapper.preMapper(
                         analyzedPlan,
                         listener.delegateFailureAndWrap(
-                            (l, p) -> executeOptimizedPlan(request, executionInfo, planRunner, optimizedPlan(p), l)
+                            (l, p) -> {
+                                executeOptimizedPlan(request, executionInfo, planRunner, optimizedPlan(p), l);
+                            }
                         )
                     );
                 }
@@ -782,7 +786,9 @@ public class EsqlSession {
         if (logicalPlan.analyzed() == false) {
             throw new IllegalStateException("Expected analyzed plan");
         }
+        long startTime = System.nanoTime();
         var plan = logicalPlanOptimizer.optimize(logicalPlan);
+        System.err.println("--> optimizing logical plan took " + (System.nanoTime() - startTime));
         LOGGER.debug("Optimized logicalPlan plan:\n{}", plan);
         return plan;
     }
@@ -797,7 +803,9 @@ public class EsqlSession {
     }
 
     public PhysicalPlan optimizedPhysicalPlan(LogicalPlan optimizedPlan) {
+        long startTime = System.nanoTime();
         var plan = physicalPlanOptimizer.optimize(physicalPlan(optimizedPlan));
+        System.err.println("--> optimizing physical plan took " + (System.nanoTime() - startTime));
         LOGGER.debug("Optimized physical plan:\n{}", plan);
         return plan;
     }
