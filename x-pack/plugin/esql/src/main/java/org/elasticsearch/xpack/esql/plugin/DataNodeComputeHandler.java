@@ -413,6 +413,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                 listener.map(profiles -> new DataNodeComputeResponse(profiles, shardLevelFailures))
             )
         ) {
+            System.err.println("--> start data node at " + System.nanoTime());
             var parentListener = computeListener.acquireAvoid();
             try {
                 // run compute with target shards

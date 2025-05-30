@@ -216,6 +216,7 @@ public class ComputeService {
         );
 
         exchangeService.addExchangeSourceHandler(mainSessionId, mainExchangeSource);
+        System.err.println("--> ready to ComputeService#execute plan at " + System.nanoTime());
         try (var ignored = mainExchangeSource.addEmptySink()) {
             var finalListener = ActionListener.runBefore(listener, () -> exchangeService.removeExchangeSourceHandler(sessionId));
             var computeContext = new ComputeContext(
@@ -556,6 +557,7 @@ public class ComputeService {
         );
         final List<Driver> drivers;
         try {
+            long startTime = System.nanoTime();
             LocalExecutionPlanner planner = new LocalExecutionPlanner(
                 context.sessionId(),
                 context.clusterAlias(),
@@ -587,6 +589,7 @@ public class ComputeService {
             if (drivers.isEmpty()) {
                 throw new IllegalStateException("no drivers created");
             }
+            System.err.println("--> local plan took " + (System.nanoTime() - startTime));
             LOGGER.debug("using {} drivers", drivers.size());
         } catch (Exception e) {
             listener.onFailure(e);
