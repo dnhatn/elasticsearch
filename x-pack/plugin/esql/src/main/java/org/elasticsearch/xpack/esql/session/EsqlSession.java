@@ -323,12 +323,14 @@ public class EsqlSession {
         }
 
         Function<PreAnalysisResult, LogicalPlan> analyzeAction = (l) -> {
+            long startTime = System.nanoTime();
             Analyzer analyzer = new Analyzer(
                 new AnalyzerContext(configuration, functionRegistry, l.indices, l.lookupIndices, l.enrichResolution, l.inferenceResolution),
                 verifier
             );
             LogicalPlan plan = analyzer.analyze(parsed);
             plan.setAnalyzed();
+            System.err.println("--> run analyze action took " + (System.nanoTime() - startTime));
             return plan;
         };
         // Capture configured remotes list to ensure consistency throughout the session
@@ -573,7 +575,13 @@ public class EsqlSession {
         PreAnalysisResult preAnalysisResult,
         ActionListener<PreAnalysisResult> l
     ) {
-        inferenceRunner.resolveInferenceIds(inferencePlans, l.map(preAnalysisResult::withInferenceResolution));
+        long startTime = System.nanoTime();
+        inferenceRunner.resolveInferenceIds(inferencePlans,
+                l.delegateFailure((inner, r) -> {
+                    PreAnalysisResult res = preAnalysisResult.withInferenceResolution(r);
+                    System.err.println("--> resolve inference ids took " + (System.nanoTime() - startTime));
+                    inner.onResponse(res);
+                }));
     }
 
     static PreAnalysisResult fieldNames(LogicalPlan parsed, Set<String> enrichPolicyMatchFields, PreAnalysisResult result) {
