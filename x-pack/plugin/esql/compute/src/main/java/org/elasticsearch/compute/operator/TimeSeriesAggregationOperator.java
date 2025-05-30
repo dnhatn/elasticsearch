@@ -115,7 +115,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
             return output;
         }
         if (blockHash instanceof TimeSeriesBlockHash tsBlockHash) {
-            if (tsBlockHash.positionCount() >= 5) {
+            if (tsBlockHash.positionCount() >= maxPageSize * 2) {
                 Page page = emitOutput();
                 emitted = true;
                 return page;
