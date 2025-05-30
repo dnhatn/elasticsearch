@@ -85,10 +85,16 @@ public class IndexResolver {
         QueryBuilder requestFilter,
         ActionListener<IndexResolution> listener
     ) {
+        long startTime = System.nanoTime();
         client.execute(
             EsqlResolveFieldsAction.TYPE,
             createFieldCapsRequest(indexWildcard, fieldNames, requestFilter),
-            listener.delegateFailureAndWrap((l, response) -> l.onResponse(mergedMappings(indexWildcard, response)))
+            listener.delegateFailureAndWrap((l, response) -> {
+                System.err.println("--> field-caps took " + (System.nanoTime() - startTime));
+                IndexResolution merge = mergedMappings(indexWildcard, response);
+                System.err.println("--> field-caps and merge took " + (System.nanoTime() - startTime));
+                l.onResponse(merge);
+            })
         );
     }
 

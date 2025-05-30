@@ -178,6 +178,7 @@ public class EsqlSession {
         assert executionInfo != null : "Null EsqlExecutionInfo";
         LOGGER.debug("ESQL query:\n{}", request.query());
         long startTime = System.nanoTime();
+        System.err.println("--> start executing query at " + startTime);
         analyzedPlan(
             parse(request.query(), request.params()),
             executionInfo,

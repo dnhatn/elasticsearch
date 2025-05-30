@@ -189,6 +189,7 @@ public class ComputeService {
         EsqlExecutionInfo execInfo,
         ActionListener<Result> listener
     ) {
+        System.err.println("--> receive plan in ComputeService#execute at " + System.nanoTime());
         Tuple<List<PhysicalPlan>, PhysicalPlan> subplansAndMainPlan = PlannerUtils.breakPlanIntoSubPlansAndMainPlan(physicalPlan);
 
         List<PhysicalPlan> subplans = subplansAndMainPlan.v1();
@@ -216,7 +217,6 @@ public class ComputeService {
         );
 
         exchangeService.addExchangeSourceHandler(mainSessionId, mainExchangeSource);
-        System.err.println("--> ready to ComputeService#execute plan at " + System.nanoTime());
         try (var ignored = mainExchangeSource.addEmptySink()) {
             var finalListener = ActionListener.runBefore(listener, () -> exchangeService.removeExchangeSourceHandler(sessionId));
             var computeContext = new ComputeContext(
