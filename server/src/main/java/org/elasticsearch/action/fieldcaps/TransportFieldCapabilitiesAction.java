@@ -633,6 +633,7 @@ public class TransportFieldCapabilitiesAction extends HandledTransportAction<Fie
                 } catch (TooComplexToDeterminizeException e) {
                     throw new IllegalArgumentException("The field names are too complex to process. " + e.getMessage());
                 }
+                long startTime = System.nanoTime();
                 for (List<ShardId> shardIds : groupedShardIds.values()) {
                     final Map<ShardId, Exception> failures = new HashMap<>();
                     final Set<ShardId> unmatched = new HashSet<>();
@@ -665,6 +666,7 @@ public class TransportFieldCapabilitiesAction extends HandledTransportAction<Fie
                     allUnmatchedShardIds.addAll(unmatched);
                     allFailures.putAll(failures);
                 }
+                System.err.println("retrieve fields took " + (System.nanoTime() - startTime));
                 return new FieldCapabilitiesNodeResponse(allResponses, allFailures, allUnmatchedShardIds);
             });
         }
