@@ -5,18 +5,23 @@
  * 2.0.
  */
 
-package org.elasticsearch.xpack.esql.expression.function.scalar.string.regex;
+package org.elasticsearch.xpack.esql.expression.function.scalar.string;
 
+import org.apache.lucene.util.automaton.Automata;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.compute.operator.EvalOperator;
+import org.elasticsearch.xpack.esql.capabilities.TranslationAware;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.core.expression.FieldAttribute;
+import org.elasticsearch.xpack.esql.core.expression.FoldContext;
 import org.elasticsearch.xpack.esql.core.expression.predicate.regex.WildcardPattern;
 import org.elasticsearch.xpack.esql.core.querydsl.query.Query;
 import org.elasticsearch.xpack.esql.core.querydsl.query.WildcardQuery;
 import org.elasticsearch.xpack.esql.core.tree.NodeInfo;
 import org.elasticsearch.xpack.esql.core.tree.Source;
+import org.elasticsearch.xpack.esql.evaluator.mapper.EvaluatorMapper;
 import org.elasticsearch.xpack.esql.expression.function.Example;
 import org.elasticsearch.xpack.esql.expression.function.FunctionInfo;
 import org.elasticsearch.xpack.esql.expression.function.Param;
@@ -26,13 +31,18 @@ import org.elasticsearch.xpack.esql.planner.TranslatorHandler;
 
 import java.io.IOException;
 
-public class WildcardLike extends RegexMatch<WildcardPattern> {
+import static org.elasticsearch.xpack.esql.core.expression.TypeResolutions.ParamOrdinal.DEFAULT;
+import static org.elasticsearch.xpack.esql.core.expression.TypeResolutions.isString;
+
+public class WildcardLike extends org.elasticsearch.xpack.esql.core.expression.predicate.regex.WildcardLike
+    implements
+        EvaluatorMapper,
+        TranslationAware.SingleValueTranslationAware {
     public static final NamedWriteableRegistry.Entry ENTRY = new NamedWriteableRegistry.Entry(
         Expression.class,
         "WildcardLike",
         WildcardLike::new
     );
-    public static final String NAME = "LIKE";
 
     @FunctionInfo(returnType = "boolean", description = """
         Use `LIKE` to filter data based on string patterns using wildcards. `LIKE`
@@ -59,26 +69,17 @@ public class WildcardLike extends RegexMatch<WildcardPattern> {
         ----
         include::{esql-specs}/string.csv-spec[tag=likeEscapingTripleQuotes]
         ----
-        """, operator = NAME, examples = @Example(file = "docs", tag = "like"))
+        """, operator = "LIKE", examples = @Example(file = "docs", tag = "like"))
     public WildcardLike(
         Source source,
         @Param(name = "str", type = { "keyword", "text" }, description = "A literal expression.") Expression left,
         @Param(name = "pattern", type = { "keyword", "text" }, description = "Pattern.") WildcardPattern pattern
     ) {
-        this(source, left, pattern, false);
-    }
-
-    public WildcardLike(Source source, Expression left, WildcardPattern pattern, boolean caseInsensitive) {
-        super(source, left, pattern, caseInsensitive);
+        super(source, left, pattern, false);
     }
 
     private WildcardLike(StreamInput in) throws IOException {
-        this(
-            Source.readFrom((PlanStreamInput) in),
-            in.readNamedWriteable(Expression.class),
-            new WildcardPattern(in.readString()),
-            deserializeCaseInsensitivity(in)
-        );
+        this(Source.readFrom((PlanStreamInput) in), in.readNamedWriteable(Expression.class), new WildcardPattern(in.readString()));
     }
 
     @Override
@@ -86,12 +87,6 @@ public class WildcardLike extends RegexMatch<WildcardPattern> {
         source().writeTo(out);
         out.writeNamedWriteable(field());
         out.writeString(pattern().pattern());
-        serializeCaseInsensitivity(out);
-    }
-
-    @Override
-    public String name() {
-        return NAME;
     }
 
     @Override
@@ -100,13 +95,33 @@ public class WildcardLike extends RegexMatch<WildcardPattern> {
     }
 
     @Override
-    protected NodeInfo<WildcardLike> info() {
-        return NodeInfo.create(this, WildcardLike::new, field(), pattern(), caseInsensitive());
+    protected NodeInfo<org.elasticsearch.xpack.esql.core.expression.predicate.regex.WildcardLike> info() {
+        return NodeInfo.create(this, WildcardLike::new, field(), pattern());
     }
 
     @Override
     protected WildcardLike replaceChild(Expression newLeft) {
-        return new WildcardLike(source(), newLeft, pattern(), caseInsensitive());
+        return new WildcardLike(source(), newLeft, pattern());
+    }
+
+    @Override
+    protected TypeResolution resolveType() {
+        return isString(field(), sourceText(), DEFAULT);
+    }
+
+    @Override
+    public Boolean fold(FoldContext ctx) {
+        return (Boolean) EvaluatorMapper.super.fold(source(), ctx);
+    }
+
+    @Override
+    public EvalOperator.ExpressionEvaluator.Factory toEvaluator(ToEvaluator toEvaluator) {
+        return AutomataMatch.toEvaluator(
+            source(),
+            toEvaluator.apply(field()),
+            // The empty pattern will accept the empty string
+            pattern().pattern().length() == 0 ? Automata.makeEmptyString() : pattern().createAutomaton()
+        );
     }
 
     @Override
@@ -124,5 +139,10 @@ public class WildcardLike extends RegexMatch<WildcardPattern> {
     // TODO: see whether escaping is needed
     private Query translateField(String targetFieldName) {
         return new WildcardQuery(source(), targetFieldName, pattern().asLuceneWildcard(), caseInsensitive());
+    }
+
+    @Override
+    public Expression singleValueField() {
+        return field();
     }
 }

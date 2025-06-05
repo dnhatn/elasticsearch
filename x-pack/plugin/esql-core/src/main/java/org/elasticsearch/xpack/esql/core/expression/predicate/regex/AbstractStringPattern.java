@@ -16,11 +16,11 @@ public abstract class AbstractStringPattern implements StringPattern {
 
     private Automaton automaton;
 
-    public abstract Automaton createAutomaton(boolean ignoreCase);
+    public abstract Automaton createAutomaton();
 
     private Automaton automaton() {
         if (automaton == null) {
-            automaton = createAutomaton(false);
+            automaton = createAutomaton();
         }
         return automaton;
     }
