@@ -22,8 +22,8 @@ import org.elasticsearch.xpack.esql.expression.function.aggregate.AggregateFunct
 import org.elasticsearch.xpack.esql.expression.function.aggregate.FromPartial;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Rate;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.TimeSeriesAggregateFunction;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.TimeSeriesGroupingValues;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.ToPartial;
-import org.elasticsearch.xpack.esql.expression.function.aggregate.Values;
 import org.elasticsearch.xpack.esql.expression.function.grouping.Bucket;
 import org.elasticsearch.xpack.esql.plan.logical.Aggregate;
 import org.elasticsearch.xpack.esql.plan.logical.EsRelation;
@@ -229,9 +229,9 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
             final NamedExpression newFinalGroup;
             if (timeBucket != null && g.id().equals(timeBucket.id())) {
                 newFinalGroup = timeBucket.toAttribute();
-                firstPassGroupings.add(newFinalGroup);
+                firstPassGroupings.add(1, newFinalGroup); // _tsid, timestamp, ts_grouping_values(f1), ts_grouping_values(f2)
             } else {
-                newFinalGroup = new Alias(g.source(), g.name(), new Values(g.source(), g), g.id());
+                newFinalGroup = new Alias(g.source(), g.name(), new TimeSeriesGroupingValues(g.source(), g), g.id());
                 firstPassAggs.add(newFinalGroup);
             }
             secondPassGroupings.add(new Alias(g.source(), g.name(), newFinalGroup.toAttribute(), g.id()));

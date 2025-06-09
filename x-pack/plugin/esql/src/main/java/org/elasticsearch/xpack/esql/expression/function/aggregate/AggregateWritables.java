@@ -42,7 +42,8 @@ public class AggregateWritables {
             // internal functions
             ToPartial.ENTRY,
             FromPartial.ENTRY,
-            WeightedAvg.ENTRY
+            WeightedAvg.ENTRY,
+            TimeSeriesGroupingValues.ENTRY
         );
     }
 }
