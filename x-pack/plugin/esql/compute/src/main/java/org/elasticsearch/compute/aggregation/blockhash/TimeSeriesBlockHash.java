@@ -30,6 +30,8 @@ import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.ReleasableIterator;
 import org.elasticsearch.core.Releasables;
 
+import java.util.List;
+
 /**
  * An optimized block hash that receives two blocks: tsid and timestamp, which are sorted.
  * Since the incoming data is sorted, this block hash appends the incoming data to the internal arrays without lookup.
@@ -47,14 +49,34 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
     private int currentTimestampCount;
     private final IntArrayWithSize perTsidCountArray;
+    private final List<GroupSpec> dimensionFields;
+    private final Block.Builder[] dimensionCollectors;
 
-    public TimeSeriesBlockHash(int tsHashChannel, int timestampIntervalChannel, BlockFactory blockFactory) {
+    public TimeSeriesBlockHash(
+        int tsHashChannel,
+        int timestampIntervalChannel,
+        List<GroupSpec> dimensionFields,
+        BlockFactory blockFactory
+    ) {
         super(blockFactory);
         this.tsHashChannel = tsHashChannel;
         this.timestampIntervalChannel = timestampIntervalChannel;
-        this.tsidArray = new BytesRefArrayWithSize(blockFactory);
-        this.timestampArray = new LongArrayWithSize(blockFactory);
-        this.perTsidCountArray = new IntArrayWithSize(blockFactory);
+        this.dimensionFields = dimensionFields;
+        boolean success = false;
+        try {
+            this.tsidArray = new BytesRefArrayWithSize(blockFactory);
+            this.timestampArray = new LongArrayWithSize(blockFactory);
+            this.perTsidCountArray = new IntArrayWithSize(blockFactory);
+            this.dimensionCollectors = new Block.Builder[dimensionFields.size()];
+            for (int i = 0; i < dimensionFields.size(); i++) {
+                dimensionCollectors[i] = dimensionFields.get(i).elementType().newBlockBuilder(1, blockFactory);
+            }
+            success = true;
+        } finally {
+            if (success == false) {
+                this.close();
+            }
+        }
     }
 
     @Override
@@ -97,9 +119,13 @@ public final class TimeSeriesBlockHash extends BlockHash {
             final BytesRef spare = new BytesRef();
             final BytesRef lastTsid = new BytesRef();
             final LongVector timestampVector = getTimestampVector(page);
+            final Block[] dimensionBlocks = new Block[dimensionFields.size()];
+            for (int f = 0; f < dimensionFields.size(); f++) {
+                dimensionBlocks[f] = page.getBlock(dimensionFields.get(f).channel());
+            }
             int lastOrd = -1;
-            for (int i = 0; i < tsidOrdinals.getPositionCount(); i++) {
-                final int newOrd = tsidOrdinals.getInt(i);
+            for (int pos = 0; pos < tsidOrdinals.getPositionCount(); pos++) {
+                final int newOrd = tsidOrdinals.getInt(pos);
                 boolean newGroup = false;
                 if (lastOrd != newOrd) {
                     final var newTsid = tsidDict.getBytesRef(newOrd, spare);
@@ -115,10 +141,13 @@ public final class TimeSeriesBlockHash extends BlockHash {
                         endTsidGroup();
                         lastTsidPosition = tsidArray.count;
                         tsidArray.append(newTsid);
+                        for (int f = 0; f < dimensionCollectors.length; f++) {
+                            dimensionCollectors[f].copyFrom(dimensionBlocks[f], pos, pos + 1);
+                        }
                     }
                     lastOrd = newOrd;
                 }
-                final long timestamp = timestampVector.getLong(i);
+                final long timestamp = timestampVector.getLong(pos);
                 if (newGroup || timestamp != lastTimestamp) {
                     assert newGroup || lastTimestamp >= timestamp : "@timestamp goes backward " + lastTimestamp + " < " + timestamp;
                     timestampArray.append(timestamp);
@@ -148,14 +177,18 @@ public final class TimeSeriesBlockHash extends BlockHash {
     @Override
     public Block[] getKeys() {
         endTsidGroup();
-        final Block[] blocks = new Block[2];
+        final Block[] blocks = new Block[2 + dimensionFields.size()];
         try {
+            blocks[1] = timestampArray.toBlock();
             if (OrdinalBytesRefBlock.isDense(positionCount(), tsidArray.count)) {
-                blocks[0] = buildTsidBlockWithOrdinal();
+                BytesRefBlock tsid = buildTsidBlockWithOrdinal();
+                blocks[0] = tsid;
+                OrdinalBytesRefBlock ordinals = tsid.asOrdinals();
+                buildDimensionBlocks(blocks, ordinals != null ? ordinals.getOrdinalsBlock() : null);
             } else {
                 blocks[0] = buildTsidBlock();
+                buildDimensionBlocks(blocks, null);
             }
-            blocks[1] = timestampArray.toBlock();
             return blocks;
         } finally {
             if (blocks[blocks.length - 1] == null) {
@@ -199,6 +232,34 @@ public final class TimeSeriesBlockHash extends BlockHash {
                 }
             }
             return tsidBuilder.build().asBlock();
+        }
+    }
+
+    private void buildDimensionBlocks(Block[] blocks, IntBlock tsidOrdinals) {
+        if (dimensionFields.isEmpty()) {
+            return;
+        }
+        int[] positions = null;
+        for (int f = 0; f < dimensionCollectors.length; f++) {
+            try (Block block = dimensionCollectors[f].build()) {
+                if (tsidOrdinals != null && block.asVector() instanceof BytesRefVector bytes) {
+                    tsidOrdinals.incRef();
+                    blocks[2 + f] = new OrdinalBytesRefBlock(tsidOrdinals, bytes);
+                } else {
+                    if (positions == null) {
+                        positions = new int[timestampArray.count];
+                        int next = 0;
+                        for (int i = 0; i < tsidArray.count; i++) {
+                            int numTimestamps = perTsidCountArray.array.get(i);
+                            for (int p = 0; p < numTimestamps; p++) {
+                                positions[next++] = i;
+                            }
+                        }
+                        assert next == positions.length;
+                    }
+                    blocks[2 + f] = block.filter(positions);
+                }
+            }
         }
     }
 

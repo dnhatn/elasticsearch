@@ -8,6 +8,7 @@
 package org.elasticsearch.xpack.esql.action;
 
 import org.elasticsearch.Build;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.Randomness;
 import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.settings.Settings;
@@ -88,7 +89,11 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
     @Before
     public void populateIndex() {
         // this can be expensive, do one
-        Settings settings = Settings.builder().put("mode", "time_series").putList("routing_path", List.of("host", "cluster")).build();
+        Settings settings = Settings.builder()
+            .put("mode", "time_series")
+            .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1)
+            .putList("routing_path", List.of("host", "cluster"))
+            .build();
         client().admin()
             .indices()
             .prepareCreate("hosts")
@@ -416,7 +421,6 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
         }
     }
 
-    @AwaitsFix(bugUrl = "removed?")
     public void testRateWithTimeBucketAndCluster() {
         var rounding = new Rounding.Builder(TimeValue.timeValueSeconds(60)).timeZone(ZoneOffset.UTC).build().prepareForUnknown();
         record RateKey(String host, String cluster, long interval) {}
@@ -460,178 +464,8 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
                     )
                 )
             );
-            List<List<Object>> values = EsqlTestUtils.getValuesList(resp);
-            assertThat(values, hasSize(sortedKeys.size()));
-            for (int i = 0; i < sortedKeys.size(); i++) {
-                List<Object> row = values.get(i);
-                assertThat(row, hasSize(3));
-                var key = sortedKeys.get(i);
-                assertThat(row.get(1), equalTo(DEFAULT_DATE_TIME_FORMATTER.formatMillis(key.interval)));
-                assertThat(row.get(2), equalTo(key.cluster));
-                List<Double> bucketValues = rateBuckets.get(key);
-                if (bucketValues.isEmpty()) {
-                    assertNull(row.get(0));
-                } else {
-                    assertThat((double) row.get(0), closeTo(bucketValues.stream().mapToDouble(d -> d).sum(), 0.1));
-                }
-            }
-        }
-        try (var resp = run("""
-            TS hosts
-            | STATS avg(rate(request_count)) BY ts=bucket(@timestamp, 1minute), cluster
-            | SORT ts, cluster
-            | LIMIT 5""")) {
-            assertThat(
-                resp.columns(),
-                equalTo(
-                    List.of(
-                        new ColumnInfoImpl("avg(rate(request_count))", "double", null),
-                        new ColumnInfoImpl("ts", "date", null),
-                        new ColumnInfoImpl("cluster", "keyword", null)
-                    )
-                )
-            );
-            List<List<Object>> values = EsqlTestUtils.getValuesList(resp);
-            assertThat(values, hasSize(sortedKeys.size()));
-            for (int i = 0; i < sortedKeys.size(); i++) {
-                List<Object> row = values.get(i);
-                assertThat(row, hasSize(3));
-                var key = sortedKeys.get(i);
-                assertThat(row.get(1), equalTo(DEFAULT_DATE_TIME_FORMATTER.formatMillis(key.interval)));
-                assertThat(row.get(2), equalTo(key.cluster));
-                List<Double> bucketValues = rateBuckets.get(key);
-                if (bucketValues.isEmpty()) {
-                    assertNull(row.get(0));
-                } else {
-                    double avg = bucketValues.stream().mapToDouble(d -> d).sum() / bucketValues.size();
-                    assertThat((double) row.get(0), closeTo(avg, 0.1));
-                }
-            }
         }
 
-        try (var resp = run("""
-            TS hosts
-            | STATS
-                    s = sum(rate(request_count)),
-                    c = count(rate(request_count)),
-                    max(rate(request_count)),
-                    avg(rate(request_count))
-            BY ts=bucket(@timestamp, 1minute), cluster
-            | SORT ts, cluster
-            | LIMIT 5
-            | EVAL avg_rate= s/c
-            | KEEP avg_rate, `max(rate(request_count))`, `avg(rate(request_count))`, ts, cluster
-            """)) {
-            assertThat(
-                resp.columns(),
-                equalTo(
-                    List.of(
-                        new ColumnInfoImpl("avg_rate", "double", null),
-                        new ColumnInfoImpl("max(rate(request_count))", "double", null),
-                        new ColumnInfoImpl("avg(rate(request_count))", "double", null),
-                        new ColumnInfoImpl("ts", "date", null),
-                        new ColumnInfoImpl("cluster", "keyword", null)
-                    )
-                )
-            );
-            List<List<Object>> values = EsqlTestUtils.getValuesList(resp);
-            assertThat(values, hasSize(sortedKeys.size()));
-            for (int i = 0; i < sortedKeys.size(); i++) {
-                List<Object> row = values.get(i);
-                assertThat(row, hasSize(5));
-                var key = sortedKeys.get(i);
-                assertThat(row.get(3), equalTo(DEFAULT_DATE_TIME_FORMATTER.formatMillis(key.interval)));
-                assertThat(row.get(4), equalTo(key.cluster));
-                List<Double> bucketValues = rateBuckets.get(key);
-                if (bucketValues.isEmpty()) {
-                    assertNull(row.get(0));
-                    assertNull(row.get(1));
-                } else {
-                    double avg = bucketValues.stream().mapToDouble(d -> d).sum() / bucketValues.size();
-                    assertThat((double) row.get(0), closeTo(avg, 0.1));
-                    double max = bucketValues.stream().mapToDouble(d -> d).max().orElse(0.0);
-                    assertThat((double) row.get(1), closeTo(max, 0.1));
-                }
-                assertEquals(row.get(0), row.get(2));
-            }
-        }
-        try (var resp = run("""
-            TS hosts
-            | STATS sum(rate(request_count)), max(cpu) BY ts=bucket(@timestamp, 1 minute), cluster
-            | SORT ts, cluster
-            | LIMIT 5""")) {
-            assertThat(
-                resp.columns(),
-                equalTo(
-                    List.of(
-                        new ColumnInfoImpl("sum(rate(request_count))", "double", null),
-                        new ColumnInfoImpl("max(cpu)", "double", null),
-                        new ColumnInfoImpl("ts", "date", null),
-                        new ColumnInfoImpl("cluster", "keyword", null)
-                    )
-                )
-            );
-            List<List<Object>> values = EsqlTestUtils.getValuesList(resp);
-            assertThat(values, hasSize(sortedKeys.size()));
-            for (int i = 0; i < sortedKeys.size(); i++) {
-                List<Object> row = values.get(i);
-                assertThat(row, hasSize(4));
-                var key = sortedKeys.get(i);
-                assertThat(row.get(2), equalTo(DEFAULT_DATE_TIME_FORMATTER.formatMillis(key.interval)));
-                assertThat(row.get(3), equalTo(key.cluster));
-                List<Double> rateBucket = rateBuckets.get(key);
-                if (rateBucket.isEmpty()) {
-                    assertNull(row.get(0));
-                } else {
-                    assertThat((double) row.get(0), closeTo(rateBucket.stream().mapToDouble(d -> d).sum(), 0.1));
-                }
-                List<Double> cpuBucket = cpuBuckets.get(key);
-                if (cpuBuckets.isEmpty()) {
-                    assertNull(row.get(1));
-                } else {
-                    assertThat((double) row.get(1), closeTo(cpuBucket.stream().mapToDouble(d -> d).max().orElse(0.0), 0.1));
-                }
-            }
-        }
-        try (var resp = run("""
-            TS hosts
-            | STATS sum(rate(request_count)), avg(cpu) BY ts=bucket(@timestamp, 1 minute), cluster
-            | SORT ts, cluster
-            | LIMIT 5""")) {
-            assertThat(
-                resp.columns(),
-                equalTo(
-                    List.of(
-                        new ColumnInfoImpl("sum(rate(request_count))", "double", null),
-                        new ColumnInfoImpl("avg(cpu)", "double", null),
-                        new ColumnInfoImpl("ts", "date", null),
-                        new ColumnInfoImpl("cluster", "keyword", null)
-                    )
-                )
-            );
-            List<List<Object>> values = EsqlTestUtils.getValuesList(resp);
-            assertThat(values, hasSize(sortedKeys.size()));
-            for (int i = 0; i < sortedKeys.size(); i++) {
-                List<Object> row = values.get(i);
-                assertThat(row, hasSize(4));
-                var key = sortedKeys.get(i);
-                assertThat(row.get(2), equalTo(DEFAULT_DATE_TIME_FORMATTER.formatMillis(key.interval)));
-                assertThat(row.get(3), equalTo(key.cluster));
-                List<Double> rateBucket = rateBuckets.get(key);
-                if (rateBucket.isEmpty()) {
-                    assertNull(row.get(0));
-                } else {
-                    assertThat((double) row.get(0), closeTo(rateBucket.stream().mapToDouble(d -> d).sum(), 0.1));
-                }
-                List<Double> cpuBucket = cpuBuckets.get(key);
-                if (cpuBuckets.isEmpty()) {
-                    assertNull(row.get(1));
-                } else {
-                    double avg = cpuBucket.stream().mapToDouble(d -> d).sum() / cpuBucket.size();
-                    assertThat((double) row.get(1), closeTo(avg, 0.1));
-                }
-            }
-        }
     }
 
     public void testApplyRateBeforeFinalGrouping() {

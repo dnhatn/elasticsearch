@@ -33,6 +33,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         Rounding.Prepared timeBucket,
         boolean sortedInput,
         List<BlockHash.GroupSpec> groups,
+        List<BlockHash.GroupSpec> dimensionFields,
         AggregatorMode aggregatorMode,
         List<GroupingAggregator.Factory> aggregators,
         int maxPageSize
@@ -40,18 +41,29 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         @Override
         public Operator get(DriverContext driverContext) {
             // TODO: use TimeSeriesBlockHash when possible
-            return new TimeSeriesAggregationOperator(timeBucket, aggregators, () -> {
-                if (sortedInput && groups.size() == 2) {
-                    return new TimeSeriesBlockHash(groups.get(0).channel(), groups.get(1).channel(), driverContext.blockFactory());
-                } else {
-                    return BlockHash.build(
+            if (sortedInput) {
+                Supplier<BlockHash> hash = () -> {
+                    return new TimeSeriesBlockHash(
+                        groups.get(0).channel(),
+                        groups.get(1).channel(),
+                        dimensionFields,
+                        driverContext.blockFactory()
+                    );
+                };
+                return new TimeSeriesAggregationOperator(timeBucket, aggregators, hash, driverContext);
+            } else {
+                return new TimeSeriesAggregationOperator(
+                    timeBucket,
+                    aggregators,
+                    () -> BlockHash.build(
                         groups,
                         driverContext.blockFactory(),
                         maxPageSize,
                         true // we can enable optimizations as the inputs are vectors
-                    );
-                }
-            }, driverContext);
+                    ),
+                    driverContext
+                );
+            }
         }
 
         @Override

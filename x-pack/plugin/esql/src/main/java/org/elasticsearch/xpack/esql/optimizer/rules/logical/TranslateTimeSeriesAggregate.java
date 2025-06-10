@@ -229,10 +229,10 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
             final NamedExpression newFinalGroup;
             if (timeBucket != null && g.id().equals(timeBucket.id())) {
                 newFinalGroup = timeBucket.toAttribute();
-                firstPassGroupings.add(1, newFinalGroup); // _tsid, timestamp, ts_grouping_values(f1), ts_grouping_values(f2)
+                firstPassGroupings.add(newFinalGroup);
             } else {
                 newFinalGroup = new Alias(g.source(), g.name(), new TimeSeriesGroupingValues(g.source(), g), g.id());
-                firstPassAggs.add(newFinalGroup);
+                firstPassAggs.add(0, newFinalGroup);
             }
             secondPassGroupings.add(new Alias(g.source(), g.name(), newFinalGroup.toAttribute(), g.id()));
         }

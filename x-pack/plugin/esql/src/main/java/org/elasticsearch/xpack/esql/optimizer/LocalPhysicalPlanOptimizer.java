@@ -80,9 +80,9 @@ public class LocalPhysicalPlanOptimizer extends ParameterizedRuleExecutor<Physic
             Limiter.ONCE,
             new InsertFieldExtraction(),
             new SpatialDocValuesExtraction(),
-            new SpatialShapeBoundsExtraction(),
-            new ParallelizeTimeSeriesSource()
+            new SpatialShapeBoundsExtraction()
         );
-        return List.of(pushdown, fieldExtraction);
+        var timeSeries = new Batch<>("time-series", Limiter.ONCE, new ParallelizeTimeSeriesSource());
+        return List.of(pushdown, fieldExtraction, timeSeries);
     }
 }

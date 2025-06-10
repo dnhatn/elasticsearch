@@ -52,14 +52,17 @@ import org.elasticsearch.search.internal.AliasFilter;
 import org.elasticsearch.search.lookup.SearchLookup;
 import org.elasticsearch.search.sort.SortAndFormats;
 import org.elasticsearch.search.sort.SortBuilder;
+import org.elasticsearch.xpack.esql.core.expression.Alias;
 import org.elasticsearch.xpack.esql.core.expression.Attribute;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
+import org.elasticsearch.xpack.esql.core.expression.Expressions;
 import org.elasticsearch.xpack.esql.core.expression.FieldAttribute;
 import org.elasticsearch.xpack.esql.core.expression.FoldContext;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.core.type.KeywordEsField;
 import org.elasticsearch.xpack.esql.core.type.MultiTypeEsField;
 import org.elasticsearch.xpack.esql.core.type.PotentiallyUnmappedKeywordEsField;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.TimeSeriesGroupingValues;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.AbstractConvertFunction;
 import org.elasticsearch.xpack.esql.plan.physical.AggregateExec;
 import org.elasticsearch.xpack.esql.plan.physical.EsQueryExec;
@@ -75,6 +78,7 @@ import org.elasticsearch.xpack.esql.plugin.EsqlPlugin;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -335,14 +339,33 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
     public Operator.OperatorFactory timeSeriesAggregatorOperatorFactory(
         TimeSeriesAggregateExec ts,
         AggregatorMode aggregatorMode,
+        Layout sourceLayout,
         List<GroupingAggregator.Factory> aggregatorFactories,
         List<BlockHash.GroupSpec> groupSpecs,
         LocalExecutionPlannerContext context
     ) {
+        aggregatorFactories = new ArrayList<>(aggregatorFactories);
+        Iterator<GroupingAggregator.Factory> factories = aggregatorFactories.iterator();
+        List<BlockHash.GroupSpec> dimensionFields = new ArrayList<>();
+        boolean sortedInput = shardContexts.size() == 1 && ts.anyMatch(p -> p instanceof TimeSeriesSourceExec) && groupSpecs.size() == 2;
+        if (sortedInput) {
+            int i = 0;
+            while (factories.hasNext()) {
+                factories.next();
+                if (Alias.unwrap(ts.aggregates().get(i)) instanceof TimeSeriesGroupingValues tsValues) {
+                    factories.remove();
+                    Layout.ChannelAndType channel = sourceLayout.get(Expressions.attribute(tsValues.field()).id());
+                    ElementType elementType = PlannerUtils.toElementType(channel.type());
+                    dimensionFields.add(new BlockHash.GroupSpec(channel.channel(), elementType));
+                }
+                i++;
+            }
+        }
         return new TimeSeriesAggregationOperator.Factory(
             ts.timeBucketRounding(context.foldCtx()),
-            shardContexts.size() == 1 && ts.anyMatch(p -> p instanceof TimeSeriesSourceExec),
+            sortedInput,
             groupSpecs,
+            dimensionFields,
             aggregatorMode,
             aggregatorFactories,
             context.pageSize(ts.estimatedRowSize())

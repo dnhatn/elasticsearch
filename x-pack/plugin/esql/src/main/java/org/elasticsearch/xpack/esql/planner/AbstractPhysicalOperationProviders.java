@@ -141,6 +141,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
                         }
                     }
                 }
+                // grouping first
                 layout.append(groupAttributeLayout);
                 Layout.ChannelAndType groupInput = source.layout.get(sourceGroupAttribute.id());
                 groupSpecs.add(new GroupSpec(groupInput == null ? null : groupInput.channel(), sourceGroupAttribute, group));
@@ -153,6 +154,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
                     }
                 }
             } else {
+                // then the aggregates
                 layout.append(aggregateMapper.mapGrouping(aggregates));
             }
 
@@ -170,6 +172,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
                 operatorFactory = timeSeriesAggregatorOperatorFactory(
                     ts,
                     aggregatorMode,
+                    sourceLayout,
                     aggregatorFactories,
                     groupSpecs.stream().map(GroupSpec::toHashGroupSpec).toList(),
                     context
@@ -257,7 +260,6 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
     private record AggFunctionSupplierContext(AggregatorFunctionSupplier supplier, List<Integer> channels, AggregatorMode mode) {}
 
     private void aggregatesToFactory(
-
         List<? extends NamedExpression> aggregates,
         AggregatorMode mode,
         Layout layout,
@@ -377,6 +379,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
     public abstract Operator.OperatorFactory timeSeriesAggregatorOperatorFactory(
         TimeSeriesAggregateExec ts,
         AggregatorMode aggregatorMode,
+        Layout layout,
         List<GroupingAggregator.Factory> aggregatorFactories,
         List<BlockHash.GroupSpec> groupSpecs,
         LocalExecutionPlannerContext context

@@ -160,6 +160,7 @@ public class TestPhysicalOperationProviders extends AbstractPhysicalOperationPro
     public Operator.OperatorFactory timeSeriesAggregatorOperatorFactory(
         TimeSeriesAggregateExec ts,
         AggregatorMode aggregatorMode,
+        Layout sourceLayout,
         List<GroupingAggregator.Factory> aggregatorFactories,
         List<BlockHash.GroupSpec> groupSpecs,
         LocalExecutionPlannerContext context
@@ -168,6 +169,7 @@ public class TestPhysicalOperationProviders extends AbstractPhysicalOperationPro
             ts.timeBucketRounding(context.foldCtx()),
             false,
             groupSpecs,
+            List.of(),
             aggregatorMode,
             aggregatorFactories,
             context.pageSize(ts.estimatedRowSize())

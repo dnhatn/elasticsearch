@@ -1345,7 +1345,7 @@ public class BlockHashTests extends BlockHashTestCase {
 
     public void testTimeSeriesBlockHash() throws Exception {
         long endTime = randomLongBetween(10_000_000, 20_000_000);
-        var hash1 = new TimeSeriesBlockHash(0, 1, blockFactory);
+        var hash1 = new TimeSeriesBlockHash(0, 1, List.of(), blockFactory);
         var hash2 = BlockHash.build(
             List.of(new BlockHash.GroupSpec(0, ElementType.BYTES_REF), new BlockHash.GroupSpec(1, ElementType.LONG)),
             blockFactory,
