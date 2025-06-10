@@ -347,7 +347,7 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         aggregatorFactories = new ArrayList<>(aggregatorFactories);
         Iterator<GroupingAggregator.Factory> factories = aggregatorFactories.iterator();
         List<BlockHash.GroupSpec> dimensionFields = new ArrayList<>();
-        boolean sortedInput = shardContexts.size() == 1 && groupSpecs.size() == 2;
+        boolean sortedInput = shardContexts.size() == 1 && ts.anyMatch(p -> p instanceof TimeSeriesSourceExec) && groupSpecs.size() == 2;
         if (sortedInput) {
             int i = 0;
             while (factories.hasNext()) {
@@ -356,6 +356,7 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
                     factories.remove();
                     Layout.ChannelAndType channel = sourceLayout.get(Expressions.attribute(tsValues.field()).id());
                     ElementType elementType = PlannerUtils.toElementType(channel.type());
+                    logger.error("--> replace values with dimension field {}", tsValues.field());
                     dimensionFields.add(new BlockHash.GroupSpec(channel.channel(), elementType));
                 }
                 i++;
