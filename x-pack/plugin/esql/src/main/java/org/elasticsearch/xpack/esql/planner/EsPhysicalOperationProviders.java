@@ -347,7 +347,7 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         aggregatorFactories = new ArrayList<>(aggregatorFactories);
         Iterator<GroupingAggregator.Factory> factories = aggregatorFactories.iterator();
         List<BlockHash.GroupSpec> dimensionFields = new ArrayList<>();
-        boolean sortedInput = shardContexts.size() == 1 && ts.anyMatch(p -> p instanceof TimeSeriesSourceExec) && groupSpecs.size() == 2;
+        boolean sortedInput = shardContexts.size() == 1 && groupSpecs.size() == 2;
         if (sortedInput) {
             int i = 0;
             while (factories.hasNext()) {
