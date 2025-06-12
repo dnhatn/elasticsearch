@@ -36,6 +36,8 @@ import org.elasticsearch.xcontent.XContentBuilder;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -155,6 +157,7 @@ public final class TimeSeriesSourceOperator extends LuceneOperator {
                 LeafIterator leafIterator = new LeafIterator(weight, leafReaderContext.leafReaderContext());
                 leafIterator.nextDoc();
                 if (leafIterator.docID != DocIdSetIterator.NO_MORE_DOCS) {
+                    leafIterator.loadTsidAndTimestamp();
                     mainQueue.add(leafIterator);
                     maxSegmentOrd = Math.max(maxSegmentOrd, leafIterator.segmentOrd);
                 }
@@ -190,6 +193,8 @@ public final class TimeSeriesSourceOperator extends LuceneOperator {
         }
 
         private boolean readValuesForOneTsid(PriorityQueue<LeafIterator> sub) throws IOException {
+            final List<LeafIterator> removed = new ArrayList<>(sub.size());
+            boolean full = false;
             do {
                 LeafIterator top = sub.top();
                 currentPagePos++;
@@ -199,16 +204,21 @@ public final class TimeSeriesSourceOperator extends LuceneOperator {
                 timestampsBuilder.appendLong(top.timestamp);
                 if (top.nextDoc()) {
                     sub.updateTop();
-                } else if (top.docID == DocIdSetIterator.NO_MORE_DOCS) {
-                    sub.pop();
                 } else {
-                    mainQueue.add(sub.pop());
+                    removed.add(sub.pop());
                 }
                 if (remainingDocs <= 0 || currentPagePos >= maxPageSize) {
-                    return true;
+                    full = true;
+                    break;
                 }
             } while (sub.size() > 0);
-            return false;
+            for (LeafIterator leaf : removed) {
+                if (leaf.docID != DocIdSetIterator.NO_MORE_DOCS) {
+                    leaf.loadTsidAndTimestamp();
+                    mainQueue.add(leaf);
+                }
+            }
+            return full;
         }
 
         private PriorityQueue<LeafIterator> subQueueForNextTsid() {
@@ -265,20 +275,27 @@ public final class TimeSeriesSourceOperator extends LuceneOperator {
             if (docID == DocIdSetIterator.NO_MORE_DOCS) {
                 return false;
             }
+            boolean advanced = tsids.advanceExact(docID);
+            assert advanced;
+            int ord = tsids.ordValue();
+            if (ord == lastTsidOrd) {
+                advanced = timestamps.advanceExact(docID);
+                assert advanced;
+                timestamp = timestamps.longValue();
+                return true;
+            } else {
+                lastTsidOrd = ord;
+                return false;
+            }
+        }
+
+        void loadTsidAndTimestamp() throws IOException {
+            assert docID != DocIdSetIterator.NO_MORE_DOCS;
+            assert tsids.docID() == docID : tsids.docID() + " != " + docID;
+            timeSeriesHash = tsids.lookupOrd(lastTsidOrd);
             boolean advanced = timestamps.advanceExact(docID);
             assert advanced;
             timestamp = timestamps.longValue();
-            advanced = tsids.advanceExact(docID);
-            assert advanced;
-
-            int ord = tsids.ordValue();
-            if (ord != lastTsidOrd) {
-                timeSeriesHash = tsids.lookupOrd(ord);
-                lastTsidOrd = ord;
-                return false;
-            } else {
-                return true;
-            }
         }
 
         void reinitializeIfNeeded(Thread executingThread) throws IOException {
