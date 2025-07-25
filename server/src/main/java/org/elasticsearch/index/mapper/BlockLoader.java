@@ -423,7 +423,7 @@ public interface BlockLoader {
         /**
          * Build a reader for reading {@link SortedDocValues}
          */
-        SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count);
+        SingletonOrdinalsBuilder singletonOrdinalsBuilder(SortedDocValues ordinals, int count, boolean valuesSorted);
 
         /**
          * Build a reader for reading {@link SortedSetDocValues}
