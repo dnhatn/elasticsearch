@@ -1218,7 +1218,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                         long fileOffset = indexReader.get(firstBlockIndex);
                         long length = 1;
                         if (firstBlockIndex != lastBlockIndex){
-                            length += indexReader.get(lastBlockIndex + 1) - fileOffset;
+                            length += indexReader.get(lastBlockIndex) - fileOffset;
                         }
                         valuesData.prefetch(fileOffset, length);
                     }
