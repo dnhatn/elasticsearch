@@ -80,9 +80,7 @@ public class OrderedOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuil
 
     @Override
     public BytesRefBlock build() {
-        try (var ords = ordsBuilder.build(); var dict = dictBuilder.build()) {
-            return new OrdinalBytesRefBlock(ords, dict);
-        }
+        return new OrdinalBytesRefBlock(ordsBuilder.build(), dictBuilder.build());
     }
 
 
