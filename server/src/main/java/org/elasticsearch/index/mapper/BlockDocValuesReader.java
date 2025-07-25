@@ -124,10 +124,14 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
         }
 
         @Override
-        public BlockLoader.Block read(BlockFactory factory, Docs docs, int offset) throws IOException {
+        public void prefetch(Docs docs, int offset) throws IOException {
             if (numericDocValues instanceof BlockLoader.Prefetch prefetch) {
                 prefetch.prefetch(offset, docs);
             }
+        }
+
+        @Override
+        public BlockLoader.Block read(BlockFactory factory, Docs docs, int offset) throws IOException {
             try (BlockLoader.LongBuilder builder = factory.longsFromDocValues(docs.count() - offset)) {
                 int lastDoc = -1;
                 for (int i = offset; i < docs.count(); i++) {
@@ -411,6 +415,13 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
         }
 
         @Override
+        public void prefetch(Docs docs, int offset) throws IOException {
+            if (docValues instanceof BlockLoader.Prefetch prefetch) {
+                prefetch.prefetch(offset, docs);
+            }
+        }
+
+        @Override
         public BlockLoader.Block read(BlockFactory factory, Docs docs, int offset) throws IOException {
             try (BlockLoader.DoubleBuilder builder = factory.doublesFromDocValues(docs.count() - offset)) {
                 int lastDoc = -1;
@@ -649,6 +660,13 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
                 return factory.constantBytes(BytesRef.deepCopyOf(v), 1);
             } else {
                 return factory.constantNulls(1);
+            }
+        }
+
+        @Override
+        public void prefetch(Docs docs, int offset) throws IOException {
+            if (ordinals instanceof BlockLoader.Prefetch prefetch) {
+                prefetch.prefetch(offset, docs);
             }
         }
 

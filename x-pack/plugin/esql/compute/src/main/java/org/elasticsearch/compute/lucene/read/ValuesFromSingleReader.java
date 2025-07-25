@@ -94,6 +94,7 @@ class ValuesFromSingleReader extends ValuesReader {
                 ValuesSourceReaderOperator.FieldWork field = operator.fields[f];
                 BlockLoader.ColumnAtATimeReader columnAtATime = field.columnAtATime(ctx);
                 if (columnAtATime != null) {
+                    columnAtATime.prefetch(docs, offset);
                     columnAtATimeReaders.add(new ColumnAtATimeWork(columnAtATime, f));
                 } else {
                     rowStrideReaders.add(
