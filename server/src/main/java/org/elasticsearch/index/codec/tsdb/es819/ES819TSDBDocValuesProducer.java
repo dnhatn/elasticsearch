@@ -1192,30 +1192,35 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 @Override
                 public void prefetch(int docOffset, BlockLoader.Docs docs) throws IOException {
                     int lastBlockIndex = currentBlockIndex;
-                    long fileOffset = -1;
-                    int prefetched = 0;
+                    int firstBlockIndex = -1;
+                    int maxPrefetched = 5;
                     for (int i = docOffset; i < docs.count(); i++) {
                         final int doc = docs.get(i);
                         final int blockIndex = doc >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
                         if (lastBlockIndex != blockIndex) {
-                            if (fileOffset == -1) {
-                                fileOffset = indexReader.get(blockIndex);
+                            if (firstBlockIndex == -1) {
+                                firstBlockIndex = blockIndex;
                             } else {
                                 if (blockIndex > lastBlockIndex + 1) {
-                                    long length = indexReader.get( + 1) - fileOffset;
+                                    long fileOffset = indexReader.get(firstBlockIndex);
+                                    long length = indexReader.get(lastBlockIndex + 1) - fileOffset;
                                     valuesData.prefetch(fileOffset, length);
-                                    prefetched++;
-                                    if (prefetched >= 5) {
+                                    if (--maxPrefetched <= 0) {
                                         break;
                                     }
-                                    fileOffset = -1;
+                                    firstBlockIndex = blockIndex;
                                 }
                             }
                             lastBlockIndex = blockIndex;
                         }
                     }
-                    if (fileOffset >= 0) {
-                        valuesData.prefetch(fileOffset, 1);
+                    if (firstBlockIndex >= 0) {
+                        long fileOffset = indexReader.get(firstBlockIndex);
+                        long length = 1;
+                        if (firstBlockIndex != lastBlockIndex){
+                            length += indexReader.get(lastBlockIndex + 1) - fileOffset;
+                        }
+                        valuesData.prefetch(fileOffset, length);
                     }
                 }
 
