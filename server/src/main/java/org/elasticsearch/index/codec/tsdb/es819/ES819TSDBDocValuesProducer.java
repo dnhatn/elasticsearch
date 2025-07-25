@@ -341,6 +341,13 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         return new BaseSortedDocValues(entry) {
 
             @Override
+            public void prefetch(int docOffset, BlockLoader.Docs docs) throws IOException {
+                if (ords instanceof BlockLoader.Prefetch prefetch) {
+                    prefetch.prefetch(docOffset, docs);
+                }
+            }
+
+            @Override
             public int ordValue() throws IOException {
                 return (int) ords.longValue();
             }
@@ -372,7 +379,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         };
     }
 
-    abstract class BaseSortedDocValues extends SortedDocValues {
+    abstract class BaseSortedDocValues extends SortedDocValues implements BlockLoader.Prefetch {
 
         final SortedEntry entry;
         final TermsEnum termsEnum;
