@@ -15,6 +15,7 @@ import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefBlock;
 import org.elasticsearch.compute.data.BytesRefVector;
 import org.elasticsearch.compute.data.IntBlock;
+import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.OrdinalBytesRefBlock;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.index.mapper.BlockLoader;
@@ -26,7 +27,7 @@ public class OrderedOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuil
     private final BlockFactory blockFactory;
     private final SortedDocValues docValues;
     private final IntBlock.Builder ordsBuilder;
-    private final BytesRefVector.Builder dictBuilder;
+    private final IntVector.Builder dvOrdsBuilder;
     private int lastOrd = -1;
     private int mappedOrd = -1;
 
@@ -35,7 +36,7 @@ public class OrderedOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuil
         this.docValues = docValues;
         blockFactory.adjustBreaker(ordsSize(count));
         this.ordsBuilder = blockFactory.newIntBlockBuilder(count).mvOrdering(Block.MvOrdering.DEDUPLICATED_AND_SORTED_ASCENDING);
-        this.dictBuilder = blockFactory.newBytesRefVectorBuilder(count);
+        this.dvOrdsBuilder = blockFactory.newIntVectorBuilder(count);
     }
 
     @Override
@@ -47,13 +48,7 @@ public class OrderedOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuil
     @Override
     public OrderedOrdinalsBuilder appendOrd(int ord) {
         if (lastOrd != ord) {
-            final BytesRef term;
-            try {
-                term = docValues.lookupOrd(ord);
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-            dictBuilder.appendBytesRef(term);
+            dvOrdsBuilder.appendInt(ord);
             mappedOrd++;
             lastOrd = ord;
         }
@@ -80,9 +75,17 @@ public class OrderedOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuil
 
     @Override
     public BytesRefBlock build() {
-        return new OrdinalBytesRefBlock(ordsBuilder.build(), dictBuilder.build());
+        try (IntVector dvOrds = dvOrdsBuilder.build();
+             var dictBuilder = blockFactory.newBytesRefVectorBuilder(dvOrds.getPositionCount())) {
+            for (int i = 0; i < dvOrds.getPositionCount(); i++) {
+                int ord = dvOrds.getInt(i);
+                dictBuilder.appendBytesRef(docValues.lookupOrd(ord));
+            }
+            return new OrdinalBytesRefBlock(ordsBuilder.build(), dictBuilder.build());
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read ordinals from doc values", e);
+        }
     }
-
 
     @Override
     public void close() {
