@@ -43,6 +43,7 @@ import org.apache.lucene.util.packed.DirectMonotonicReader;
 import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.index.codec.tsdb.TSDBDocValuesEncoder;
+import org.elasticsearch.index.mapper.BlockLoader;
 
 import java.io.IOException;
 
@@ -1036,6 +1037,10 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         abstract long advance(long index) throws IOException;
     }
 
+    static abstract class NumericDocValuesWithPrefetch extends NumericDocValues implements BlockLoader.Prefetch {
+
+    }
+
     private NumericDocValues getNumeric(NumericEntry entry, long maxOrd) throws IOException {
         if (entry.docsWithFieldOffset == -2) {
             // empty
@@ -1140,12 +1145,12 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         final int bitsPerOrd = maxOrd >= 0 ? PackedInts.bitsRequired(maxOrd - 1) : -1;
         if (entry.docsWithFieldOffset == -1) {
             // dense
-            return new NumericDocValues() {
+            return new NumericDocValuesWithPrefetch() {
 
                 private final int maxDoc = ES819TSDBDocValuesProducer.this.maxDoc;
                 private int doc = -1;
                 private final TSDBDocValuesEncoder decoder = new TSDBDocValuesEncoder(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE);
-                private long currentBlockIndex = -1;
+                private int currentBlockIndex = -1;
                 private final long[] currentBlock = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
 
                 @Override
@@ -1175,6 +1180,36 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 @Override
                 public long cost() {
                     return maxDoc;
+                }
+
+                @Override
+                public void prefetch(int docOffset, BlockLoader.Docs docs) throws IOException {
+                    int lastBlockIndex = currentBlockIndex;
+                    long fileOffset = -1;
+                    int prefetched = 0;
+                    for (int i = docOffset; i < docs.count(); i++) {
+                        final int doc = docs.get(i);
+                        final int blockIndex = doc >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
+                        if (lastBlockIndex != blockIndex) {
+                            if (fileOffset == -1) {
+                                fileOffset = indexReader.get(blockIndex);
+                            } else {
+                                if (blockIndex > lastBlockIndex + 1) {
+                                    long length = indexReader.get(lastBlockIndex + 1) - fileOffset;
+                                    valuesData.prefetch(fileOffset, length);
+                                    prefetched++;
+                                    if (prefetched >= 5) {
+                                        break;
+                                    }
+                                    fileOffset = -1;
+                                }
+                            }
+                            lastBlockIndex = blockIndex;
+                        }
+                    }
+                    if (fileOffset >= 0) {
+                        valuesData.prefetch(fileOffset, currentBlock.length);
+                    }
                 }
 
                 @Override

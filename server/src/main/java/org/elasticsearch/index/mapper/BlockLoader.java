@@ -530,4 +530,8 @@ public interface BlockLoader {
         IntBuilder count();
 
     }
+
+    interface Prefetch {
+        void prefetch(int docOffset, BlockLoader.Docs docs) throws IOException;
+    }
 }

@@ -17,6 +17,7 @@ import org.elasticsearch.compute.operator.TimeSeriesAggregationOperator;
 import org.elasticsearch.xpack.esql.EsqlTestUtils;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.junit.Before;
+import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -263,6 +264,13 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             assertThat((double) values.get(0).get(2), closeTo(minCpu, 0.1));
             assertThat((double) values.get(0).get(3), closeTo(maxCpu, 0.1));
         }
+    }
+
+    @Test
+    public void testSimple() {
+        EsqlQueryResponse resp = run("TS hosts | STATS sum(TO_LONG(@timestamp))");
+        System.err.println("--> res " + resp);
+        resp.close();
     }
 
     public void testRateGroupedByCluster() {
