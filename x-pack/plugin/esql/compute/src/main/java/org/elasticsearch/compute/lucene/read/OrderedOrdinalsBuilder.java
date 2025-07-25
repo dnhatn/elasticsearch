@@ -8,16 +8,15 @@
 package org.elasticsearch.compute.lucene.read;
 
 import org.apache.lucene.index.SortedDocValues;
-import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefBlock;
-import org.elasticsearch.compute.data.BytesRefVector;
 import org.elasticsearch.compute.data.IntBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.OrdinalBytesRefBlock;
 import org.elasticsearch.core.Releasable;
+import org.elasticsearch.core.Releasables;
 import org.elasticsearch.index.mapper.BlockLoader;
 
 import java.io.IOException;
@@ -66,8 +65,6 @@ public class OrderedOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuil
         throw new UnsupportedOperationException("should only have one value per doc");
     }
 
-
-
     @Override
     public long estimatedBytes() {
         return ordsBuilder.estimatedBytes();
@@ -75,8 +72,7 @@ public class OrderedOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuil
 
     @Override
     public BytesRefBlock build() {
-        try (IntVector dvOrds = dvOrdsBuilder.build();
-             var dictBuilder = blockFactory.newBytesRefVectorBuilder(dvOrds.getPositionCount())) {
+        try (IntVector dvOrds = dvOrdsBuilder.build(); var dictBuilder = blockFactory.newBytesRefVectorBuilder(dvOrds.getPositionCount())) {
             for (int i = 0; i < dvOrds.getPositionCount(); i++) {
                 int ord = dvOrds.getInt(i);
                 dictBuilder.appendBytesRef(docValues.lookupOrd(ord));
@@ -89,7 +85,7 @@ public class OrderedOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBuil
 
     @Override
     public void close() {
-        ordsBuilder.close();
+        Releasables.close(ordsBuilder, dvOrdsBuilder);
     }
 
     @Override
