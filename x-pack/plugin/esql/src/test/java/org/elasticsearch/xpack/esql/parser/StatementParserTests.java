@@ -2412,6 +2412,7 @@ public class StatementParserTests extends AbstractStatementParserTests {
                     new Alias(EMPTY, "load", new UnresolvedFunction(EMPTY, "avg", DEFAULT, List.of(attribute("cpu")))),
                     attribute("ts")
                 ),
+                false,
                 null
             )
         );
@@ -2425,6 +2426,7 @@ public class StatementParserTests extends AbstractStatementParserTests {
                     new Alias(EMPTY, "load", new UnresolvedFunction(EMPTY, "avg", DEFAULT, List.of(attribute("cpu")))),
                     attribute("ts")
                 ),
+                false,
                 null
             )
         );
@@ -2448,6 +2450,7 @@ public class StatementParserTests extends AbstractStatementParserTests {
                     ),
                     attribute("ts")
                 ),
+                false,
                 null
             )
         );
@@ -2458,6 +2461,7 @@ public class StatementParserTests extends AbstractStatementParserTests {
                 unresolvedTSRelation("foo*"),
                 List.of(),
                 List.of(new Alias(EMPTY, "count(errors)", new UnresolvedFunction(EMPTY, "count", DEFAULT, List.of(attribute("errors"))))),
+                false,
                 null
             )
         );
@@ -2468,6 +2472,7 @@ public class StatementParserTests extends AbstractStatementParserTests {
                 unresolvedTSRelation("foo*"),
                 List.of(),
                 List.of(new Alias(EMPTY, "a(b)", new UnresolvedFunction(EMPTY, "a", DEFAULT, List.of(attribute("b"))))),
+                false,
                 null
             )
         );
@@ -2478,6 +2483,7 @@ public class StatementParserTests extends AbstractStatementParserTests {
                 unresolvedTSRelation("foo*"),
                 List.of(),
                 List.of(new Alias(EMPTY, "a(b)", new UnresolvedFunction(EMPTY, "a", DEFAULT, List.of(attribute("b"))))),
+                false,
                 null
             )
         );
@@ -2488,6 +2494,7 @@ public class StatementParserTests extends AbstractStatementParserTests {
                 unresolvedTSRelation("foo*"),
                 List.of(),
                 List.of(new Alias(EMPTY, "a1(b2)", new UnresolvedFunction(EMPTY, "a1", DEFAULT, List.of(attribute("b2"))))),
+                false,
                 null
             )
         );
@@ -2502,6 +2509,7 @@ public class StatementParserTests extends AbstractStatementParserTests {
                     attribute("c"),
                     attribute("d.e")
                 ),
+                false,
                 null
             )
         );

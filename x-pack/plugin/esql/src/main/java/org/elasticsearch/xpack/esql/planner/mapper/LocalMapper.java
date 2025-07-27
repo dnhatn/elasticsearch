@@ -74,7 +74,8 @@ public class LocalMapper {
 
         if (unary instanceof Aggregate aggregate) {
             List<Attribute> intermediate = MapperUtils.intermediateAttributes(aggregate);
-            return MapperUtils.aggExec(aggregate, mappedChild, AggregatorMode.INITIAL, intermediate);
+            var aggMode = aggregate.shouldBreak() ? AggregatorMode.INITIAL : AggregatorMode.SINGLE;
+            return MapperUtils.aggExec(aggregate, mappedChild, aggMode, intermediate);
         }
 
         if (unary instanceof Limit limit) {

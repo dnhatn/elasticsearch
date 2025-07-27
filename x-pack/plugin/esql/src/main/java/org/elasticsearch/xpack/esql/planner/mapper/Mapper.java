@@ -22,6 +22,7 @@ import org.elasticsearch.xpack.esql.plan.logical.Limit;
 import org.elasticsearch.xpack.esql.plan.logical.LogicalPlan;
 import org.elasticsearch.xpack.esql.plan.logical.PipelineBreaker;
 import org.elasticsearch.xpack.esql.plan.logical.Sample;
+import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesAggregate;
 import org.elasticsearch.xpack.esql.plan.logical.TopN;
 import org.elasticsearch.xpack.esql.plan.logical.UnaryPlan;
 import org.elasticsearch.xpack.esql.plan.logical.inference.Rerank;
@@ -136,7 +137,7 @@ public class Mapper {
                 return MapperUtils.mapUnary(unary, mappedChild);
             }
             // in case of a fragment, push to it any current streaming operator
-            if (unary instanceof PipelineBreaker == false) {
+            if ((unary instanceof PipelineBreaker b && b.shouldBreak()) == false) {
                 return new FragmentExec(unary);
             }
         }
@@ -144,7 +145,10 @@ public class Mapper {
         //
         // Pipeline breakers
         //
-        if (unary instanceof Aggregate aggregate) {
+        if (unary instanceof TimeSeriesAggregate ts && ts.singleStep()) {
+            List<Attribute> intermediate = MapperUtils.intermediateAttributes(ts);
+            return MapperUtils.aggExec(ts, mappedChild, AggregatorMode.SINGLE, intermediate);
+        } else if (unary instanceof Aggregate aggregate) {
             List<Attribute> intermediate = MapperUtils.intermediateAttributes(aggregate);
 
             // create both sides of the aggregate (for parallelism purposes), if no fragment is present

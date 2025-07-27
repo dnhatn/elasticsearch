@@ -107,7 +107,7 @@ public class LookupJoin extends Join implements SurrogateLogicalPlan, PostAnalys
         List<Source> fails = new LinkedList<>();
 
         this.forEachUp(UnaryPlan.class, u -> {
-            if (u instanceof PipelineBreaker) {
+            if (u instanceof PipelineBreaker b && b.shouldBreak()) {
                 fails.add(u.source());
             }
             if (u instanceof Enrich enrich && enrich.mode() == Enrich.Mode.COORDINATOR) {

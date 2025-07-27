@@ -14,4 +14,8 @@ import org.elasticsearch.xpack.esql.plan.physical.FragmentExec;
  * When mapping to a physical plan, the first pipeline breaker will give rise to a {@link FragmentExec}
  * that contains the {@link LogicalPlan} that data nodes will execute.
  */
-public interface PipelineBreaker {}
+public interface PipelineBreaker {
+    default boolean shouldBreak() {
+        return true;
+    }
+}

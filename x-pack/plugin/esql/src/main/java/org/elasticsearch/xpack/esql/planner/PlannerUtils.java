@@ -120,7 +120,7 @@ public class PlannerUtils {
         }
         final FragmentExec fragment = (FragmentExec) fragments.getFirst();
 
-        final var pipelineBreakers = fragment.fragment().collectFirstChildren(p -> p instanceof PipelineBreaker);
+        final var pipelineBreakers = fragment.fragment().collectFirstChildren(p -> p instanceof PipelineBreaker b && b.shouldBreak());
         if (pipelineBreakers.isEmpty()) {
             return null;
         }

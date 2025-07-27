@@ -32,26 +32,31 @@ public class TimeSeriesAggregate extends Aggregate {
     );
 
     private final Bucket timeBucket;
+    private final boolean singleStep;
 
     public TimeSeriesAggregate(
         Source source,
         LogicalPlan child,
         List<Expression> groupings,
         List<? extends NamedExpression> aggregates,
+        boolean singleStep,
         Bucket timeBucket
     ) {
         super(source, child, groupings, aggregates);
+        this.singleStep = singleStep;
         this.timeBucket = timeBucket;
     }
 
     public TimeSeriesAggregate(StreamInput in) throws IOException {
         super(in);
+        this.singleStep = in.readBoolean();
         this.timeBucket = in.readOptionalWriteable(inp -> (Bucket) Bucket.ENTRY.reader.read(inp));
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
+        out.writeBoolean(singleStep);
         out.writeOptionalWriteable(timeBucket);
     }
 
@@ -62,22 +67,31 @@ public class TimeSeriesAggregate extends Aggregate {
 
     @Override
     protected NodeInfo<Aggregate> info() {
-        return NodeInfo.create(this, TimeSeriesAggregate::new, child(), groupings, aggregates, timeBucket);
+        return NodeInfo.create(this, TimeSeriesAggregate::new, child(), groupings, aggregates, singleStep, timeBucket);
     }
 
     @Override
     public TimeSeriesAggregate replaceChild(LogicalPlan newChild) {
-        return new TimeSeriesAggregate(source(), newChild, groupings, aggregates, timeBucket);
+        return new TimeSeriesAggregate(source(), newChild, groupings, aggregates, singleStep, timeBucket);
     }
 
     @Override
     public TimeSeriesAggregate with(LogicalPlan child, List<Expression> newGroupings, List<? extends NamedExpression> newAggregates) {
-        return new TimeSeriesAggregate(source(), child, newGroupings, newAggregates, timeBucket);
+        return new TimeSeriesAggregate(source(), child, newGroupings, newAggregates, singleStep, timeBucket);
     }
 
     @Override
     public boolean expressionsResolved() {
         return super.expressionsResolved() && (timeBucket == null || timeBucket.resolved());
+    }
+
+    public boolean singleStep() {
+        return singleStep;
+    }
+
+    @Override
+    public boolean shouldBreak() {
+        return singleStep == false;
     }
 
     @Nullable
@@ -87,7 +101,7 @@ public class TimeSeriesAggregate extends Aggregate {
 
     @Override
     public int hashCode() {
-        return Objects.hash(groupings, aggregates, child(), timeBucket);
+        return Objects.hash(groupings, aggregates, child(), singleStep, timeBucket);
     }
 
     @Override
@@ -104,6 +118,7 @@ public class TimeSeriesAggregate extends Aggregate {
         return Objects.equals(groupings, other.groupings)
             && Objects.equals(aggregates, other.aggregates)
             && Objects.equals(child(), other.child())
+            && singleStep == other.singleStep
             && Objects.equals(timeBucket, other.timeBucket);
     }
 }

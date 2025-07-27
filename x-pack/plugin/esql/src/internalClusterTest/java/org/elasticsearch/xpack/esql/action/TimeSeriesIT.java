@@ -491,18 +491,21 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
                 if (p.operators().stream().anyMatch(s -> s.status() instanceof TimeSeriesSourceOperator.Status)) {
                     totalTimeSeries++;
                     assertThat(p.operators(), hasSize(2));
-                    assertThat(p.operators().get(1).operator(), equalTo("ExchangeSinkOperator"));
+                    assertThat(p.operators().get(0).operator(), containsString("TimeSeriesSourceOperator"));
+                    assertThat(p.operators().get(1).operator(), containsString("ExchangeSinkOperator"));
                 } else if (p.operators().stream().anyMatch(s -> s.status() instanceof TimeSeriesAggregationOperator.Status)) {
-                    assertThat(p.operators(), hasSize(3));
-                    assertThat(p.operators().get(0).operator(), equalTo("ExchangeSourceOperator"));
+                    assertThat(p.operators(), hasSize(5));
+                    assertThat(p.operators().get(0).operator(), containsString("ExchangeSourceOperator"));
                     assertThat(p.operators().get(1).operator(), containsString("TimeSeriesAggregationOperator"));
-                    assertThat(p.operators().get(2).operator(), equalTo("ExchangeSinkOperator"));
+                    assertThat(p.operators().get(2).operator(), containsString("ProjectOperator"));
+                    assertThat(p.operators().get(3).operator(), containsString("HashAggregationOperator"));
+                    assertThat(p.operators().get(4).operator(), containsString("ExchangeSinkOperator"));
                 } else {
                     assertThat(p.operators(), hasSize(4));
-                    assertThat(p.operators().get(0).operator(), equalTo("ExchangeSourceOperator"));
+                    assertThat(p.operators().get(0).operator(), containsString("ExchangeSourceOperator"));
                     assertThat(p.operators().get(1).operator(), containsString("TimeSeriesExtractFieldOperator"));
                     assertThat(p.operators().get(2).operator(), containsString("EvalOperator"));
-                    assertThat(p.operators().get(3).operator(), equalTo("ExchangeSinkOperator"));
+                    assertThat(p.operators().get(3).operator(), containsString("ExchangeSinkOperator"));
                 }
             }
             assertThat(totalTimeSeries, equalTo(dataProfiles.size() / 3));

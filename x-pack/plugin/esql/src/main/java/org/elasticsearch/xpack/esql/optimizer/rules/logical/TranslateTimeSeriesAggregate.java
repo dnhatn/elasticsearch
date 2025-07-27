@@ -258,11 +258,14 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
                 return new EsRelation(r.source(), r.indexPattern(), indexMode, r.indexNameWithModes(), r.output());
             }
         });
+        final int[] totalIndices = new int[] { 0 };
+        aggregate.forEachDown(EsRelation.class, r -> { totalIndices[0] = r.indexNameWithModes().size(); });
         final var firstPhase = new TimeSeriesAggregate(
             newChild.source(),
             newChild,
             firstPassGroupings,
             mergeExpressions(firstPassAggs, firstPassGroupings),
+            totalIndices[0] == 1,
             (Bucket) Alias.unwrap(timeBucket)
         );
         return new Aggregate(firstPhase.source(), firstPhase, secondPassGroupings, mergeExpressions(secondPassAggs, secondPassGroupings));
