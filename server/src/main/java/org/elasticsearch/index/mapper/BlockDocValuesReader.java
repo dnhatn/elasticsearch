@@ -39,12 +39,24 @@ import java.io.IOException;
  */
 public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
     private final Thread creationThread;
+    public long loadTimesInNanos = 0;
+    public long buildingBlockTimesInNanos = 0;
 
     public BlockDocValuesReader() {
         this.creationThread = Thread.currentThread();
     }
 
     protected abstract int docId();
+
+    @Override
+    public long loadingTimesInNanos() {
+        return loadTimesInNanos;
+    }
+
+    @Override
+    public long buildingBlockTimesInNanos() {
+        return buildingBlockTimesInNanos;
+    }
 
     /**
      * Checks if the reader can be used to read a range documents starting with the given docID by the current thread.
@@ -125,6 +137,7 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
 
         @Override
         public BlockLoader.Block read(BlockFactory factory, Docs docs, int offset) throws IOException {
+            long startTime = System.nanoTime();
             try (BlockLoader.LongBuilder builder = factory.longsFromDocValues(docs.count() - offset)) {
                 int lastDoc = -1;
                 for (int i = offset; i < docs.count(); i++) {
@@ -139,7 +152,11 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
                     }
                     lastDoc = doc;
                 }
-                return builder.build();
+                long endTime = System.nanoTime();
+                loadTimesInNanos += (endTime - startTime);
+                BlockLoader.Block result = builder.build();
+                buildingBlockTimesInNanos += (System.nanoTime() - endTime);
+                return result;
             }
         }
 
@@ -409,6 +426,7 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
 
         @Override
         public BlockLoader.Block read(BlockFactory factory, Docs docs, int offset) throws IOException {
+            long startTime = System.nanoTime();
             try (BlockLoader.DoubleBuilder builder = factory.doublesFromDocValues(docs.count() - offset)) {
                 int lastDoc = -1;
                 for (int i = offset; i < docs.count(); i++) {
@@ -424,7 +442,11 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
                     lastDoc = doc;
                     this.docID = doc;
                 }
-                return builder.build();
+                long endTime = System.nanoTime();
+                loadTimesInNanos += (endTime - startTime);
+                BlockLoader.Block result = builder.build();
+                buildingBlockTimesInNanos += (System.nanoTime() - endTime);
+                return result;
             }
         }
 
@@ -654,6 +676,7 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
             if (docs.count() - offset == 1) {
                 return readSingleDoc(factory, docs.get(offset));
             }
+            long startTime = System.nanoTime();
             try (var builder = factory.singletonOrdinalsBuilder(ordinals, docs.count() - offset)) {
                 for (int i = offset; i < docs.count(); i++) {
                     int doc = docs.get(i);
@@ -666,7 +689,11 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
                         builder.appendNull();
                     }
                 }
-                return builder.build();
+                long endTime = System.nanoTime();
+                loadTimesInNanos += (endTime - startTime);
+                BlockLoader.Block result = builder.build();
+                buildingBlockTimesInNanos += (System.nanoTime() - endTime);
+                return result;
             }
         }
 

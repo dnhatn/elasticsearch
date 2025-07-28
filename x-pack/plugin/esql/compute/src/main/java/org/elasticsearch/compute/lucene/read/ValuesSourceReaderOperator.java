@@ -196,6 +196,17 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
         );
     }
 
+    @Override
+    public void close() {
+        for (FieldWork field : fields) {
+            var reader = field.columnAtATime;
+            if (reader != null) {
+                System.err.println("--> field " + field.info.name + " loaded=" + reader.loadingTimesInNanos() + " built=" + reader.buildingBlockTimesInNanos());
+            }
+        }
+        super.close();
+    }
+
     protected class FieldWork {
         final FieldInfo info;
 
@@ -229,6 +240,7 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
 
         BlockLoader.ColumnAtATimeReader columnAtATime(LeafReaderContext ctx) throws IOException {
             if (columnAtATime == null) {
+                System.err.println("--> loading new column at time for field " + info.name + " for reader " + ctx.ord);
                 columnAtATime = loader.columnAtATimeReader(ctx);
                 trackReader("column_at_a_time", this.columnAtATime);
             }
