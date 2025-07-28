@@ -201,7 +201,14 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
         for (FieldWork field : fields) {
             var reader = field.columnAtATime;
             if (reader != null) {
-                System.err.println("--> field " + field.info.name + " loaded=" + reader.loadingTimesInNanos() + " built=" + reader.buildingBlockTimesInNanos());
+                System.err.println(
+                    "--> field "
+                        + field.info.name
+                        + " loaded="
+                        + reader.loadingTimesInNanos()
+                        + " built="
+                        + reader.buildingBlockTimesInNanos()
+                );
             }
         }
         super.close();
