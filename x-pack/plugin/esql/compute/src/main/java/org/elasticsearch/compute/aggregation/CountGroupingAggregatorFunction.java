@@ -110,13 +110,21 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     }
 
     private void addRawInput(int positionOffset, IntVector groups, Block values) {
-        int position = positionOffset;
-        for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++, position++) {
-            if (values.isNull(position)) {
-                continue;
+        Vector valuesVector = values.asVector();
+        if (valuesVector != null) {
+            for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
+                int group = groups.getInt(groupPosition);
+                state.increment(group, 1);
             }
-            int groupId = groups.getInt(groupPosition);
-            state.increment(groupId, values.getValueCount(position));
+        } else {
+            int position = positionOffset;
+            for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++, position++) {
+                if (values.isNull(position)) {
+                    continue;
+                }
+                int groupId = groups.getInt(groupPosition);
+                state.increment(groupId, values.getValueCount(position));
+            }
         }
     }
 
