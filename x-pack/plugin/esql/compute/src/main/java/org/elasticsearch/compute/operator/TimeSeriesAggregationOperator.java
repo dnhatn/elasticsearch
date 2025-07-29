@@ -44,12 +44,13 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
                 if (sortedInput && groups.size() == 2) {
                     return new TimeSeriesBlockHash(groups.get(0).channel(), groups.get(1).channel(), driverContext.blockFactory());
                 } else {
-                    return BlockHash.build(
-                        groups,
-                        driverContext.blockFactory(),
-                        maxPageSize,
-                        true // we can enable optimizations as the inputs are vectors
-                    );
+                    return new TimeSeriesBlockHash(groups.get(0).channel(), groups.get(1).channel(), driverContext.blockFactory());
+//                    return BlockHash.build(
+//                        groups,
+//                        driverContext.blockFactory(),
+//                        maxPageSize,
+//                        true // we can enable optimizations as the inputs are vectors
+//                    );
                 }
             }, driverContext);
         }
