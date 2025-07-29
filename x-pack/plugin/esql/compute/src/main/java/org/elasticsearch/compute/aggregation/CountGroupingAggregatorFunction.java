@@ -85,9 +85,9 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         if (countAll || valuesVector != null) {
             return addOne;
         }
-        assert false;
         if (valuesBlock.mayHaveNulls()) {
             state.enableGroupIdTracking(seenGroupIds);
+            throw new AssertionError("expected no nulls");
         }
         return new AddInput() {
             @Override
