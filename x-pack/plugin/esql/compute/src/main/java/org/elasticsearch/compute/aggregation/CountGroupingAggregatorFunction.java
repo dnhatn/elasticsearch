@@ -33,6 +33,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     private final List<Integer> channels;
     private final DriverContext driverContext;
     private final boolean countAll;
+    private final AddInput addOne;
 
     public static CountGroupingAggregatorFunction create(DriverContext driverContext, List<Integer> inputChannels) {
         return new CountGroupingAggregatorFunction(inputChannels, new LongArrayState(driverContext.bigArrays(), 0), driverContext);
@@ -47,48 +48,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         this.state = state;
         this.driverContext = driverContext;
         this.countAll = channels.isEmpty();
-    }
-
-    private int blockIndex() {
-        return countAll ? 0 : channels.get(0);
-    }
-
-    @Override
-    public int intermediateBlockCount() {
-        return intermediateStateDesc().size();
-    }
-
-    @Override
-    public AddInput prepareProcessRawInputPage(SeenGroupIds seenGroupIds, Page page) {
-        Block valuesBlock = page.getBlock(blockIndex());
-        if (countAll == false) {
-            Vector valuesVector = valuesBlock.asVector();
-            if (valuesVector == null) {
-                if (valuesBlock.mayHaveNulls()) {
-                    state.enableGroupIdTracking(seenGroupIds);
-                }
-                return new AddInput() {
-                    @Override
-                    public void add(int positionOffset, IntArrayBlock groupIds) {
-                        addRawInput(positionOffset, groupIds, valuesBlock);
-                    }
-
-                    @Override
-                    public void add(int positionOffset, IntBigArrayBlock groupIds) {
-                        addRawInput(positionOffset, groupIds, valuesBlock);
-                    }
-
-                    @Override
-                    public void add(int positionOffset, IntVector groupIds) {
-                        addRawInput(positionOffset, groupIds, valuesBlock);
-                    }
-
-                    @Override
-                    public void close() {}
-                };
-            }
-        }
-        return new AddInput() {
+        this.addOne = new AddInput() {
             @Override
             public void add(int positionOffset, IntArrayBlock groupIds) {
                 addRawInput(groupIds);
@@ -109,22 +69,54 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         };
     }
 
+    private int blockIndex() {
+        return countAll ? 0 : channels.get(0);
+    }
+
+    @Override
+    public int intermediateBlockCount() {
+        return intermediateStateDesc().size();
+    }
+
+    @Override
+    public AddInput prepareProcessRawInputPage(SeenGroupIds seenGroupIds, Page page) {
+        Block valuesBlock = page.getBlock(blockIndex());
+        Vector valuesVector = valuesBlock.asVector();
+        if (countAll || valuesVector != null) {
+            return addOne;
+        }
+        if (valuesBlock.mayHaveNulls()) {
+            state.enableGroupIdTracking(seenGroupIds);
+        }
+        return new AddInput() {
+            @Override
+            public void add(int positionOffset, IntArrayBlock groupIds) {
+                addRawInput(positionOffset, groupIds, valuesBlock);
+            }
+
+            @Override
+            public void add(int positionOffset, IntBigArrayBlock groupIds) {
+                addRawInput(positionOffset, groupIds, valuesBlock);
+            }
+
+            @Override
+            public void add(int positionOffset, IntVector groupIds) {
+                addRawInput(positionOffset, groupIds, valuesBlock);
+            }
+
+            @Override
+            public void close() {}
+        };
+    }
+
     private void addRawInput(int positionOffset, IntVector groups, Block values) {
-        Vector valuesVector = values.asVector();
-        if (valuesVector != null) {
-            for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
-                int group = groups.getInt(groupPosition);
-                state.increment(group, 1);
+        int position = positionOffset;
+        for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++, position++) {
+            if (values.isNull(position)) {
+                continue;
             }
-        } else {
-            int position = positionOffset;
-            for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++, position++) {
-                if (values.isNull(position)) {
-                    continue;
-                }
-                int groupId = groups.getInt(groupPosition);
-                state.increment(groupId, values.getValueCount(position));
-            }
+            int groupId = groups.getInt(groupPosition);
+            state.increment(groupId, values.getValueCount(position));
         }
     }
 
