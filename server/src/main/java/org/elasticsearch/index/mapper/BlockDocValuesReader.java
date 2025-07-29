@@ -468,7 +468,7 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
                 for (int i = offset; i < docs.count(); i++) {
                     int doc = docs.get(i);
                     if (docValues.advanceExact(doc)) {
-                        builder.appendDouble(toDouble.convert(docValues.longValue()));
+                        builder.appendDouble((double) docValues.longValue());
                     } else {
                         builder.appendNull();
                     }
