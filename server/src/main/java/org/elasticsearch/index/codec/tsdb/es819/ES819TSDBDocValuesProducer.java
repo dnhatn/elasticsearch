@@ -1253,7 +1253,10 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                         if (maxOrd >= 0) {
                             decoder.decodeOrdinals(valuesData, currentBlock, bitsPerOrd);
                         } else {
+                            long startFP = valuesData.getFilePointer();
                             decoder.decode(valuesData, currentBlock);
+                            long endFP = valuesData.getFilePointer();
+                            System.err.println("--> decoded [" + (endFP - startFP) + "] bytes for " + currentBlock.length + " values");
                         }
                     }
                     return currentBlock[blockInIndex];
