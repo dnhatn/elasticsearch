@@ -44,6 +44,10 @@ public interface BlockLoader {
          * Reads the values of all documents in {@code docs}.
          */
         BlockLoader.Block read(BlockFactory factory, Docs docs, int offset) throws IOException;
+
+        default void close() {
+
+        }
     }
 
     interface RowStrideReader extends Reader {

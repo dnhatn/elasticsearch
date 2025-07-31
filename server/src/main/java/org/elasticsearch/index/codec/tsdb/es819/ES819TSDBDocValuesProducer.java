@@ -42,6 +42,7 @@ import org.apache.lucene.util.compress.LZ4;
 import org.apache.lucene.util.packed.DirectMonotonicReader;
 import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.index.codec.tsdb.NumericDocValuesWithBytes;
 import org.elasticsearch.index.codec.tsdb.TSDBDocValuesEncoder;
 
 import java.io.IOException;
@@ -62,8 +63,6 @@ public final class ES819TSDBDocValuesProducer extends DocValuesProducer {
     private final int maxDoc;
     final int version;
     private final boolean merging;
-    public static final LongAdder totalBytes = new LongAdder();
-    public static final LongAdder totalValues = new LongAdder();
 
     ES819TSDBDocValuesProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension)
         throws IOException {
@@ -1210,7 +1209,10 @@ public final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 entry.denseRankPower,
                 entry.numValues
             );
-            return new NumericDocValues() {
+            return new NumericDocValuesWithBytes() {
+                long totalBytes = 0L;
+                long totalBlocks = 0L;
+                long totalValues = 0L;
 
                 private final TSDBDocValuesEncoder decoder = new TSDBDocValuesEncoder(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE);
                 private long currentBlockIndex = -1;
@@ -1259,11 +1261,27 @@ public final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                             long startFP = valuesData.getFilePointer();
                             decoder.decode(valuesData, currentBlock);
                             long endFP = valuesData.getFilePointer();
-                            totalBytes.add(endFP - startFP);
-                            totalValues.add(currentBlock.length);
+                            totalBytes += endFP - startFP;
+                            totalValues += currentBlock.length;
+                            totalBlocks++;
                         }
                     }
                     return currentBlock[blockInIndex];
+                }
+
+                @Override
+                public long totalBlocks() {
+                    return totalBlocks;
+                }
+
+                @Override
+                public long totalBytes() {
+                    return totalBytes;
+                }
+
+                @Override
+                public long totalValues() {
+                    return totalValues;
                 }
             };
         }

@@ -26,7 +26,6 @@ import org.elasticsearch.compute.operator.exchange.ExchangeSourceHandler;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.index.Index;
-import org.elasticsearch.index.codec.tsdb.es819.ES819TSDBDocValuesProducer;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.SearchService;
@@ -385,13 +384,6 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             if (lastBatchIndex < request.shardIds().size() && exchangeSink.isFinished() == false) {
                 runBatch(lastBatchIndex);
             } else {
-                System.err.println(
-                    "--> decoded "
-                        + ES819TSDBDocValuesProducer.totalBytes.longValue()
-                        + " bytes for "
-                        + ES819TSDBDocValuesProducer.totalValues.longValue()
-                        + " values"
-                );
                 // don't return until all pages are fetched
                 var completionListener = computeListener.acquireAvoid();
                 exchangeSink.addCompletionListener(

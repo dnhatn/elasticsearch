@@ -184,6 +184,16 @@ class ValuesFromSingleReader extends ValuesReader {
         docs.setCount(p);
     }
 
+    @Override
+    public void close() {
+        for (ValuesSourceReaderOperator.FieldWork field : operator.fields) {
+            BlockLoader.ColumnAtATimeReader column = field.columnAtATime;
+            if (column != null) {
+                column.close();
+            }
+        }
+    }
+
     /**
      * Is it more efficient to use a sequential stored field reader
      * when reading stored fields for the documents contained in {@code docIds}?

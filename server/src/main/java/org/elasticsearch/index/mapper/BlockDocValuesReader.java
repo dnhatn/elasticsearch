@@ -21,6 +21,7 @@ import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.io.stream.ByteArrayStreamInput;
 import org.elasticsearch.index.IndexVersion;
+import org.elasticsearch.index.codec.tsdb.NumericDocValuesWithBytes;
 import org.elasticsearch.index.mapper.BlockLoader.BlockFactory;
 import org.elasticsearch.index.mapper.BlockLoader.BooleanBuilder;
 import org.elasticsearch.index.mapper.BlockLoader.Builder;
@@ -33,6 +34,7 @@ import org.elasticsearch.index.mapper.vectors.VectorEncoderDecoder;
 import org.elasticsearch.search.fetch.StoredFieldsSpec;
 
 import java.io.IOException;
+import java.util.Locale;
 
 /**
  * A reader that supports reading doc-values from a Lucene segment in Block fashion.
@@ -425,6 +427,13 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
                     this.docID = doc;
                 }
                 return builder.build();
+            }
+        }
+
+        @Override
+        public void close() {
+            if (docValues instanceof NumericDocValuesWithBytes withBytes) {
+                System.err.printf(Locale.ROOT, "%d blocks, %d bytes, %d values%n", withBytes.totalBlocks(), withBytes.totalBytes(), withBytes.totalValues());
             }
         }
 
