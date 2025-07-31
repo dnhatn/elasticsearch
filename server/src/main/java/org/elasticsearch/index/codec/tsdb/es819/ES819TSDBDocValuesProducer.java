@@ -45,12 +45,13 @@ import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.index.codec.tsdb.TSDBDocValuesEncoder;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.LongAdder;
 
 import static org.elasticsearch.index.codec.tsdb.es819.ES819TSDBDocValuesFormat.SKIP_INDEX_JUMP_LENGTH_PER_LEVEL;
 import static org.elasticsearch.index.codec.tsdb.es819.ES819TSDBDocValuesFormat.SKIP_INDEX_MAX_LEVEL;
 import static org.elasticsearch.index.codec.tsdb.es819.ES819TSDBDocValuesFormat.TERMS_DICT_BLOCK_LZ4_SHIFT;
 
-final class ES819TSDBDocValuesProducer extends DocValuesProducer {
+public final class ES819TSDBDocValuesProducer extends DocValuesProducer {
     final IntObjectHashMap<NumericEntry> numerics;
     final IntObjectHashMap<BinaryEntry> binaries;
     final IntObjectHashMap<SortedEntry> sorted;
@@ -61,6 +62,8 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
     private final int maxDoc;
     final int version;
     private final boolean merging;
+    public static final LongAdder totalBytes = new LongAdder();
+    public static final LongAdder totalValues = new LongAdder();
 
     ES819TSDBDocValuesProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension)
         throws IOException {
@@ -1256,7 +1259,8 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                             long startFP = valuesData.getFilePointer();
                             decoder.decode(valuesData, currentBlock);
                             long endFP = valuesData.getFilePointer();
-                            System.err.println("--> decoded [" + (endFP - startFP) + "] bytes for " + currentBlock.length + " values");
+                            totalBytes.add(endFP - startFP);
+                            totalValues.add(currentBlock.length);
                         }
                     }
                     return currentBlock[blockInIndex];
