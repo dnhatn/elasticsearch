@@ -65,6 +65,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
             Vector valuesVector = valuesBlock.asVector();
             if (valuesVector == null) {
                 if (valuesBlock.mayHaveNulls()) {
+                    System.err.println("--> found nulls in values block " + valuesBlock);
                     state.enableGroupIdTracking(seenGroupIds);
                 }
                 return new AddInput() {
