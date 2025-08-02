@@ -23,10 +23,16 @@ import java.io.IOException;
  */
 public sealed interface DoubleVector extends Vector permits ConstantDoubleVector, DoubleArrayVector, DoubleBigArrayVector,
     ConstantNullVector {
+
     double getDouble(int position);
+
+    default boolean isConstant() {
+        return false;
+    }
 
     @Override
     DoubleBlock asBlock();
+
 
     @Override
     DoubleVector filter(int... positions);

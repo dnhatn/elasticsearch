@@ -23,10 +23,16 @@ import java.io.IOException;
  */
 public sealed interface BooleanVector extends Vector permits ConstantBooleanVector, BooleanArrayVector, BooleanBigArrayVector,
     ConstantNullVector {
+
     boolean getBoolean(int position);
+
+    default boolean isConstant() {
+        return false;
+    }
 
     @Override
     BooleanBlock asBlock();
+
 
     @Override
     BooleanVector filter(int... positions);

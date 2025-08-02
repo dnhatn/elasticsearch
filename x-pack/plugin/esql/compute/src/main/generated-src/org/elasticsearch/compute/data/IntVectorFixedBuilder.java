@@ -24,6 +24,7 @@ public final class IntVectorFixedBuilder implements IntVector.FixedBuilder {
      * been built.
      */
     private int nextIndex;
+    private boolean singleValue = true;
 
     private boolean closed;
 
@@ -36,6 +37,9 @@ public final class IntVectorFixedBuilder implements IntVector.FixedBuilder {
 
     @Override
     public IntVectorFixedBuilder appendInt(int value) {
+        if (singleValue && nextIndex > 0 && values[0] != value) {
+            singleValue = false;
+        }
         values[nextIndex++] = value;
         return this;
     }
@@ -66,8 +70,8 @@ public final class IntVectorFixedBuilder implements IntVector.FixedBuilder {
         }
         closed = true;
         IntVector vector;
-        if (values.length == 1) {
-            vector = blockFactory.newConstantIntBlockWith(values[0], 1, preAdjustedBytes).asVector();
+        if (singleValue && nextIndex > 0) {
+            vector = blockFactory.newConstantIntBlockWith(values[0], values.length, preAdjustedBytes).asVector();
         } else {
             vector = blockFactory.newIntArrayVector(values, values.length, preAdjustedBytes);
         }

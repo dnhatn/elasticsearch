@@ -23,10 +23,16 @@ import java.io.IOException;
  */
 public sealed interface IntVector extends Vector permits ConstantIntVector, IntArrayVector, IntBigArrayVector, ConstantNullVector {
 
+
     int getInt(int position);
+
+    default boolean isConstant() {
+        return false;
+    }
 
     @Override
     IntBlock asBlock();
+
 
     @Override
     IntVector filter(int... positions);

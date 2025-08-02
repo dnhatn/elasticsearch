@@ -37,6 +37,7 @@ $if(BytesRef)$
 
 $else$
     private $type$[] values;
+    private boolean singleValue = true;
 
     $Type$VectorBuilder(int estimatedSize, BlockFactory blockFactory) {
         super(blockFactory);
@@ -53,6 +54,9 @@ $if(BytesRef)$
         values.append(value);
 $else$
         values[valueCount] = value;
+        if (singleValue && valueCount > 0 && values[0] != value) {
+            singleValue = false;
+        }
 $endif$
         valueCount++;
         return this;
@@ -113,8 +117,8 @@ $if(BytesRef)$
         }
         values = null;
 $else$
-        if (valueCount == 1) {
-            vector = blockFactory.newConstant$Type$BlockWith(values[0], 1, estimatedBytes).asVector();
+        if (singleValue && valueCount > 0) {
+            vector = blockFactory.newConstant$Type$BlockWith(values[0], valueCount, estimatedBytes).asVector();
         } else {
             if (values.length - valueCount > 1024 || valueCount < (values.length / 2)) {
                 values = Arrays.copyOf(values, valueCount);

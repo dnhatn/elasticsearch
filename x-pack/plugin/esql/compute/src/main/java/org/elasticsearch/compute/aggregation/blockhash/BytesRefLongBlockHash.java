@@ -98,6 +98,19 @@ final class BytesRefLongBlockHash extends BlockHash {
     }
 
     public IntVector add(IntVector bytesHashes, LongVector longsVector) {
+        if (bytesHashes.isConstant()) {
+            boolean singleValue = true;
+            for (int p = 0; p < longsVector.getPositionCount(); p++) {
+                if (longsVector.getLong(p) != longsVector.getLong(0)) {
+                    singleValue = false;
+                    break;
+                }
+            }
+            if (singleValue) {
+                long ord = hashOrdToGroup(finalHash.add(bytesHashes.getInt(0), longsVector.getLong(0)));
+                return blockFactory.newConstantIntVector(Math.toIntExact(ord), longsVector.getPositionCount());
+            }
+        }
         int positions = bytesHashes.getPositionCount();
         final int[] ords = new int[positions];
         for (int i = 0; i < positions; i++) {

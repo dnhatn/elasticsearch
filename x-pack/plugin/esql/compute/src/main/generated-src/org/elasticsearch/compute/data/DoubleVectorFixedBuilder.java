@@ -24,6 +24,7 @@ public final class DoubleVectorFixedBuilder implements DoubleVector.FixedBuilder
      * been built.
      */
     private int nextIndex;
+    private boolean singleValue = true;
 
     private boolean closed;
 
@@ -36,6 +37,9 @@ public final class DoubleVectorFixedBuilder implements DoubleVector.FixedBuilder
 
     @Override
     public DoubleVectorFixedBuilder appendDouble(double value) {
+        if (singleValue && nextIndex > 0 && values[0] != value) {
+            singleValue = false;
+        }
         values[nextIndex++] = value;
         return this;
     }
@@ -66,8 +70,8 @@ public final class DoubleVectorFixedBuilder implements DoubleVector.FixedBuilder
         }
         closed = true;
         DoubleVector vector;
-        if (values.length == 1) {
-            vector = blockFactory.newConstantDoubleBlockWith(values[0], 1, preAdjustedBytes).asVector();
+        if (singleValue && nextIndex > 0) {
+            vector = blockFactory.newConstantDoubleBlockWith(values[0], values.length, preAdjustedBytes).asVector();
         } else {
             vector = blockFactory.newDoubleArrayVector(values, values.length, preAdjustedBytes);
         }

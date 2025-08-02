@@ -23,10 +23,16 @@ import java.io.IOException;
  */
 public sealed interface LongVector extends Vector permits ConstantLongVector, LongArrayVector, LongBigArrayVector, ConstantNullVector {
 
+
     long getLong(int position);
+
+    default boolean isConstant() {
+        return false;
+    }
 
     @Override
     LongBlock asBlock();
+
 
     @Override
     LongVector filter(int... positions);

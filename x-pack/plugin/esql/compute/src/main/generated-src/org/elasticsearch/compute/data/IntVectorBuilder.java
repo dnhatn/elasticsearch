@@ -16,6 +16,7 @@ import java.util.Arrays;
 final class IntVectorBuilder extends AbstractVectorBuilder implements IntVector.Builder {
 
     private int[] values;
+    private boolean singleValue = true;
 
     IntVectorBuilder(int estimatedSize, BlockFactory blockFactory) {
         super(blockFactory);
@@ -28,6 +29,9 @@ final class IntVectorBuilder extends AbstractVectorBuilder implements IntVector.
     public IntVectorBuilder appendInt(int value) {
         ensureCapacity();
         values[valueCount] = value;
+        if (singleValue && valueCount > 0 && values[0] != value) {
+            singleValue = false;
+        }
         valueCount++;
         return this;
     }
@@ -51,8 +55,8 @@ final class IntVectorBuilder extends AbstractVectorBuilder implements IntVector.
     public IntVector build() {
         finish();
         IntVector vector;
-        if (valueCount == 1) {
-            vector = blockFactory.newConstantIntBlockWith(values[0], 1, estimatedBytes).asVector();
+        if (singleValue && valueCount > 0) {
+            vector = blockFactory.newConstantIntBlockWith(values[0], valueCount, estimatedBytes).asVector();
         } else {
             if (values.length - valueCount > 1024 || valueCount < (values.length / 2)) {
                 values = Arrays.copyOf(values, valueCount);

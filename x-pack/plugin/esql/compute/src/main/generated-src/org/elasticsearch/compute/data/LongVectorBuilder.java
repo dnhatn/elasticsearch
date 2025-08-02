@@ -16,6 +16,7 @@ import java.util.Arrays;
 final class LongVectorBuilder extends AbstractVectorBuilder implements LongVector.Builder {
 
     private long[] values;
+    private boolean singleValue = true;
 
     LongVectorBuilder(int estimatedSize, BlockFactory blockFactory) {
         super(blockFactory);
@@ -28,6 +29,9 @@ final class LongVectorBuilder extends AbstractVectorBuilder implements LongVecto
     public LongVectorBuilder appendLong(long value) {
         ensureCapacity();
         values[valueCount] = value;
+        if (singleValue && valueCount > 0 && values[0] != value) {
+            singleValue = false;
+        }
         valueCount++;
         return this;
     }
@@ -51,8 +55,8 @@ final class LongVectorBuilder extends AbstractVectorBuilder implements LongVecto
     public LongVector build() {
         finish();
         LongVector vector;
-        if (valueCount == 1) {
-            vector = blockFactory.newConstantLongBlockWith(values[0], 1, estimatedBytes).asVector();
+        if (singleValue && valueCount > 0) {
+            vector = blockFactory.newConstantLongBlockWith(values[0], valueCount, estimatedBytes).asVector();
         } else {
             if (values.length - valueCount > 1024 || valueCount < (values.length / 2)) {
                 values = Arrays.copyOf(values, valueCount);

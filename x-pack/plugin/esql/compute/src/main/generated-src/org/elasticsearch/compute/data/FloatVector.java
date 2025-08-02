@@ -23,10 +23,16 @@ import java.io.IOException;
  */
 public sealed interface FloatVector extends Vector permits ConstantFloatVector, FloatArrayVector, FloatBigArrayVector, ConstantNullVector {
 
+
     float getFloat(int position);
+
+    default boolean isConstant() {
+        return false;
+    }
 
     @Override
     FloatBlock asBlock();
+
 
     @Override
     FloatVector filter(int... positions);

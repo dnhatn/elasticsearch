@@ -92,6 +92,58 @@ final class ValuesBytesRefAggregators {
         ValuesBytesRefAggregator.GroupingState state,
         BytesRefVector values
     ) {
+        if (values.isConstant()) {
+            final int hashId = Math.toIntExact(BlockHash.hashOrdToGroup(state.bytes.add(values.getBytesRef(0, new BytesRef()))));
+            return  new GroupingAggregatorFunction.AddInput() {
+                @Override
+                public void add(int positionOffset, IntArrayBlock groupIds) {
+                    for (int groupPosition = 0; groupPosition < groupIds.getPositionCount(); groupPosition++) {
+                        if (groupIds.isNull(groupPosition)) {
+                            continue;
+                        }
+                        int groupStart = groupIds.getFirstValueIndex(groupPosition);
+                        int groupEnd = groupStart + groupIds.getValueCount(groupPosition);
+                        for (int g = groupStart; g < groupEnd; g++) {
+                            int groupId = groupIds.getInt(g);
+                            state.addValueOrdinal(groupId, hashId);
+                        }
+                    }
+                }
+
+                @Override
+                public void add(int positionOffset, IntBigArrayBlock groupIds) {
+                    for (int groupPosition = 0; groupPosition < groupIds.getPositionCount(); groupPosition++) {
+                        if (groupIds.isNull(groupPosition)) {
+                            continue;
+                        }
+                        int groupStart = groupIds.getFirstValueIndex(groupPosition);
+                        int groupEnd = groupStart + groupIds.getValueCount(groupPosition);
+                        for (int g = groupStart; g < groupEnd; g++) {
+                            int groupId = groupIds.getInt(g);
+                            state.addValueOrdinal(groupId, hashId);
+                        }
+                    }
+                }
+
+                @Override
+                public void add(int positionOffset, IntVector groupIds) {
+                    if (groupIds.isConstant()) {
+                        state.addValueOrdinal(groupIds.getInt(0), hashId);
+                    } else {
+                        for (int p = 0; p < groupIds.getPositionCount(); p++) {
+                            int groupId = groupIds.getInt(p);
+                            state.addValueOrdinal(groupId, hashId);
+                        }
+                    }
+                }
+
+                @Override
+                public void close() {
+                    delegate.close();
+                }
+            };
+        }
+
         var valuesOrdinal = values.asOrdinals();
         if (valuesOrdinal == null) {
             return delegate;
@@ -143,6 +195,10 @@ final class ValuesBytesRefAggregators {
 
     static IntVector hashDict(ValuesBytesRefAggregator.GroupingState state, BytesRefVector dict) {
         BytesRef scratch = new BytesRef();
+        if (dict.isConstant()) {
+            final long hashId = BlockHash.hashOrdToGroup(state.bytes.add(dict.getBytesRef(0, scratch)));
+            return dict.blockFactory().newConstantIntVector(Math.toIntExact(hashId), dict.getPositionCount());
+        }
         try (var hashIdsBuilder = dict.blockFactory().newIntVectorFixedBuilder(dict.getPositionCount())) {
             for (int p = 0; p < dict.getPositionCount(); p++) {
                 final long hashId = BlockHash.hashOrdToGroup(state.bytes.add(dict.getBytesRef(p, scratch)));

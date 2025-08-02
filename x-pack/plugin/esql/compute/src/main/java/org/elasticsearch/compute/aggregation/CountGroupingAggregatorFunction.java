@@ -154,6 +154,11 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
      * This method is called for count all.
      */
     private void addRawInput(IntVector groups) {
+        if (groups.isConstant()) {
+            int groupId = groups.getInt(0);
+            state.increment(groupId, groups.getPositionCount());
+            return;
+        }
         for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
             int groupId = groups.getInt(groupPosition);
             state.increment(groupId, 1);

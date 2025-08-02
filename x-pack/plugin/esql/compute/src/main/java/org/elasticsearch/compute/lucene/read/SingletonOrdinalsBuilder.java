@@ -73,9 +73,12 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
         try {
             int[] newOrds = new int[valueCount];
             Arrays.fill(newOrds, -1);
+            boolean seenNulls = false;
             for (int ord : ords) {
                 if (ord != -1) {
                     newOrds[ord - minOrd] = 0;
+                } else {
+                    seenNulls = true;
                 }
             }
             // resolve the ordinals and remaps the ordinals
@@ -90,6 +93,12 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
                 bytesVector = bytesBuilder.build();
             } catch (IOException e) {
                 throw new UncheckedIOException("error resolving ordinals", e);
+            }
+            if (seenNulls == false && bytesVector.getPositionCount() == 1) {
+                var constantBytes = blockFactory.newConstantBytesRefBlockWith(bytesVector.getBytesRef(0, new BytesRef()), ords.length);
+                bytesVector.close();
+                bytesVector = null;
+                return constantBytes;
             }
             try (IntBlock.Builder ordinalsBuilder = blockFactory.newIntBlockBuilder(ords.length)) {
                 for (int ord : ords) {
@@ -172,6 +181,25 @@ public class SingletonOrdinalsBuilder implements BlockLoader.SingletonOrdinalsBu
 
     @Override
     public BytesRefBlock build() {
+        if (minOrd == maxOrd) {
+            boolean seenNulls = false;
+            for (int ord : ords) {
+                if (ord == -1) {
+                    seenNulls = true;
+                    break;
+                }
+            }
+            if (seenNulls == false) {
+                final BytesRef bytes;
+                try {
+                    bytes = docValues.lookupOrd(minOrd);
+
+                } catch (IOException e) {
+                    throw new UncheckedIOException("failed to lookup ordinal", e);
+                }
+                return blockFactory.newConstantBytesRefBlockWith(BytesRef.deepCopyOf(bytes), ords.length);
+            }
+        }
         return shouldBuildOrdinalsBlock() ? buildOrdinal() : buildRegularBlock();
     }
 

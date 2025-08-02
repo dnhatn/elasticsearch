@@ -24,10 +24,16 @@ import java.io.IOException;
  */
 public sealed interface BytesRefVector extends Vector permits ConstantBytesRefVector, BytesRefArrayVector, ConstantNullVector,
     OrdinalBytesRefVector {
+
     BytesRef getBytesRef(int position, BytesRef dest);
+
+    default boolean isConstant() {
+        return false;
+    }
 
     @Override
     BytesRefBlock asBlock();
+
 
     /**
      * Returns an ordinal BytesRef vector if this vector is backed by a dictionary and ordinals; otherwise,

@@ -37,6 +37,7 @@ $else$
 public sealed interface $Type$Vector extends Vector permits Constant$Type$Vector, $Type$ArrayVector, $Type$BigArrayVector, ConstantNullVector {
 $endif$
 
+
 $if(BytesRef)$
     BytesRef getBytesRef(int position, BytesRef dest);
 
@@ -44,8 +45,13 @@ $else$
     $type$ get$Type$(int position);
 $endif$
 
+    default boolean isConstant() {
+        return false;
+    }
+
     @Override
     $Type$Block asBlock();
+
 
 $if(BytesRef)$
     /**
