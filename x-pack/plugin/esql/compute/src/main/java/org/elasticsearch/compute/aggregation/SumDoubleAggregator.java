@@ -14,7 +14,11 @@ import org.elasticsearch.compute.ann.GroupingAggregator;
 import org.elasticsearch.compute.ann.IntermediateState;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
+import org.elasticsearch.compute.data.BytesRefVector;
 import org.elasticsearch.compute.data.DoubleBlock;
+import org.elasticsearch.compute.data.DoubleVector;
+import org.elasticsearch.compute.data.IntArrayBlock;
+import org.elasticsearch.compute.data.IntBigArrayBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.core.Releasables;
@@ -74,6 +78,63 @@ class SumDoubleAggregator {
             current.add(inValue, inDelta, groupId);
         }
     }
+
+    public GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleBlock values) {
+        return new GroupingAggregatorFunction.AddInput() {
+            @Override
+            public void add(int positionOffset, IntArrayBlock groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntBigArrayBlock groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntVector groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void close() {
+                delegate.close();
+            }
+        };
+    }
+
+    public GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleVector values) {
+        return new GroupingAggregatorFunction.AddInput() {
+            @Override
+            public void add(int positionOffset, IntArrayBlock groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntBigArrayBlock groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntVector groupIds) {
+                if (groupIds.isConstant()) {
+                    double total = 0;
+                    for (int i = positionOffset; i < values.getPositionCount(); i++) {
+                        total += values.getDouble(i);
+                    }
+                    state.add(total, 0.0, groupIds.getInt(0));
+                } else {
+                    delegate.add(positionOffset, groupIds);
+                }
+            }
+
+            @Override
+            public void close() {
+                delegate.close();
+            }
+        };
+    }
+
 
     public static void evaluateIntermediate(
         GroupingSumState state,
