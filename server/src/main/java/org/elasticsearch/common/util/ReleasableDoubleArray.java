@@ -65,11 +65,6 @@ class ReleasableDoubleArray implements DoubleArray {
     }
 
     @Override
-    public void set(long index, byte[] buf, int offset, int len) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public long ramBytesUsed() {
         /*
          * If we return the size of the buffer that we've sliced

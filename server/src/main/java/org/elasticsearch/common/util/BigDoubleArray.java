@@ -101,11 +101,6 @@ final class BigDoubleArray extends AbstractBigByteArray implements DoubleArray {
     }
 
     @Override
-    public void set(long index, byte[] buf, int offset, int len) {
-        set(index, buf, offset, len, 3);
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
         writePages(out, size, pages, Double.BYTES);
     }

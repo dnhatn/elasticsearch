@@ -150,7 +150,6 @@ class SumDoubleAggregator {
 
     static class GroupingSumState extends AbstractArrayState implements GroupingAggregatorState {
         static final long BYTES_SIZE = Double.BYTES + Double.BYTES;
-
         DoubleArray values;
         DoubleArray deltas;
 
@@ -158,8 +157,8 @@ class SumDoubleAggregator {
             super(bigArrays);
             boolean success = false;
             try {
-                this.values = bigArrays.newDoubleArray(1);
-                this.deltas = bigArrays.newDoubleArray(1);
+                this.values = bigArrays.newDoubleArray(16);
+                this.deltas = bigArrays.newDoubleArray(16);
                 success = true;
             } finally {
                 if (success == false) {

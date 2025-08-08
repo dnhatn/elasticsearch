@@ -325,14 +325,14 @@ public class BigArrays {
         }
     }
 
-    private static class ByteArrayAsDoubleArrayWrapper extends AbstractArrayWrapper implements DoubleArray {
+    private static class DoubleArrayWrapper extends AbstractArrayWrapper implements DoubleArray {
 
-        private final byte[] array;
+        private final double[] array;
 
-        ByteArrayAsDoubleArrayWrapper(BigArrays bigArrays, long size, boolean clearOnResize) {
+        DoubleArrayWrapper(BigArrays bigArrays, long size, boolean clearOnResize) {
             super(bigArrays, size, null, clearOnResize);
             assert size >= 0L && size <= PageCacheRecycler.DOUBLE_PAGE_SIZE;
-            this.array = new byte[(int) size << 3];
+            this.array = new double[(int) size];
         }
 
         @Override
@@ -342,48 +342,47 @@ public class BigArrays {
 
         @Override
         public double get(long index) {
-            assert index >= 0 && index < size();
-            return (double) VH_PLATFORM_NATIVE_DOUBLE.get(array, (int) index << 3);
+            return array[(int) index];
         }
 
         @Override
         public void set(long index, double value) {
-            assert index >= 0 && index < size();
-            VH_PLATFORM_NATIVE_DOUBLE.set(array, (int) index << 3, value);
+            array[(int) index] = value;
         }
 
         @Override
         public double increment(long index, double inc) {
-            assert index >= 0 && index < size();
-            final double ret = (double) VH_PLATFORM_NATIVE_DOUBLE.get(array, (int) index << 3) + inc;
-            VH_PLATFORM_NATIVE_DOUBLE.set(array, (int) index << 3, ret);
-            return ret;
+            int idx = (int) index;
+            array[idx] += inc;
+            return  array[idx];
         }
 
         @Override
         public void fill(long fromIndex, long toIndex, double value) {
-            assert fromIndex >= 0 && fromIndex <= toIndex;
-            assert toIndex >= 0 && toIndex <= size();
-            BigDoubleArray.fill(array, (int) fromIndex, (int) toIndex, value);
+            Arrays.fill(array, (int) fromIndex, (int) toIndex, value);
         }
 
         @Override
         public void fillWith(StreamInput in) throws IOException {
             int numBytes = in.readVInt();
-            in.readBytes(array, 0, numBytes);
-        }
-
-        @Override
-        public void set(long index, byte[] buf, int offset, int len) {
-            assert index >= 0 && index < size();
-            System.arraycopy(buf, offset << 3, array, (int) index << 3, len << 3);
+            byte[] bytes = new byte[numBytes];
+            in.readBytes(bytes, 0, numBytes);
+            int numValues = numBytes >>> 3;
+            for (int i = 0; i < numValues; i++) {
+                double v = (double) VH_PLATFORM_NATIVE_DOUBLE.get(bytes, i << 3);
+                array[i] = v;
+            }
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             int size = (int) size();
+            byte[] bytes = new byte[Math.toIntExact((long) size * Double.BYTES)];
+            for (int index = 0; index < size; index++) {
+                VH_PLATFORM_NATIVE_DOUBLE.set(bytes, index << 3, array[index]);
+            }
             out.writeVInt(size * 8);
-            out.write(array, 0, size * Double.BYTES);
+            out.write(bytes, 0, size * Double.BYTES);
         }
     }
 
@@ -778,7 +777,7 @@ public class BigArrays {
             adjustBreaker(BigDoubleArray.estimateRamBytes(size), false);
             return new BigDoubleArray(size, this, clearOnResize);
         } else {
-            return validate(new ByteArrayAsDoubleArrayWrapper(this, size, clearOnResize));
+            return validate(new DoubleArrayWrapper(this, size, clearOnResize));
         }
     }
 
@@ -794,7 +793,9 @@ public class BigArrays {
         } else {
             AbstractArray arr = (AbstractArray) array;
             final DoubleArray newArray = newDoubleArray(size, arr.clearOnResize);
-            newArray.set(0, ((ByteArrayAsDoubleArrayWrapper) arr).array, 0, (int) Math.min(size, array.size()));
+            for (int i = 0; i < arr.size(); i++) {
+                newArray.set(i, array.get(i));
+            }
             array.close();
             return newArray;
         }
