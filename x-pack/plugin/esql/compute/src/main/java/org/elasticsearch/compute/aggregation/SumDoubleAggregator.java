@@ -91,10 +91,25 @@ class SumDoubleAggregator {
                 delegate.add(positionOffset, groupIds);
             }
 
+            double sumBlock(DoubleBlock values, int positionOffset) {
+                double total = 0;
+                for (int i = positionOffset; i < values.getPositionCount(); i++) {
+                    if (values.isNull(i) == false) {
+                        int vStart = values.getFirstValueIndex(i);
+                        int vEnd = vStart + values.getValueCount(i);
+                        for (int vOffset = vStart; vOffset < vEnd; vOffset++) {
+                            total += values.getDouble(vOffset);
+                        }
+                    }
+                }
+                return total;
+            }
+
             @Override
             public void add(int positionOffset, IntVector groupIds) {
                 if (groupIds.isConstant()) {
-                    state.add(1.0, 0.0, groupIds.getInt(0));
+                    double total = sumBlock(values, positionOffset);
+                    state.add(total, 0.0, groupIds.getInt(0));
                 } else {
                     delegate.add(positionOffset, groupIds);
                 }
@@ -119,10 +134,20 @@ class SumDoubleAggregator {
                 delegate.add(positionOffset, groupIds);
             }
 
+
+            double sumVector(DoubleVector values, int positionOffset) {
+                double total = 0;
+                for (int i = positionOffset; i < values.getPositionCount(); i++) {
+                    total += values.getDouble(i);
+                }
+                return total;
+            }
+
             @Override
             public void add(int positionOffset, IntVector groupIds) {
                 if (groupIds.isConstant()) {
-                    state.add(1.0, 0.0, groupIds.getInt(0));
+                    double total = sumVector(values, positionOffset);
+                    state.add(total, 0.0, groupIds.getInt(0));
                 } else {
                     delegate.add(positionOffset, groupIds);
                 }
