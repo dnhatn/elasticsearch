@@ -122,11 +122,7 @@ class SumDoubleAggregator {
             @Override
             public void add(int positionOffset, IntVector groupIds) {
                 if (groupIds.isConstant()) {
-                    double total = 0;
-                    for (int i = positionOffset; i < values.getPositionCount(); i++) {
-                        total += values.getDouble(i);
-                    }
-                    state.add(total, 0.0, groupIds.getInt(0));
+                    state.add(1.0, 0.0, groupIds.getInt(0));
                 } else {
                     delegate.add(positionOffset, groupIds);
                 }
