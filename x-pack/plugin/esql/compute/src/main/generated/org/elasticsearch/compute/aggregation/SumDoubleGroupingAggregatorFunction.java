@@ -67,7 +67,7 @@ public final class SumDoubleGroupingAggregatorFunction implements GroupingAggreg
       if (vBlock.mayHaveNulls()) {
         state.enableGroupIdTracking(seenGroupIds);
       }
-      return new GroupingAggregatorFunction.AddInput() {
+      var addInput = new GroupingAggregatorFunction.AddInput() {
         @Override
         public void add(int positionOffset, IntArrayBlock groupIds) {
           addRawInput(positionOffset, groupIds, vBlock);
@@ -87,6 +87,7 @@ public final class SumDoubleGroupingAggregatorFunction implements GroupingAggreg
         public void close() {
         }
       };
+      return SumDoubleAggregator.wrapAddInput(addInput, state, vBlock);
     }
     var addInput = new GroupingAggregatorFunction.AddInput() {
       @Override

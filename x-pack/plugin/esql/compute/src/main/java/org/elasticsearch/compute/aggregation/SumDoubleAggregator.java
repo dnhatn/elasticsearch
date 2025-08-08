@@ -79,6 +79,49 @@ class SumDoubleAggregator {
         }
     }
 
+    public static GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleBlock values) {
+        return new GroupingAggregatorFunction.AddInput() {
+            @Override
+            public void add(int positionOffset, IntArrayBlock groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntBigArrayBlock groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntVector groupIds) {
+                if (groupIds.isConstant()) {
+                    double total = 0;
+                    boolean seen = false;
+                    for (int i = positionOffset; i < values.getPositionCount(); i++) {
+                        int valueCount = values.getValueCount(i);
+                        if (valueCount > 0) {
+                            seen = true;
+                            int vStart = values.getFirstValueIndex(i);
+                            int vEnd = vStart + valueCount;
+                            for (int vOffset = vStart; vOffset < vEnd; vOffset++) {
+                                total += values.getDouble(vOffset);
+                            }
+                        }
+                    }
+                    if (seen) {
+                        state.add(total, 0.0, groupIds.getInt(0));
+                    }
+                } else {
+                    delegate.add(positionOffset, groupIds);
+                }
+            }
+
+            @Override
+            public void close() {
+                delegate.close();
+            }
+        };
+    }
+
     public static GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleVector values) {
         return new GroupingAggregatorFunction.AddInput() {
             @Override
@@ -110,7 +153,6 @@ class SumDoubleAggregator {
             }
         };
     }
-
 
     public static void evaluateIntermediate(
         GroupingSumState state,
