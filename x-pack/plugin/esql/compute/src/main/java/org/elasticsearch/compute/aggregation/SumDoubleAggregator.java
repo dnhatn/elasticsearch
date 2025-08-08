@@ -79,31 +79,7 @@ class SumDoubleAggregator {
         }
     }
 
-    public GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleBlock values) {
-        return new GroupingAggregatorFunction.AddInput() {
-            @Override
-            public void add(int positionOffset, IntArrayBlock groupIds) {
-                delegate.add(positionOffset, groupIds);
-            }
-
-            @Override
-            public void add(int positionOffset, IntBigArrayBlock groupIds) {
-                delegate.add(positionOffset, groupIds);
-            }
-
-            @Override
-            public void add(int positionOffset, IntVector groupIds) {
-                delegate.add(positionOffset, groupIds);
-            }
-
-            @Override
-            public void close() {
-                delegate.close();
-            }
-        };
-    }
-
-    public GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleVector values) {
+    public static GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleVector values) {
         return new GroupingAggregatorFunction.AddInput() {
             @Override
             public void add(int positionOffset, IntArrayBlock groupIds) {

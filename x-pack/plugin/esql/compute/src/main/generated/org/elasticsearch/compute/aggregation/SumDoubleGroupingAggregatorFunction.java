@@ -88,7 +88,7 @@ public final class SumDoubleGroupingAggregatorFunction implements GroupingAggreg
         }
       };
     }
-    return new GroupingAggregatorFunction.AddInput() {
+    var addInput = new GroupingAggregatorFunction.AddInput() {
       @Override
       public void add(int positionOffset, IntArrayBlock groupIds) {
         addRawInput(positionOffset, groupIds, vVector);
@@ -108,6 +108,7 @@ public final class SumDoubleGroupingAggregatorFunction implements GroupingAggreg
       public void close() {
       }
     };
+    return SumDoubleAggregator.wrapAddInput(addInput, state, vVector);
   }
 
   private void addRawInput(int positionOffset, IntArrayBlock groups, DoubleBlock vBlock) {
