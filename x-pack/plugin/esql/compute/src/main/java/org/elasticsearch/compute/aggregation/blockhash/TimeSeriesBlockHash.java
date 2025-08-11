@@ -93,11 +93,13 @@ public final class TimeSeriesBlockHash extends BlockHash {
             tsidDict = tsidVector.getDictionaryVector();
             tsidOrdinals = tsidVector.getOrdinalsVector();
         }
+        final LongVector timestampVector = getTimestampVector(page);
+
         try (var ordsBuilder = blockFactory.newIntVectorBuilder(tsidOrdinals.getPositionCount())) {
             final BytesRef spare = new BytesRef();
             final BytesRef lastTsid = new BytesRef();
-            final LongVector timestampVector = getTimestampVector(page);
             int lastOrd = -1;
+            int addedGroups = 0;
             for (int i = 0; i < tsidOrdinals.getPositionCount(); i++) {
                 final int newOrd = tsidOrdinals.getInt(i);
                 boolean newGroup = false;
@@ -124,11 +126,19 @@ public final class TimeSeriesBlockHash extends BlockHash {
                     timestampArray.append(timestamp);
                     lastTimestamp = timestamp;
                     currentTimestampCount++;
+                    addedGroups++;
                 }
                 ordsBuilder.appendInt(timestampArray.count - 1);
             }
             try (var ords = ordsBuilder.build()) {
-                addInput.add(0, ords);
+                if (addedGroups == 1) {
+                    int singleOrd = ords.getInt(0);
+                    try(var constOrds = blockFactory.newConstantIntVector(singleOrd, ords.getPositionCount())){
+                        addInput.add(0, constOrds);
+                    }
+                } else {
+                    addInput.add(0, ords);
+                }
             }
         }
     }
