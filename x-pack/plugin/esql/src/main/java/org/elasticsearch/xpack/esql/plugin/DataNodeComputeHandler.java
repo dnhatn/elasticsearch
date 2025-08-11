@@ -18,6 +18,7 @@ import org.elasticsearch.action.support.RefCountingRunnable;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.project.ProjectResolver;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.compute.operator.DriverCompletionInfo;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.compute.operator.exchange.ExchangeSink;
@@ -49,11 +50,11 @@ import org.elasticsearch.xpack.esql.planner.PlannerUtils;
 import org.elasticsearch.xpack.esql.session.Configuration;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -229,6 +230,9 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
         private final ExchangeSink blockingSink; // block until we have completed on all shards or the coordinator has enough data
         private final boolean failFastOnShardFailure;
         private final Map<ShardId, Exception> shardLevelFailures;
+        private final AtomicInteger nextShardIndex = new AtomicInteger(0);
+        private final int maxAllowedDrivers;
+        private final Semaphore driverPermits;
 
         DataNodeRequestExecutor(
             EsqlFlags flags,
@@ -237,6 +241,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             ExchangeSinkHandler exchangeSink,
             int maxConcurrentShards,
             boolean failFastOnShardFailure,
+            int maxAllowedDrivers,
             Map<ShardId, Exception> shardLevelFailures,
             ComputeListener computeListener
         ) {
@@ -248,18 +253,34 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             this.maxConcurrentShards = maxConcurrentShards;
             this.failFastOnShardFailure = failFastOnShardFailure;
             this.shardLevelFailures = shardLevelFailures;
+            this.maxAllowedDrivers = maxAllowedDrivers;
+            this.driverPermits = new Semaphore(maxAllowedDrivers);
             this.blockingSink = exchangeSink.createExchangeSink(() -> {});
         }
 
-        void start() {
-            runBatch(0);
+        void execute() {
+            while (driverPermits.tryAcquire()) {
+                boolean started = false;
+                try {
+                    int startBatchIndex = nextShardIndex.getAndUpdate(start -> Math.min(start + maxConcurrentShards, request.shardIds().size()));
+                    if (startBatchIndex == request.shardIds().size()) {
+                        return;
+                    }
+                    final int endBatchIndex = Math.min(startBatchIndex + maxConcurrentShards, request.shardIds().size());
+                    runBatch(startBatchIndex, endBatchIndex);
+                    started = true;
+                } finally {
+                    if (started == false) {
+                        driverPermits.release();
+                    }
+                }
+            }
         }
 
-        private void runBatch(int startBatchIndex) {
+        private void runBatch(int startBatchIndex, int endBatchIndex) {
             final Configuration configuration = request.configuration();
             final String clusterAlias = request.clusterAlias();
             final var sessionId = request.sessionId();
-            final int endBatchIndex = Math.min(startBatchIndex + maxConcurrentShards, request.shardIds().size());
             final AtomicInteger pagesProduced = new AtomicInteger();
             List<ShardId> shardIds = request.shardIds().subList(startBatchIndex, endBatchIndex);
             ActionListener<DriverCompletionInfo> batchListener = new ActionListener<>() {
@@ -267,8 +288,9 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
 
                 @Override
                 public void onResponse(DriverCompletionInfo info) {
+                    driverPermits.release();
                     try {
-                        onBatchCompleted(endBatchIndex);
+                        onBatchCompleted();
                     } finally {
                         ref.onResponse(info);
                     }
@@ -276,6 +298,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
 
                 @Override
                 public void onFailure(Exception e) {
+                    driverPermits.release();
                     if (pagesProduced.get() == 0 && failFastOnShardFailure == false) {
                         for (ShardId shardId : shardIds) {
                             addShardLevelFailure(shardId, e);
@@ -380,10 +403,11 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             }
         }
 
-        private void onBatchCompleted(int lastBatchIndex) {
-            if (lastBatchIndex < request.shardIds().size() && exchangeSink.isFinished() == false) {
-                runBatch(lastBatchIndex);
-            } else {
+        private void onBatchCompleted() {
+            if (exchangeSink.isFinished() == false) {
+                execute();
+            }
+            if (nextShardIndex.get() == request.shardIds().size() && driverPermits.tryAcquire(maxAllowedDrivers)) {
                 // don't return until all pages are fetched
                 var completionListener = computeListener.acquireAvoid();
                 exchangeSink.addCompletionListener(
@@ -410,7 +434,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
         boolean failFastOnShardFailure,
         ActionListener<DataNodeComputeResponse> listener
     ) {
-        final Map<ShardId, Exception> shardLevelFailures = new HashMap<>();
+        final Map<ShardId, Exception> shardLevelFailures = ConcurrentCollections.newConcurrentMap();
         try (
             ComputeListener computeListener = new ComputeListener(
                 transportService.getThreadPool(),
@@ -433,12 +457,13 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                     request,
                     task,
                     internalSink,
-                    request.configuration().pragmas().maxConcurrentShardsPerNode(),
+                    1,
                     failFastOnShardFailure,
+                    request.configuration().pragmas().taskConcurrency(),
                     shardLevelFailures,
                     computeListener
                 );
-                dataNodeRequestExecutor.start();
+                dataNodeRequestExecutor.execute();
                 // run the node-level reduction
                 var exchangeSource = new ExchangeSourceHandler(1, esqlExecutor);
                 exchangeSource.addRemoteSink(internalSink::fetchPageAsync, true, () -> {}, 1, ActionListener.noop());
