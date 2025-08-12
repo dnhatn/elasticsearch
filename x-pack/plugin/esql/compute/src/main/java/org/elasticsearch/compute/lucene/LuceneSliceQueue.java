@@ -189,7 +189,7 @@ public final class LuceneSliceQueue {
                 final List<List<PartialLeafReaderContext>> slices = new ArrayList<>();
                 int docsAllocatedInCurrentSlice = 0;
                 List<PartialLeafReaderContext> currentSlice = null;
-                int maxDocsPerSlice = normalMaxDocsPerSlice + extraDocsInFirstSlice;
+                int maxDocsPerSlice = Math.min(normalMaxDocsPerSlice + extraDocsInFirstSlice, MAX_DOCS_PER_SLICE);
                 for (LeafReaderContext ctx : searcher.getLeafContexts()) {
                     final int numDocsInLeaf = ctx.reader().maxDoc();
                     int minDoc = 0;
