@@ -227,6 +227,7 @@ public final class LuceneSliceQueue {
                     .sum() != totalDocCount) {
                     throw new IllegalStateException("wrong doc count");
                 }
+                System.err.println("--> slices: " + slices);
                 return slices;
             }
         };

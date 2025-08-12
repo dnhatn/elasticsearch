@@ -170,11 +170,12 @@ public abstract class LuceneOperator extends SourceOperator {
                     doneCollecting = true;
                     return null;
                 }
+                System.err.println("--> start new slice " + currentSlice);
                 processedSlices++;
                 processedShards.add(currentSlice.shardContext().shardIdentifier());
             }
             final PartialLeafReaderContext partialLeaf = currentSlice.getLeaf(sliceIndex++);
-            logger.trace("Starting {}", partialLeaf);
+            System.err.println("--> starting leaf " + partialLeaf + " of slice " + currentSlice);
             final LeafReaderContext leaf = partialLeaf.leafReaderContext();
             if (currentScorer == null // First time
                 || currentScorer.leafReaderContext() != leaf // Moved to a new leaf
