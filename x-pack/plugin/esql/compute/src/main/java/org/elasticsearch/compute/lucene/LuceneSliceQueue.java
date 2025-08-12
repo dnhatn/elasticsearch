@@ -16,6 +16,7 @@ import org.apache.lucene.search.Weight;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Nullable;
 
 import java.io.IOException;
@@ -27,7 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Function;
 
 /**
@@ -77,18 +78,63 @@ public final class LuceneSliceQueue {
     public static final int MAX_SEGMENTS_PER_SLICE = 5; // copied from IndexSearcher
 
     private final int totalSlices;
-    private final Queue<LuceneSlice> slices;
+    private final AtomicReferenceArray<LuceneSlice> slices;
+    private final Queue<Integer> startedPositions;
+    private final Queue<Integer> followedPositions;
     private final Map<String, PartitioningStrategy> partitioningStrategies;
 
-    private LuceneSliceQueue(List<LuceneSlice> slices, Map<String, PartitioningStrategy> partitioningStrategies) {
-        this.totalSlices = slices.size();
-        this.slices = new ConcurrentLinkedQueue<>(slices);
+    LuceneSliceQueue(List<LuceneSlice> sliceList, Map<String, PartitioningStrategy> partitioningStrategies) {
+        this.totalSlices = sliceList.size();
+        this.slices = new AtomicReferenceArray<>(sliceList.size());
+        for (int i = 0; i < sliceList.size(); i++) {
+            slices.set(i, sliceList.get(i));
+        }
         this.partitioningStrategies = partitioningStrategies;
+        this.startedPositions = ConcurrentCollections.newQueue();
+        this.followedPositions = ConcurrentCollections.newQueue();
+        for (LuceneSlice slice : sliceList) {
+            var leaf = slice.leaves().getFirst();
+            if (leaf.minDoc() == 0) {
+                startedPositions.add(slice.slicePosition());
+            } else {
+                followedPositions.add(slice.slicePosition());
+            }
+        }
     }
 
+    /**
+     * Retrieves the next available {@link LuceneSlice} for processing.
+     * If a previous slice is provided, this method first attempts to return the next sequential slice to maintain segment affinity
+     * and minimize the cost of switching between segments.
+     * <p>
+     * If no sequential slice is available, it returns the next slice from the {@code startedPositions} queue, which starts a new
+     * group of segments. If all started positions are exhausted, it retrieves a slice from the {@code followedPositions} queue,
+     * enabling work stealing.
+     *
+     * @param prev the previously returned {@link LuceneSlice}, or {@code null} if starting
+     * @return the next available {@link LuceneSlice}, or {@code null} if exhausted
+     */
     @Nullable
-    public LuceneSlice nextSlice() {
-        return slices.poll();
+    public LuceneSlice nextSlice(LuceneSlice prev) {
+        if (prev != null) {
+            final int nextId = prev.slicePosition() + 1;
+            if (nextId < totalSlices) {
+                var slice = slices.getAndSet(nextId, null);
+                if (slice != null) {
+                    return slice;
+                }
+            }
+        }
+        for (var preferredIndices : List.of(startedPositions, followedPositions)) {
+            Integer nextId;
+            while ((nextId = preferredIndices.poll()) != null) {
+                var slice = slices.getAndSet(nextId, null);
+                if (slice != null) {
+                    return slice;
+                }
+            }
+        }
+        return null;
     }
 
     public int totalSlices() {
@@ -103,7 +149,14 @@ public final class LuceneSliceQueue {
     }
 
     public Collection<String> remainingShardsIdentifiers() {
-        return slices.stream().map(slice -> slice.shardContext().shardIdentifier()).toList();
+        List<String> remaining = new ArrayList<>(slices.length());
+        for (int i = 0; i < slices.length(); i++) {
+            LuceneSlice slice = slices.get(i);
+            if (slice != null) {
+                remaining.add(slice.shardContext().shardIdentifier());
+            }
+        }
+        return remaining;
     }
 
     public static LuceneSliceQueue create(
@@ -117,6 +170,7 @@ public final class LuceneSliceQueue {
         List<LuceneSlice> slices = new ArrayList<>();
         Map<String, PartitioningStrategy> partitioningStrategies = new HashMap<>(contexts.size());
 
+        int nextSliceId = 0;
         for (ShardContext ctx : contexts) {
             for (QueryAndTags queryAndExtra : queryFunction.apply(ctx)) {
                 var scoreMode = scoreModeFunction.apply(ctx);
@@ -140,7 +194,7 @@ public final class LuceneSliceQueue {
                 Weight weight = weight(ctx, query, scoreMode);
                 for (List<PartialLeafReaderContext> group : groups) {
                     if (group.isEmpty() == false) {
-                        slices.add(new LuceneSlice(ctx, group, weight, queryAndExtra.tags));
+                        slices.add(new LuceneSlice(nextSliceId++, ctx, group, weight, queryAndExtra.tags));
                     }
                 }
             }
