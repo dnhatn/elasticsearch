@@ -184,8 +184,8 @@ public final class LuceneSliceQueue {
             @Override
             List<List<PartialLeafReaderContext>> groups(IndexSearcher searcher, int requestedNumSlices) {
                 final int totalDocCount = searcher.getIndexReader().maxDoc();
-                final int normalMaxDocsPerSlice = totalDocCount / requestedNumSlices;
-                final int extraDocsInFirstSlice = totalDocCount % requestedNumSlices;
+                final int normalMaxDocsPerSlice = Math.min(totalDocCount / requestedNumSlices, MAX_DOCS_PER_SLICE);
+                final int extraDocsInFirstSlice = totalDocCount - (totalDocCount / normalMaxDocsPerSlice * normalMaxDocsPerSlice);
                 final List<List<PartialLeafReaderContext>> slices = new ArrayList<>();
                 int docsAllocatedInCurrentSlice = 0;
                 List<PartialLeafReaderContext> currentSlice = null;
@@ -215,9 +215,6 @@ public final class LuceneSliceQueue {
                 }
                 if (currentSlice != null) {
                     slices.add(currentSlice);
-                }
-                if (requestedNumSlices < totalDocCount && slices.size() != requestedNumSlices) {
-                    throw new IllegalStateException("wrong number of slices, expected " + requestedNumSlices + " but got " + slices.size());
                 }
                 if (slices.stream()
                     .flatMapToInt(
