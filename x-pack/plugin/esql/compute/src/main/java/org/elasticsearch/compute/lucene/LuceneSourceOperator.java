@@ -30,12 +30,14 @@ import org.elasticsearch.compute.operator.Limiter;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.RefCounted;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 import static org.apache.lucene.search.ScoreMode.COMPLETE;
@@ -114,8 +116,17 @@ public class LuceneSourceOperator extends LuceneOperator {
         /**
          * Pick a strategy for the {@link DataPartitioning#AUTO} partitioning.
          */
-        public static Function<Query, PartitioningStrategy> autoStrategy(int limit) {
-            return limit == NO_LIMIT ? Factory::highSpeedAutoStrategy : Factory::lowOverheadAutoStrategy;
+        public static BiFunction<ShardContext, Query, PartitioningStrategy> autoStrategy(int limit) {
+            if (limit == NO_LIMIT) {
+                return (shardContext, query) -> {
+                    if (shardContext.indexMode() == IndexMode.TIME_SERIES) {
+                        return DOC;
+                    }
+                    return Factory.highSpeedAutoStrategy(query);
+                };
+            } else {
+                return (shardContext, query) -> Factory.lowOverheadAutoStrategy(query);
+            }
         }
 
         /**

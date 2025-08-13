@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
@@ -162,7 +163,7 @@ public final class LuceneSliceQueue {
         List<? extends ShardContext> contexts,
         Function<ShardContext, List<QueryAndTags>> queryFunction,
         DataPartitioning dataPartitioning,
-        Function<Query, PartitioningStrategy> autoStrategy,
+        BiFunction<ShardContext, Query, PartitioningStrategy> autoStrategy,
         int taskConcurrency,
         Function<ShardContext, ScoreMode> scoreModeFunction
     ) {
@@ -310,7 +311,7 @@ public final class LuceneSliceQueue {
 
         private static PartitioningStrategy pick(
             DataPartitioning dataPartitioning,
-            Function<Query, PartitioningStrategy> autoStrategy,
+            BiFunction<ShardContext, Query, PartitioningStrategy> autoStrategy,
             ShardContext ctx,
             Query query
         ) {
@@ -328,11 +329,15 @@ public final class LuceneSliceQueue {
          */
         private static final int SMALL_INDEX_BOUNDARY = MAX_DOCS_PER_SLICE;
 
-        private static PartitioningStrategy forAuto(Function<Query, PartitioningStrategy> autoStrategy, ShardContext ctx, Query query) {
+        private static PartitioningStrategy forAuto(
+            BiFunction<ShardContext, Query, PartitioningStrategy> autoStrategy,
+            ShardContext ctx,
+            Query query
+        ) {
             if (ctx.searcher().getIndexReader().maxDoc() < SMALL_INDEX_BOUNDARY) {
                 return PartitioningStrategy.SHARD;
             }
-            return autoStrategy.apply(query);
+            return autoStrategy.apply(ctx, query);
         }
     }
 

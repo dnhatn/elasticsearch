@@ -10,6 +10,7 @@ package org.elasticsearch.compute.lucene;
 import org.apache.lucene.search.IndexSearcher;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.core.RefCounted;
+import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.SourceLoader;
@@ -60,4 +61,6 @@ public interface ShardContext extends RefCounted {
      * By default, this delegate to {@link org.elasticsearch.index.query.SearchExecutionContext#getFieldType(String)}
      */
     MappedFieldType fieldType(String name);
+
+    IndexMode indexMode();
 }
