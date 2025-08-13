@@ -93,8 +93,7 @@ public final class LuceneSliceQueue {
         this.startedPositions = ConcurrentCollections.newQueue();
         this.followedPositions = ConcurrentCollections.newQueue();
         for (LuceneSlice slice : sliceList) {
-            var leaf = slice.leaves().getFirst();
-            if (leaf.minDoc() == 0) {
+            if (slice.leaves().stream().anyMatch(s -> s.minDoc() == 0)) {
                 startedPositions.add(slice.slicePosition());
             } else {
                 followedPositions.add(slice.slicePosition());
@@ -238,6 +237,7 @@ public final class LuceneSliceQueue {
             @Override
             List<List<PartialLeafReaderContext>> groups(IndexSearcher searcher, int requestedNumSlices) {
                 final int totalDocCount = searcher.getIndexReader().maxDoc();
+                requestedNumSlices = Math.max(1, totalDocCount / Math.clamp(totalDocCount / requestedNumSlices, 1, MAX_DOCS_PER_SLICE));
                 final int normalMaxDocsPerSlice = totalDocCount / requestedNumSlices;
                 final int extraDocsInFirstSlice = totalDocCount % requestedNumSlices;
                 final List<List<PartialLeafReaderContext>> slices = new ArrayList<>();

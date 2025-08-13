@@ -9,9 +9,11 @@ package org.elasticsearch.compute.lucene;
 
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.ByteVectorValues;
+import org.apache.lucene.index.CompositeReader;
 import org.apache.lucene.index.DocValuesSkipper;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafMetaData;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
@@ -23,6 +25,7 @@ import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.TermVectors;
 import org.apache.lucene.index.Terms;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.util.Bits;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
@@ -39,16 +42,18 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class LuceneSliceQueueTests extends ESTestCase {
 
     public void testBasics() {
 
-        LeafReaderContext leaf1 = new MockLeafReader().getContext();
-        LeafReaderContext leaf2 = new MockLeafReader().getContext();
-        LeafReaderContext leaf3 = new MockLeafReader().getContext();
-        LeafReaderContext leaf4 = new MockLeafReader().getContext();
+        LeafReaderContext leaf1 = new MockLeafReader(1000).getContext();
+        LeafReaderContext leaf2 = new MockLeafReader(1000).getContext();
+        LeafReaderContext leaf3 = new MockLeafReader(1000).getContext();
+        LeafReaderContext leaf4 = new MockLeafReader(1000).getContext();
         var slice1 = new LuceneSlice(0, null, List.of(new PartialLeafReaderContext(leaf1, 0, 10)), null, null);
 
         var slice2 = new LuceneSlice(1, null, List.of(new PartialLeafReaderContext(leaf2, 0, 10)), null, null);
@@ -108,7 +113,7 @@ public class LuceneSliceQueueTests extends ESTestCase {
             int numSegments = randomIntBetween(1, 10);
             for (int segment = 0; segment < numSegments; segment++) {
                 int numSlices = randomBoolean() ? 1 : between(2, 5);
-                LeafReaderContext leafContext = new MockLeafReader().getContext();
+                LeafReaderContext leafContext = new MockLeafReader(randomIntBetween(1000, 2000)).getContext();
                 for (int i = 0; i < numSlices; i++) {
                     final int minDoc = i * 10;
                     final int maxDoc = minDoc + 10;
@@ -163,7 +168,50 @@ public class LuceneSliceQueueTests extends ESTestCase {
         assertThat(Set.copyOf(allProcessedSlices), equalTo(Set.copyOf(sliceList)));
     }
 
+    public void testDocPartitioningBigSegments() {
+        LeafReaderContext leaf1 = new MockLeafReader(1_000_400).getContext();
+        LeafReaderContext leaf2 = new MockLeafReader(1_500_100).getContext();
+        LeafReaderContext leaf3 = new MockLeafReader(4_100_700).getContext();
+        IndexSearcher indexSearcher = mockIndexSearcher(List.of(leaf1, leaf2, leaf3));
+        List<List<PartialLeafReaderContext>> slices = LuceneSliceQueue.PartitioningStrategy.DOC.groups(indexSearcher, between(1, 10));
+        // 1_000_400 + 1_500_100 + 4_100_700 = 6_601_200 / 250_000 = 26
+        assertThat(slices, hasSize(26));
+        List<LuceneSlice> sliceList = new ArrayList<>();
+        for (int i = 0; i < slices.size(); i++) {
+            LuceneSlice slice = new LuceneSlice(i, mock(ShardContext.class), slices.get(i), null, null);
+            sliceList.add(slice);
+        }
+        LuceneSliceQueue queue = new LuceneSliceQueue(sliceList, Map.of());
+        var first = queue.nextSlice(null);
+        assertEquals(0, first.slicePosition());
+        var second = queue.nextSlice(null);
+        assertEquals(3, second.slicePosition());
+        assertEquals(1, (first = queue.nextSlice(first)).slicePosition());
+        assertEquals(2, (first = queue.nextSlice(first)).slicePosition());
+        assertEquals(4, (second = queue.nextSlice(second)).slicePosition());
+        assertEquals(9, (first = queue.nextSlice(first)).slicePosition());
+        assertEquals(10, (first = queue.nextSlice(first)).slicePosition());
+        assertEquals(5, (second = queue.nextSlice(second)).slicePosition());
+        assertEquals(6, (second = queue.nextSlice(second)).slicePosition());
+
+    }
+
+    static IndexSearcher mockIndexSearcher(List<LeafReaderContext> contexts) {
+        IndexSearcher indexSearcher = mock(IndexSearcher.class);
+        when(indexSearcher.getLeafContexts()).thenReturn(contexts);
+        IndexReader indexReader = mock(CompositeReader.class);
+        when(indexReader.maxDoc()).thenReturn(contexts.stream().mapToInt(c -> c.reader().maxDoc()).sum());
+        when(indexSearcher.getIndexReader()).thenReturn(indexReader);
+        return indexSearcher;
+    }
+
     static class MockLeafReader extends LeafReader {
+        private final int maxDoc;
+
+        MockLeafReader(int maxDoc) {
+            this.maxDoc = maxDoc;
+        }
+
         @Override
         public CacheHelper getCoreCacheHelper() {
             throw new UnsupportedOperationException();
@@ -261,12 +309,12 @@ public class LuceneSliceQueueTests extends ESTestCase {
 
         @Override
         public int numDocs() {
-            throw new UnsupportedOperationException();
+            return maxDoc;
         }
 
         @Override
         public int maxDoc() {
-            throw new UnsupportedOperationException();
+            return maxDoc;
         }
 
         @Override
