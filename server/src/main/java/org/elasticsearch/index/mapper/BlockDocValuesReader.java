@@ -430,7 +430,7 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
                         throw new IllegalStateException("docs within same block must be in order");
                     }
                     if (docValues.advanceExact(doc)) {
-                        builder.appendDouble(toDouble.convert(docValues.longValue()));
+                        builder.appendDouble(docValues.longValue());
                     } else {
                         builder.appendNull();
                     }
