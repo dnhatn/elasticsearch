@@ -1373,7 +1373,6 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 );
                 return new NumericDocValues() {
 
-                    private final TSDBDocValuesEncoder decoder = new TSDBDocValuesEncoder(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE);
                     private long currentBlockIndex = -1;
                     private final long[] currentBlock = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
 
@@ -1414,9 +1413,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                                 valuesData.seek(indexReader.get(blockIndex));
                             }
                             currentBlockIndex = blockIndex;
-                            for (int v = 0; v < currentBlock.length; v++) {
-                                currentBlock[v] = valuesData.readLong();
-                            }
+                            valuesData.readLongs(currentBlock, 0, currentBlock.length);
                         }
                         return currentBlock[blockInIndex];
                     }
