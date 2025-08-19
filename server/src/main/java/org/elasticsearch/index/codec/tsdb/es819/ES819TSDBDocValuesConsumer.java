@@ -155,7 +155,6 @@ final class ES819TSDBDocValuesConsumer extends XDocValuesConsumer {
             if (numValues > 0) {
                 assert numDocsWithValue > 0;
                 // Special case for maxOrd of 1, signal -1 that no blocks will be written
-                meta.writeInt(maxOrd != 1 ? ES819TSDBDocValuesFormat.DIRECT_MONOTONIC_BLOCK_SHIFT : -1);
                 final ByteBuffersDataOutput indexOut = new ByteBuffersDataOutput();
                 final DirectMonotonicWriter indexWriter = DirectMonotonicWriter.getInstance(
                     meta,
@@ -165,8 +164,47 @@ final class ES819TSDBDocValuesConsumer extends XDocValuesConsumer {
                 );
 
                 final long valuesDataOffset = data.getFilePointer();
-                // Special case for maxOrd of 1, skip writing the blocks
-                if (maxOrd != 1) {
+                if (maxOrd == 1) {
+                    meta.writeInt(-1);
+                } else if (metricTypes.apply(field.name) == TimeSeriesParams.MetricType.GAUGE
+                    && DocValues.unwrapSingleton(valuesProducer.getSortedNumeric(field)) != null) {
+                    // gauge encoding
+                    meta.writeInt(-3);
+                    meta.writeInt(ES819TSDBDocValuesFormat.DIRECT_MONOTONIC_BLOCK_SHIFT);
+                    final long[] buffer = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
+                    int bufferSize = 0;
+                    values = valuesProducer.getSortedNumeric(field);
+                    if (enableOptimizedMerge && numDocsWithValue < maxDoc) {
+                        disiAccumulator = new DISIAccumulator(dir, context, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);
+                    }
+                    for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
+                        if (disiAccumulator != null) {
+                            disiAccumulator.addDocId(doc);
+                        }
+                        final int count = values.docValueCount();
+                        if (offsetsAccumulator != null) {
+                            offsetsAccumulator.addDoc(count);
+                        }
+                        for (int i = 0; i < count; ++i) {
+                            buffer[bufferSize++] = values.nextValue();
+                            if (bufferSize == ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE) {
+                                indexWriter.add(data.getFilePointer() - valuesDataOffset);
+                                for (long v : buffer) {
+                                    data.writeLong(v);
+                                }
+                                bufferSize = 0;
+                            }
+                        }
+                    }
+                    if (bufferSize > 0) {
+                        indexWriter.add(data.getFilePointer() - valuesDataOffset);
+                        Arrays.fill(buffer, bufferSize, ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE, 0L);
+                        for (long v : buffer) {
+                            data.writeLong(v);
+                        }
+                    }
+                } else {
+                    meta.writeInt(ES819TSDBDocValuesFormat.DIRECT_MONOTONIC_BLOCK_SHIFT);
                     final long[] buffer = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
                     int bufferSize = 0;
                     final TSDBDocValuesEncoder encoder = new TSDBDocValuesEncoder(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE);

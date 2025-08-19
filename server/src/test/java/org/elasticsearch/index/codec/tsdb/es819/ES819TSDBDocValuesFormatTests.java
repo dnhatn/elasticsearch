@@ -45,6 +45,7 @@ import org.elasticsearch.index.codec.tsdb.es819.ES819TSDBDocValuesProducer.BaseS
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.BlockLoader.OptionalColumnAtATimeReader;
 import org.elasticsearch.index.mapper.TestBlock;
+import org.elasticsearch.index.mapper.TimeSeriesParams;
 import org.elasticsearch.test.ESTestCase;
 
 import java.io.IOException;
@@ -65,7 +66,7 @@ public class ES819TSDBDocValuesFormatTests extends ES87TSDBDocValuesFormatTests 
 
     private final Codec codec = new Elasticsearch900Lucene101Codec() {
 
-        final ES819TSDBDocValuesFormat docValuesFormat = new ES819TSDBDocValuesFormat();
+        final ES819TSDBDocValuesFormat docValuesFormat = new ES819TSDBDocValuesFormat(f -> ESTestCase.randomFrom(TimeSeriesParams.MetricType.values()));
 
         @Override
         public DocValuesFormat getDocValuesFormatForField(String field) {

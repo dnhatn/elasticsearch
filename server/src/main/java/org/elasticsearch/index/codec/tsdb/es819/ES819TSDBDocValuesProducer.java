@@ -987,7 +987,11 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         // Change compared to ES87TSDBDocValuesProducer:
         entry.numDocsWithField = meta.readInt();
         if (entry.numValues > 0) {
-            final int indexBlockShift = meta.readInt();
+            int indexBlockShift = meta.readInt();
+            if (indexBlockShift == -3) {
+                entry.encodingType = 1;
+                indexBlockShift = meta.readInt();
+            }
             // Special case, -1 means there are no blocks, so no need to load the metadata for it
             // -1 is written when there the cardinality of a field is exactly one.
             if (indexBlockShift != -1) {
@@ -1214,6 +1218,211 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         final RandomAccessInput indexSlice = data.randomAccessSlice(entry.indexOffset, entry.indexLength);
         final DirectMonotonicReader indexReader = DirectMonotonicReader.getInstance(entry.indexMeta, indexSlice, merging);
         final IndexInput valuesData = data.slice("values", entry.valuesOffset, entry.valuesLength);
+
+        if (entry.encodingType == 1) {
+            if (entry.docsWithFieldOffset == -1) {
+                // dense
+                return new BaseDenseNumericValues() {
+
+                    private final int maxDoc = ES819TSDBDocValuesProducer.this.maxDoc;
+                    private int doc = -1;
+                    private long currentBlockIndex = -1;
+                    private final long[] currentBlock = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
+                    // lookahead block
+                    private long lookaheadBlockIndex = -1;
+                    private long[] lookaheadBlock;
+                    private IndexInput lookaheadData = null;
+
+                    @Override
+                    public int docID() {
+                        return doc;
+                    }
+
+                    @Override
+                    public int nextDoc() throws IOException {
+                        return advance(doc + 1);
+                    }
+
+                    @Override
+                    public int advance(int target) throws IOException {
+                        if (target >= maxDoc) {
+                            return doc = NO_MORE_DOCS;
+                        }
+                        return doc = target;
+                    }
+
+                    @Override
+                    public boolean advanceExact(int target) {
+                        doc = target;
+                        return true;
+                    }
+
+                    @Override
+                    public long cost() {
+                        return maxDoc;
+                    }
+
+                    @Override
+                    public long longValue() throws IOException {
+                        final int index = doc;
+                        final int blockIndex = index >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
+                        final int blockInIndex = index & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
+                        if (blockIndex == currentBlockIndex) {
+                            return currentBlock[blockInIndex];
+                        }
+                        if (blockIndex == lookaheadBlockIndex) {
+                            return lookaheadBlock[blockInIndex];
+                        }
+                        assert blockIndex > currentBlockIndex : blockIndex + " < " + currentBlockIndex;
+                        // no need to seek if the loading block is the next block
+                        if (currentBlockIndex + 1 != blockIndex) {
+                            valuesData.seek(indexReader.get(blockIndex));
+                        }
+                        currentBlockIndex = blockIndex;
+                        for (int v = 0; v < currentBlock.length; v++) {
+                            currentBlock[v] = valuesData.readLong();
+                        }
+                        return currentBlock[blockInIndex];
+                    }
+
+                    @Override
+                    public BlockLoader.Block tryRead(BlockLoader.BlockFactory factory, BlockLoader.Docs docs, int offset) throws IOException {
+                        try (BlockLoader.SingletonLongBuilder builder = factory.singletonLongs(docs.count() - offset)) {
+                            return tryRead(builder, docs, offset);
+                        }
+                    }
+
+                    @Override
+                    BlockLoader.Block tryRead(BlockLoader.SingletonLongBuilder builder, BlockLoader.Docs docs, int offset) throws IOException {
+                        final int docsCount = docs.count();
+                        doc = docs.get(docsCount - 1);
+                        for (int i = offset; i < docsCount;) {
+                            int index = docs.get(i);
+                            final int blockIndex = index >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
+                            final int blockInIndex = index & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
+                            if (blockIndex != currentBlockIndex) {
+                                assert blockIndex > currentBlockIndex : blockIndex + " < " + currentBlockIndex;
+                                // no need to seek if the loading block is the next block
+                                if (currentBlockIndex + 1 != blockIndex) {
+                                    valuesData.seek(indexReader.get(blockIndex));
+                                }
+                                currentBlockIndex = blockIndex;
+                                for (int v = 0; v < currentBlock.length; v++) {
+                                    currentBlock[v] = valuesData.readLong();
+                                }
+                            }
+
+                            // Try to append more than just one value:
+                            // Instead of iterating over docs and find the max length, take an optimistic approach to avoid as
+                            // many comparisons as there are remaining docs and instead do at most 7 comparisons:
+                            int length = 1;
+                            int remainingBlockLength = Math.min(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE - blockInIndex, docsCount - i);
+                            for (int newLength = remainingBlockLength; newLength > 1; newLength = newLength >> 1) {
+                                int lastIndex = i + newLength - 1;
+                                if (isDense(index, docs.get(lastIndex), newLength)) {
+                                    length = newLength;
+                                    break;
+                                }
+                            }
+                            builder.appendLongs(currentBlock, blockInIndex, length);
+                            i += length;
+                        }
+                        return builder.build();
+                    }
+
+                    @Override
+                    long lookAheadValueAt(int targetDoc) throws IOException {
+                        final int blockIndex = targetDoc >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
+                        final int valueIndex = targetDoc & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
+                        if (blockIndex == currentBlockIndex) {
+                            return currentBlock[valueIndex];
+                        }
+                        // load data to the lookahead block
+                        if (lookaheadBlockIndex != blockIndex) {
+                            if (lookaheadBlock == null) {
+                                lookaheadBlock = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
+                                lookaheadData = data.slice("look_ahead_values", entry.valuesOffset, entry.valuesLength);
+                            }
+                            if (lookaheadBlockIndex + 1 != blockIndex) {
+                                lookaheadData.seek(indexReader.get(blockIndex));
+                            }
+                            for (int i = 0; i < lookaheadBlock.length; i++) {
+                                lookaheadBlock[i] = valuesData.readLong();
+                            }
+                            lookaheadBlockIndex = blockIndex;
+                        }
+                        return lookaheadBlock[valueIndex];
+                    }
+
+                    static boolean isDense(int firstDocId, int lastDocId, int length) {
+                        // This does not detect duplicate docids (e.g [1, 1, 2, 4] would be detected as dense),
+                        // this can happen with enrich or lookup. However this codec isn't used for enrich / lookup.
+                        // This codec is only used in the context of logsdb and tsdb, so this is fine here.
+                        return lastDocId - firstDocId == length - 1;
+                    }
+
+                };
+            } else {
+                final IndexedDISI disi = new IndexedDISI(
+                    data,
+                    entry.docsWithFieldOffset,
+                    entry.docsWithFieldLength,
+                    entry.jumpTableEntryCount,
+                    entry.denseRankPower,
+                    entry.numValues
+                );
+                return new NumericDocValues() {
+
+                    private final TSDBDocValuesEncoder decoder = new TSDBDocValuesEncoder(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE);
+                    private long currentBlockIndex = -1;
+                    private final long[] currentBlock = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
+
+                    @Override
+                    public int advance(int target) throws IOException {
+                        return disi.advance(target);
+                    }
+
+                    @Override
+                    public boolean advanceExact(int target) throws IOException {
+                        return disi.advanceExact(target);
+                    }
+
+                    @Override
+                    public int nextDoc() throws IOException {
+                        return disi.nextDoc();
+                    }
+
+                    @Override
+                    public int docID() {
+                        return disi.docID();
+                    }
+
+                    @Override
+                    public long cost() {
+                        return disi.cost();
+                    }
+
+                    @Override
+                    public long longValue() throws IOException {
+                        final int index = disi.index();
+                        final int blockIndex = index >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
+                        final int blockInIndex = index & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
+                        if (blockIndex != currentBlockIndex) {
+                            assert blockIndex > currentBlockIndex : blockIndex + "<=" + currentBlockIndex;
+                            // no need to seek if the loading block is the next block
+                            if (currentBlockIndex + 1 != blockIndex) {
+                                valuesData.seek(indexReader.get(blockIndex));
+                            }
+                            currentBlockIndex = blockIndex;
+                            for (int v = 0; v < currentBlock.length; v++) {
+                                currentBlock[v] = valuesData.readLong();
+                            }
+                        }
+                        return currentBlock[blockInIndex];
+                    }
+                };
+            }
+        }
 
         final int bitsPerOrd = maxOrd >= 0 ? PackedInts.bitsRequired(maxOrd - 1) : -1;
         if (entry.docsWithFieldOffset == -1) {
@@ -1610,6 +1819,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         DirectMonotonicReader.Meta indexMeta;
         long valuesOffset;
         long valuesLength;
+        byte encodingType; // 0 -> any, 1 for gauge
     }
 
     static class BinaryEntry {
