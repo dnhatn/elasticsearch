@@ -23,8 +23,10 @@ import org.elasticsearch.index.codec.postings.ES812PostingsFormat;
 import org.elasticsearch.index.codec.tsdb.es819.ES819TSDBDocValuesFormat;
 import org.elasticsearch.index.mapper.CompletionFieldMapper;
 import org.elasticsearch.index.mapper.IdFieldMapper;
+import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.Mapper;
 import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.index.mapper.TimeSeriesParams;
 import org.elasticsearch.index.mapper.vectors.DenseVectorFieldMapper;
 
 /**
@@ -114,6 +116,12 @@ public class PerFieldFormatSupplier {
     boolean useTSDBDocValuesFormat(final String field) {
         if (excludeFields(field)) {
             return false;
+        }
+        if (mapperService != null) {
+            MappedFieldType mappedFieldType = mapperService.fieldType(field);
+            if (mappedFieldType != null && mappedFieldType.getMetricType() == TimeSeriesParams.MetricType.GAUGE) {
+                return false;
+            }
         }
 
         return mapperService != null
