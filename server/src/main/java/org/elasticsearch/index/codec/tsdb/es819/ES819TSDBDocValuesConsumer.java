@@ -42,11 +42,13 @@ import org.apache.lucene.util.packed.DirectMonotonicWriter;
 import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.index.codec.tsdb.TSDBDocValuesEncoder;
+import org.elasticsearch.index.mapper.TimeSeriesParams;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Function;
 
 import static org.elasticsearch.index.codec.tsdb.es819.DocValuesConsumerUtil.compatibleWithOptimizedMerge;
 import static org.elasticsearch.index.codec.tsdb.es819.ES819TSDBDocValuesFormat.DIRECT_MONOTONIC_BLOCK_SHIFT;
@@ -62,18 +64,21 @@ final class ES819TSDBDocValuesConsumer extends XDocValuesConsumer {
     final int maxDoc;
     private byte[] termsDictBuffer;
     private final int skipIndexIntervalSize;
+    private final  Function<String, TimeSeriesParams.MetricType>metricTypes;
     final boolean enableOptimizedMerge;
 
     ES819TSDBDocValuesConsumer(
         SegmentWriteState state,
         int skipIndexIntervalSize,
         boolean enableOptimizedMerge,
+        Function<String, TimeSeriesParams.MetricType> metricTypes,
         String dataCodec,
         String dataExtension,
         String metaCodec,
         String metaExtension
     ) throws IOException {
         this.termsDictBuffer = new byte[1 << 14];
+        this.metricTypes = metricTypes;
         this.dir = state.directory;
         this.context = state.context;
         boolean success = false;

@@ -35,7 +35,7 @@ public class PerFieldFormatSupplier {
 
     private static final DocValuesFormat docValuesFormat = new Lucene90DocValuesFormat();
     private static final KnnVectorsFormat knnVectorsFormat = new Lucene99HnswVectorsFormat();
-    private static final ES819TSDBDocValuesFormat tsdbDocValuesFormat = new ES819TSDBDocValuesFormat();
+    private final ES819TSDBDocValuesFormat tsdbDocValuesFormat;
     private static final ES812PostingsFormat es812PostingsFormat = new ES812PostingsFormat();
     private static final PostingsFormat completionPostingsFormat = PostingsFormat.forName("Completion101");
 
@@ -46,8 +46,8 @@ public class PerFieldFormatSupplier {
 
     public PerFieldFormatSupplier(MapperService mapperService, BigArrays bigArrays) {
         this.mapperService = mapperService;
+        this.tsdbDocValuesFormat = new ES819TSDBDocValuesFormat(mapperService);
         this.bloomFilterPostingsFormat = new ES87BloomFilterPostingsFormat(bigArrays, this::internalGetPostingsFormatForField);
-
         if (mapperService != null
             && mapperService.getIndexSettings().getIndexVersionCreated().onOrAfter(IndexVersions.USE_LUCENE101_POSTINGS_FORMAT)
             && mapperService.getIndexSettings().getMode().useDefaultPostingsFormat()) {

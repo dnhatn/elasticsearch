@@ -14,8 +14,11 @@ import org.apache.lucene.codecs.DocValuesProducer;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.elasticsearch.core.SuppressForbidden;
+import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.index.mapper.TimeSeriesParams;
 
 import java.io.IOException;
+import java.util.function.Function;
 
 /**
  * Evolved from {@link org.elasticsearch.index.codec.tsdb.ES87TSDBDocValuesFormat} and has the following changes:
@@ -47,7 +50,8 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
     static final byte SORTED_NUMERIC = 4;
 
     static final int VERSION_START = 0;
-    static final int VERSION_CURRENT = VERSION_START;
+    static final int VERSION_GAUGE_ENCODING = 1;
+    static final int VERSION_CURRENT = VERSION_GAUGE_ENCODING;
 
     static final int TERMS_DICT_BLOCK_LZ4_SHIFT = 6;
     static final int TERMS_DICT_BLOCK_LZ4_SIZE = 1 << TERMS_DICT_BLOCK_LZ4_SHIFT;
@@ -106,18 +110,28 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
 
     final int skipIndexIntervalSize;
     private final boolean enableOptimizedMerge;
+    private final Function<String, TimeSeriesParams.MetricType> metricTypes;
 
     /** Default constructor. */
     public ES819TSDBDocValuesFormat() {
-        this(DEFAULT_SKIP_INDEX_INTERVAL_SIZE, OPTIMIZED_MERGE_ENABLE_DEFAULT);
+        this(fieldName -> null);
+    }
+
+    public ES819TSDBDocValuesFormat(MapperService mapperService) {
+        this(metricTypes(mapperService));
+    }
+
+    public ES819TSDBDocValuesFormat(Function<String, TimeSeriesParams.MetricType> metricTypes) {
+        this(metricTypes, DEFAULT_SKIP_INDEX_INTERVAL_SIZE, OPTIMIZED_MERGE_ENABLE_DEFAULT);
     }
 
     /** Doc values fields format with specified skipIndexIntervalSize. */
-    public ES819TSDBDocValuesFormat(int skipIndexIntervalSize, boolean enableOptimizedMerge) {
+    public ES819TSDBDocValuesFormat(Function<String, TimeSeriesParams.MetricType> metricTypes, int skipIndexIntervalSize, boolean enableOptimizedMerge) {
         super(CODEC_NAME);
         if (skipIndexIntervalSize < 2) {
             throw new IllegalArgumentException("skipIndexIntervalSize must be > 1, got [" + skipIndexIntervalSize + "]");
         }
+        this.metricTypes = metricTypes;
         this.skipIndexIntervalSize = skipIndexIntervalSize;
         this.enableOptimizedMerge = enableOptimizedMerge;
     }
@@ -128,6 +142,7 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
             state,
             skipIndexIntervalSize,
             enableOptimizedMerge,
+            metricTypes,
             DATA_CODEC,
             DATA_EXTENSION,
             META_CODEC,
@@ -138,5 +153,19 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
     @Override
     public DocValuesProducer fieldsProducer(SegmentReadState state) throws IOException {
         return new ES819TSDBDocValuesProducer(state, DATA_CODEC, DATA_EXTENSION, META_CODEC, META_EXTENSION);
+    }
+
+    public static Function<String, TimeSeriesParams.MetricType> metricTypes(MapperService mapperService) {
+        if (mapperService == null) {
+            return fieldName -> null;
+        } else {
+            return fieldName -> {
+                var fieldType = mapperService.mappingLookup().getFieldType(fieldName);
+                if (fieldType == null) {
+                    return null;
+                }
+                return fieldType.getMetricType();
+            };
+        }
     }
 }

@@ -21,6 +21,7 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.LiveIndexWriterConfig;
 import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.MergeScheduler;
+import org.apache.lucene.index.MergeTrigger;
 import org.apache.lucene.index.SegmentCommitInfo;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.SoftDeletesRetentionMergePolicy;
@@ -2778,7 +2779,30 @@ public class InternalEngine extends Engine {
         iwc.setMergeScheduler(mergeScheduler.getMergeScheduler());
         // Give us the opportunity to upgrade old segments while performing
         // background merges
-        MergePolicy mergePolicy = config().getMergePolicy();
+        MergePolicy mergePolicy = new MergePolicy() {
+            final AtomicBoolean first = new AtomicBoolean(true);
+            @Override
+            public MergeSpecification findMerges(MergeTrigger mergeTrigger, SegmentInfos segmentInfos, MergeContext mergeContext) throws IOException {
+                return null;
+            }
+
+            @Override
+            public MergeSpecification findForcedMerges(SegmentInfos segmentInfos, int maxSegmentCount, Map<SegmentCommitInfo, Boolean> segmentsToMerge, MergeContext mergeContext) throws IOException {
+                if (first.compareAndSet(true, false)) {
+                    MergeSpecification spec = new MergeSpecification();
+                    for (Map.Entry<SegmentCommitInfo, Boolean> s : segmentsToMerge.entrySet()) {
+                        spec.add(new OneMerge(List.of(s.getKey())));
+                    }
+                    return spec;
+                }
+                return null;
+            }
+
+            @Override
+            public MergeSpecification findForcedDeletesMerges(SegmentInfos segmentInfos, MergeContext mergeContext) throws IOException {
+                return null;
+            }
+        };
         // always configure soft-deletes field so an engine with soft-deletes disabled can open a Lucene index with soft-deletes.
         iwc.setSoftDeletesField(Lucene.SOFT_DELETES_FIELD);
         mergePolicy = new RecoverySourcePruneMergePolicy(
