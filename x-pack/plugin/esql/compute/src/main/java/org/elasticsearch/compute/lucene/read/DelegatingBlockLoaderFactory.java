@@ -10,10 +10,12 @@ package org.elasticsearch.compute.lucene.read;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefBlock;
 import org.elasticsearch.compute.data.BytesRefVector;
+import org.elasticsearch.compute.data.DoubleBlock;
 import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.OrdinalBytesRefVector;
@@ -71,6 +73,22 @@ public abstract class DelegatingBlockLoaderFactory implements BlockLoader.BlockF
     @Override
     public BlockLoader.DoubleBuilder doublesFromDocValues(int expectedCount) {
         return factory.newDoubleBlockBuilder(expectedCount).mvOrdering(Block.MvOrdering.SORTED_ASCENDING);
+    }
+
+    @Override
+    public BlockLoader.Block newSingletonDoubles(double[] values, int count) {
+        final long preAdjustedBytes = RamUsageEstimator.NUM_BYTES_ARRAY_HEADER + (long) count * Double.BYTES;
+        factory.adjustBreaker(preAdjustedBytes);
+        boolean success = false;
+        try {
+            var block = factory.newDoubleArrayVector(values, count, preAdjustedBytes).asBlock();
+            success = true;
+            return block;
+        } finally {
+            if (success == false) {
+                factory.adjustBreaker(-preAdjustedBytes);
+            }
+        }
     }
 
     @Override

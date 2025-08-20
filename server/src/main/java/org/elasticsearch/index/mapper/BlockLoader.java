@@ -63,6 +63,22 @@ public interface BlockLoader {
         BlockLoader.Block tryRead(BlockFactory factory, Docs docs, int offset) throws IOException;
     }
 
+    /**
+     * An interface for readers that attempt to load all document values in a column-at-a-time fashion.
+     * <p>
+     * Unlike {@link ColumnAtATimeReader}, implementations may return {@code null} if they are unable
+     * to load the requested values, for example due to unsupported underlying data.
+     * This allows callers to optimistically try optimized loading strategies first, and fall back if necessary.
+     */
+    interface OptionalSingletonDoubleReader {
+        /**
+         * Attempts to read the values of all documents in {@code docs}
+         * Returns {@code null} if unable to load the values.
+         */
+        @Nullable
+        BlockLoader.Block tryRead(BlockFactory factory, Docs docs, int offset, BlockDocValuesReader.ToDouble toDouble) throws IOException;
+    }
+
     interface RowStrideReader extends Reader {
         /**
          * Reads the values of the given document into the builder.
@@ -443,6 +459,15 @@ public interface BlockLoader {
          * {@code size} times.
          */
         Block constantBytes(BytesRef value, int count);
+
+        default Block newSingletonDoubles(double[] values, int count) {
+            try (DoubleBuilder builder = doublesFromDocValues(count)) {
+                for (double v : values) {
+                    builder.appendDouble(v);
+                }
+                return builder.build();
+            }
+        }
 
         /**
          * Build a reader for reading {@link SortedDocValues}

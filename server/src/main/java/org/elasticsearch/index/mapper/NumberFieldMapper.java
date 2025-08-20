@@ -89,6 +89,20 @@ public class NumberFieldMapper extends FieldMapper {
 
     public static final Setting<Boolean> COERCE_SETTING = Setting.boolSetting("index.mapping.coerce", true, Property.IndexScope);
 
+    public static final BlockDocValuesReader.ToDouble SORTABLE_LONG_TO_DOUBLE = new BlockDocValuesReader.ToDouble() {
+        @Override
+        public double convert(long value) {
+            return NumericUtils.sortableLongToDouble(value);
+        }
+
+        @Override
+        public void convert(long[] src, int srcOffset, double[] dst, int dstOffset, int length) {
+            for (int i = 0; i < length; i++) {
+                dst[dstOffset + i] = NumericUtils.sortableLongToDouble(src[srcOffset + i]);
+            }
+        }
+    };
+
     private static NumberFieldMapper toType(FieldMapper in) {
         return (NumberFieldMapper) in;
     }
@@ -837,7 +851,7 @@ public class NumberFieldMapper extends FieldMapper {
 
             @Override
             BlockLoader blockLoaderFromDocValues(String fieldName) {
-                return new BlockDocValuesReader.DoublesBlockLoader(fieldName, NumericUtils::sortableLongToDouble);
+                return new BlockDocValuesReader.DoublesBlockLoader(fieldName, SORTABLE_LONG_TO_DOUBLE);
             }
 
             @Override

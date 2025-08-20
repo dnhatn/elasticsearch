@@ -43,6 +43,7 @@ import org.apache.lucene.util.packed.DirectMonotonicReader;
 import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.index.codec.tsdb.TSDBDocValuesEncoder;
+import org.elasticsearch.index.mapper.BlockDocValuesReader;
 import org.elasticsearch.index.mapper.BlockLoader;
 
 import java.io.IOException;
@@ -419,6 +420,146 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 return null;
             }
         };
+    }
+
+    private static class SparseNumericDocValues extends NumericDocValues implements BlockDocValuesReader.OptionalSingletonDoubles {
+
+        private final TSDBDocValuesEncoder decoder;
+        private final IndexedDISI disi;
+        private final IndexInput valuesData;
+        private final DirectMonotonicReader indexReader;
+        private final int bitsPerOrd;
+        private long currentBlockIndex;
+        private final long[] currentBlock;
+        private final IndexInput data;
+        private final NumericEntry entry;
+        private IndexedDISI lookaheadDISI;
+
+        SparseNumericDocValues(
+            IndexInput data,
+            NumericEntry entry,
+            IndexInput valuesData,
+            DirectMonotonicReader indexReader,
+            int bitsPerOrd
+        ) throws IOException {
+            this.data = data;
+            this.entry = entry;
+            this.disi = new IndexedDISI(
+                data,
+                entry.docsWithFieldOffset,
+                entry.docsWithFieldLength,
+                entry.jumpTableEntryCount,
+                entry.denseRankPower,
+                entry.numValues
+            );
+            this.valuesData = valuesData;
+            this.indexReader = indexReader;
+            this.bitsPerOrd = bitsPerOrd;
+            decoder = new TSDBDocValuesEncoder(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE);
+            currentBlockIndex = -1;
+            currentBlock = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
+        }
+
+        @Override
+        public int advance(int target) throws IOException {
+            return disi.advance(target);
+        }
+
+        @Override
+        public boolean advanceExact(int target) throws IOException {
+            return disi.advanceExact(target);
+        }
+
+        @Override
+        public int nextDoc() throws IOException {
+            return disi.nextDoc();
+        }
+
+        @Override
+        public int docID() {
+            return disi.docID();
+        }
+
+        @Override
+        public long cost() {
+            return disi.cost();
+        }
+
+        @Override
+        public long longValue() throws IOException {
+            final int index = disi.index();
+            final int blockIndex = index >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
+            final int blockInIndex = index & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
+            if (blockIndex != currentBlockIndex) {
+                assert blockIndex > currentBlockIndex : blockIndex + "<=" + currentBlockIndex;
+                // no need to seek if the loading block is the next block
+                if (currentBlockIndex + 1 != blockIndex) {
+                    valuesData.seek(indexReader.get(blockIndex));
+                }
+                currentBlockIndex = blockIndex;
+                if (bitsPerOrd == -1) {
+                    decoder.decode(valuesData, currentBlock);
+                } else {
+                    decoder.decodeOrdinals(valuesData, currentBlock, bitsPerOrd);
+                }
+            }
+            return currentBlock[blockInIndex];
+        }
+
+        @Override
+        public BlockLoader.Block tryReadDoubles(
+            BlockLoader.BlockFactory factory,
+            BlockLoader.Docs docs,
+            int offset,
+            BlockDocValuesReader.ToDouble converter
+        ) throws IOException {
+            // ordinal
+            if (bitsPerOrd != -1) {
+                return null;
+            }
+            if (lookaheadDISI == null) {
+                lookaheadDISI = new IndexedDISI(
+                    data,
+                    entry.docsWithFieldOffset,
+                    entry.docsWithFieldLength,
+                    entry.jumpTableEntryCount,
+                    entry.denseRankPower,
+                    entry.numValues
+                );
+            }
+            final int firstDocId = docs.get(offset);
+            if (lookaheadDISI.advanceExact(firstDocId)) {
+                final int firstIndex = lookaheadDISI.index();
+                final int lastDocId = docs.get(docs.count() - 1);
+                if (lookaheadDISI.advanceExact(lastDocId)) {
+                    final int lastIndex = lookaheadDISI.index();
+                    final int valueCount = lastIndex - firstIndex + 1;
+                    if (valueCount == docs.count()) {
+                        final double[] values = new double[valueCount];
+                        int i = 0;
+                        while (i < valueCount) {
+                            final int index = firstIndex + i;
+                            final int blockIndex = index >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
+                            final int blockStartIndex = index & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
+                            if (blockIndex != currentBlockIndex) {
+                                assert blockIndex > currentBlockIndex : blockIndex + "<=" + currentBlockIndex;
+                                if (currentBlockIndex + 1 != blockIndex) {
+                                    valuesData.seek(indexReader.get(blockIndex));
+                                }
+                                currentBlockIndex = blockIndex;
+                                decoder.decode(valuesData, currentBlock);
+                            }
+                            // bulk convert from the
+                            final int count = Math.min(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE - blockStartIndex, valueCount - i);
+                            converter.convert(currentBlock, blockStartIndex, values, i, count);
+                            i += count;
+                        }
+                        return factory.newSingletonDoubles(values, docs.count());
+                    }
+                }
+            }
+            return null;
+        }
     }
 
     abstract class BaseSortedDocValues extends SortedDocValues implements BlockLoader.OptionalColumnAtATimeReader {
@@ -1366,66 +1507,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
 
             };
         } else {
-            final IndexedDISI disi = new IndexedDISI(
-                data,
-                entry.docsWithFieldOffset,
-                entry.docsWithFieldLength,
-                entry.jumpTableEntryCount,
-                entry.denseRankPower,
-                entry.numValues
-            );
-            return new NumericDocValues() {
-
-                private final TSDBDocValuesEncoder decoder = new TSDBDocValuesEncoder(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE);
-                private long currentBlockIndex = -1;
-                private final long[] currentBlock = new long[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
-
-                @Override
-                public int advance(int target) throws IOException {
-                    return disi.advance(target);
-                }
-
-                @Override
-                public boolean advanceExact(int target) throws IOException {
-                    return disi.advanceExact(target);
-                }
-
-                @Override
-                public int nextDoc() throws IOException {
-                    return disi.nextDoc();
-                }
-
-                @Override
-                public int docID() {
-                    return disi.docID();
-                }
-
-                @Override
-                public long cost() {
-                    return disi.cost();
-                }
-
-                @Override
-                public long longValue() throws IOException {
-                    final int index = disi.index();
-                    final int blockIndex = index >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
-                    final int blockInIndex = index & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
-                    if (blockIndex != currentBlockIndex) {
-                        assert blockIndex > currentBlockIndex : blockIndex + "<=" + currentBlockIndex;
-                        // no need to seek if the loading block is the next block
-                        if (currentBlockIndex + 1 != blockIndex) {
-                            valuesData.seek(indexReader.get(blockIndex));
-                        }
-                        currentBlockIndex = blockIndex;
-                        if (bitsPerOrd == -1) {
-                            decoder.decode(valuesData, currentBlock);
-                        } else {
-                            decoder.decodeOrdinals(valuesData, currentBlock, bitsPerOrd);
-                        }
-                    }
-                    return currentBlock[blockInIndex];
-                }
-            };
+            return new SparseNumericDocValues(data, entry, valuesData, indexReader, bitsPerOrd);
         }
     }
 

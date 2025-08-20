@@ -353,6 +353,12 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
      */
     public interface ToDouble {
         double convert(long v);
+
+        default void convert(long[] src, int srcOffset, double[] dst, int dstOffset, int length) {
+            for (int i = 0; i < length; i++) {
+                dst[dstOffset + i] = convert(src[srcOffset + i]);
+            }
+        }
     }
 
     public static class DoublesBlockLoader extends DocValuesBlockLoader {
@@ -387,6 +393,10 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
         }
     }
 
+    public interface OptionalSingletonDoubles {
+        BlockLoader.Block tryReadDoubles(BlockFactory factory, Docs docs, int offset, ToDouble converter) throws IOException;
+    }
+
     private static class SingletonDoubles extends BlockDocValuesReader {
         private final NumericDocValues docValues;
         private final ToDouble toDouble;
@@ -398,6 +408,12 @@ public abstract class BlockDocValuesReader implements BlockLoader.AllReader {
 
         @Override
         public BlockLoader.Block read(BlockFactory factory, Docs docs, int offset) throws IOException {
+            if (docValues instanceof OptionalSingletonDoubles direct) {
+                BlockLoader.Block result = direct.tryReadDoubles(factory, docs, offset, toDouble);
+                if (result != null) {
+                    return result;
+                }
+            }
             try (BlockLoader.DoubleBuilder builder = factory.doublesFromDocValues(docs.count() - offset)) {
                 for (int i = offset; i < docs.count(); i++) {
                     int doc = docs.get(i);
