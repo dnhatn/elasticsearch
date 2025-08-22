@@ -14,7 +14,11 @@ import org.elasticsearch.compute.ann.GroupingAggregator;
 import org.elasticsearch.compute.ann.IntermediateState;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
+import org.elasticsearch.compute.data.BytesRefVector;
 import org.elasticsearch.compute.data.DoubleBlock;
+import org.elasticsearch.compute.data.DoubleVector;
+import org.elasticsearch.compute.data.IntArrayBlock;
+import org.elasticsearch.compute.data.IntBigArrayBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.core.Releasables;
@@ -71,6 +75,38 @@ class LossySumDoubleAggregator {
 
     public static void combine(GroupingSumState current, int groupId, double v) {
         current.add(v, groupId);
+    }
+
+    static GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleVector values) {
+        return new GroupingAggregatorFunction.AddInput() {
+            @Override
+            public void add(int positionOffset, IntArrayBlock groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntBigArrayBlock groupIds) {
+                delegate.add(positionOffset, groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntVector groupIds) {
+                if (groupIds.isConstant()) {
+                    double total = 0.0;
+                    for (int i = 0; i < groupIds.getPositionCount(); i++) {
+                        total += values.getDouble(positionOffset + i);
+                    }
+                    state.add(total, groupIds.getInt(0));
+                } else {
+                    delegate.add(positionOffset, groupIds);
+                }
+            }
+
+            @Override
+            public void close() {
+                Releasables.close(delegate);
+            }
+        };
     }
 
     public static void combineIntermediate(GroupingSumState current, int groupId, double value, double zeroDelta, boolean seen) {
