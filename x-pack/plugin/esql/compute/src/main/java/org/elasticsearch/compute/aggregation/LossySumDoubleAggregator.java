@@ -14,7 +14,6 @@ import org.elasticsearch.compute.ann.GroupingAggregator;
 import org.elasticsearch.compute.ann.IntermediateState;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
-import org.elasticsearch.compute.data.BytesRefVector;
 import org.elasticsearch.compute.data.DoubleBlock;
 import org.elasticsearch.compute.data.DoubleVector;
 import org.elasticsearch.compute.data.IntArrayBlock;
@@ -77,7 +76,11 @@ class LossySumDoubleAggregator {
         current.add(v, groupId);
     }
 
-    static GroupingAggregatorFunction.AddInput wrapAddInput(GroupingAggregatorFunction.AddInput delegate, GroupingSumState state, DoubleVector values) {
+    static GroupingAggregatorFunction.AddInput wrapAddInput(
+        GroupingAggregatorFunction.AddInput delegate,
+        GroupingSumState state,
+        DoubleVector values
+    ) {
         return new GroupingAggregatorFunction.AddInput() {
             @Override
             public void add(int positionOffset, IntArrayBlock groupIds) {
