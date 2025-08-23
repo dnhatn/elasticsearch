@@ -176,11 +176,12 @@ public abstract class LuceneOperator extends SourceOperator {
             final PartialLeafReaderContext partialLeaf = currentSlice.getLeaf(sliceIndex++);
             logger.trace("Starting {}", partialLeaf);
             final LeafReaderContext leaf = partialLeaf.leafReaderContext();
-            if (currentScorer == null // First time
-                || currentScorer.leafReaderContext() != leaf // Moved to a new leaf
-                || currentScorer.weight != currentSlice.weight() // Moved to a new query
-            ) {
-                final Weight weight = currentSlice.weight();
+            if (currentScorer != null && currentSlice.isWeightCompatible(currentScorer.weight)) {
+                if (currentScorer.leafReaderContext != leaf) {
+                    currentScorer = new LuceneScorer(currentSlice.shardContext(), currentScorer.weight, currentSlice.tags(), leaf);
+                }
+            } else {
+                final var weight = currentSlice.createWeight();
                 processedQueries.add(weight.getQuery());
                 currentScorer = new LuceneScorer(currentSlice.shardContext(), weight, currentSlice.tags(), leaf);
             }
