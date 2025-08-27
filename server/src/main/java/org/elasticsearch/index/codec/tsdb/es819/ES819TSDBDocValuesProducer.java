@@ -388,6 +388,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 BlockLoader.BlockFactory factory,
                 BlockLoader.Docs docs,
                 int offset,
+                boolean nullsFiltered,
                 BlockDocValuesReader.ToDouble toDouble
             ) throws IOException {
                 assert toDouble == null;
@@ -468,6 +469,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
             BlockLoader.BlockFactory factory,
             BlockLoader.Docs docs,
             int offset,
+            boolean nullsFiltered,
             BlockDocValuesReader.ToDouble toDouble
         ) throws IOException {
             return null;
@@ -520,6 +522,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
             BlockLoader.BlockFactory factory,
             BlockLoader.Docs docs,
             int offset,
+            boolean nullsFiltered,
             BlockDocValuesReader.ToDouble toDouble
         ) throws IOException {
             return null;
@@ -532,7 +535,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         }
     }
 
-    abstract static class BaseSparseNumericValues extends NumericDocValues implements BlockDocValuesReader.OptionalSingletonDoubles {
+    abstract static class BaseSparseNumericValues extends NumericDocValues implements BlockLoader.OptionalColumnAtATimeReader {
         protected final IndexedDISI disi;
 
         BaseSparseNumericValues(IndexedDISI disi) {
@@ -565,12 +568,12 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         @Override
-        public BlockLoader.Block tryReadDoubles(
+        public BlockLoader.Block tryRead(
             BlockLoader.BlockFactory factory,
             BlockLoader.Docs docs,
             int offset,
-            BlockDocValuesReader.ToDouble toDouble,
-            boolean nullsFiltered
+            boolean nullsFiltered,
+            BlockDocValuesReader.ToDouble toDouble
         ) throws IOException {
             return null;
         }
@@ -1397,6 +1400,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                     BlockLoader.BlockFactory factory,
                     BlockLoader.Docs docs,
                     int offset,
+                    boolean nullsFiltered,
                     BlockDocValuesReader.ToDouble toDouble
                 ) throws IOException {
                     if (toDouble != null) {
@@ -1521,12 +1525,12 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 }
 
                 @Override
-                public BlockLoader.Block tryReadDoubles(
+                public BlockLoader.Block tryRead(
                     BlockLoader.BlockFactory factory,
                     BlockLoader.Docs docs,
                     int offset,
-                    BlockDocValuesReader.ToDouble toDouble,
-                    boolean nullsFiltered
+                    boolean nullsFiltered,
+                    BlockDocValuesReader.ToDouble toDouble
                 ) throws IOException {
                     if (nullsFiltered == false) {
                         return null;
@@ -1557,12 +1561,12 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                     final int firstIndex = disi.index();
                     final int lastIndex = jumpDISI.index();
                     final int valueCount = lastIndex - firstIndex + 1;
-                    // TODO: encode this via docCount
-                    if (valueCount == docs.count()) {
-                        final double[] values = new double[valueCount];
-                        int i = 0;
-                        while (i < valueCount) {
-                            final int index = firstIndex + i;
+                    if (valueCount != docs.count()) {
+                        return null;
+                    }
+                    try (var doubles = factory.singletonDoubles(valueCount)) {
+                        var longs = new SingletonLongToDoubleDelegate(doubles, toDouble);
+                        for (int index = firstIndex; index < lastIndex;) {
                             final int blockIndex = index >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
                             final int blockStartIndex = index & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
                             if (blockIndex != currentBlockIndex) {
@@ -1573,14 +1577,15 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                                 currentBlockIndex = blockIndex;
                                 decoder.decode(valuesData, currentBlock);
                             }
-                            // bulk convert from the
-                            final int count = Math.min(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE - blockStartIndex, valueCount - i);
-                            toDouble.convert(currentBlock, blockStartIndex, values, i, count);
-                            i += count;
+                            final int count = Math.min(
+                                ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE - blockStartIndex,
+                                valueCount - (lastIndex - index)
+                            );
+                            longs.appendLongs(currentBlock, blockStartIndex, count);
+                            index += count;
                         }
-                        return factory.doubles(values, docs.count());
+                        return doubles.build();
                     }
-                    return null;
                 }
             };
         }
