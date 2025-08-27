@@ -1566,7 +1566,8 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                     }
                     try (var doubles = factory.singletonDoubles(valueCount)) {
                         var longs = new SingletonLongToDoubleDelegate(doubles, toDouble);
-                        for (int index = firstIndex; index < lastIndex;) {
+                        for (int i = 0; i < valueCount; ) {
+                            final int index = firstIndex + i;
                             final int blockIndex = index >>> ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SHIFT;
                             final int blockStartIndex = index & ES819TSDBDocValuesFormat.NUMERIC_BLOCK_MASK;
                             if (blockIndex != currentBlockIndex) {
@@ -1577,12 +1578,10 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                                 currentBlockIndex = blockIndex;
                                 decoder.decode(valuesData, currentBlock);
                             }
-                            final int count = Math.min(
-                                ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE - blockStartIndex,
-                                valueCount - (lastIndex - index)
-                            );
+                            // bulk convert from the
+                            final int count = Math.min(ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE - blockStartIndex, valueCount - i);
                             longs.appendLongs(currentBlock, blockStartIndex, count);
-                            index += count;
+                            i += count;
                         }
                         return doubles.build();
                     }
