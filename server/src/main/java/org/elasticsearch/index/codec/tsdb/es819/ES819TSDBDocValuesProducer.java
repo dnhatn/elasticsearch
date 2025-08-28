@@ -1897,7 +1897,6 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
     static final class SingletonLongToDoubleDelegate implements BlockLoader.SingletonLongBuilder {
         private final BlockLoader.SingletonDoubleBuilder doubleBuilder;
         private final BlockDocValuesReader.ToDouble toDouble;
-        private final double[] buffer = new double[ES819TSDBDocValuesFormat.NUMERIC_BLOCK_SIZE];
 
         // The passed builder is used to store the converted double values and produce the final block containing them.
         SingletonLongToDoubleDelegate(BlockLoader.SingletonDoubleBuilder doubleBuilder, BlockDocValuesReader.ToDouble toDouble) {
@@ -1912,11 +1911,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
 
         @Override
         public BlockLoader.SingletonLongBuilder appendLongs(long[] values, int from, int length) {
-            assert length <= buffer.length : "length " + length + " > " + buffer.length;
-            for (int i = 0; i < length; i++) {
-                buffer[i] = toDouble.convert(values[from + i]);
-            }
-            doubleBuilder.appendDoubles(buffer, 0, length);
+            doubleBuilder.appendLongs(toDouble, values, from, length);
             return this;
         }
 

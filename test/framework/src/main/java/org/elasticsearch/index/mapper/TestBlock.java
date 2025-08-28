@@ -287,6 +287,15 @@ public class TestBlock implements BlockLoader.Block {
                     }
 
                     @Override
+                    public BlockLoader.SingletonDoubleBuilder appendLongs(BlockDocValuesReader.ToDouble toDouble, long[] longValues, int from, int length) {
+                        for (int i = 0; i < length; i++) {
+                            values[count++] = toDouble.convert(longValues[from + i]);
+                        }
+                        this.count += length;
+                        return this;
+                    }
+
+                    @Override
                     public BlockLoader.Builder appendNull() {
                         throw new UnsupportedOperationException();
                     }

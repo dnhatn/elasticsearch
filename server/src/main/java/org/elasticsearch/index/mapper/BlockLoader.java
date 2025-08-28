@@ -575,6 +575,8 @@ public interface BlockLoader {
         SingletonDoubleBuilder appendDouble(double value);
 
         SingletonDoubleBuilder appendDoubles(double[] values, int from, int length);
+
+        SingletonDoubleBuilder appendLongs(BlockDocValuesReader.ToDouble toDouble, long[] values, int from, int length);
     }
 
     interface LongBuilder extends Builder {
