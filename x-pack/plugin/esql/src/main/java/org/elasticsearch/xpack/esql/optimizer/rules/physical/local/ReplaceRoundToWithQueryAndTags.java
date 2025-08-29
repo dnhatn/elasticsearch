@@ -374,7 +374,8 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             for (int i = 1; i < count; i++) {
                 upper = points.get(i);
                 // build predicates and range queries for RoundTo ranges
-                queries.add(rangeBucket(source, field, dataType, lower, upper, tag, zoneId, queryExec, pushdownPredicates, clause));
+                EsQueryExec.QueryBuilderAndTags e = rangeBucket(source, field, dataType, lower, upper, tag, zoneId, queryExec, pushdownPredicates, clause);
+                queries.add(e);
                 lower = upper;
                 tag = upper;
             }
@@ -452,6 +453,7 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
         Queries.Clause clause
     ) {
         Expression range = createRangeExpression(source, field, dataType, lower, upper, zoneId);
+        // TODO: combine predicate here
         return buildCombinedQueryAndTags(queryExec, pushdownPredicates, range, clause, List.of(tag));
     }
 

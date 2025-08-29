@@ -329,6 +329,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                         null,
                         () -> exchangeSink.createExchangeSink(pagesProduced::incrementAndGet)
                     );
+                    System.err.println("--> start running data node compute " + System.nanoTime());
                     computeService.runCompute(parentTask, computeContext, request.plan(), batchListener);
                 }
             }, batchListener::onFailure));
@@ -433,6 +434,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
         ActionListener<DataNodeComputeResponse> listener
     ) {
         final Map<ShardId, Exception> shardLevelFailures = new HashMap<>();
+        System.err.println("--> start running data node request " + System.nanoTime());
         try (
             ComputeListener computeListener = new ComputeListener(
                 transportService.getThreadPool(),

@@ -437,6 +437,7 @@ public class ComputeService {
                     // starts computes on data nodes on the main cluster
                     if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
                         final var dataNodesListener = localListener.acquireCompute();
+                        System.err.println("--> start sending data node request " + System.nanoTime());
                         dataNodeComputeHandler.startComputeOnDataNodes(
                             sessionId,
                             LOCAL_CLUSTER,
@@ -589,6 +590,7 @@ public class ComputeService {
     }
 
     void runCompute(CancellableTask task, ComputeContext context, PhysicalPlan plan, ActionListener<DriverCompletionInfo> listener) {
+        long startInNanos = System.nanoTime();
         listener = ActionListener.runBefore(listener, () -> Releasables.close(context.searchContexts()));
         List<EsPhysicalOperationProviders.ShardContext> contexts = new ArrayList<>(context.searchContexts().size());
         for (int i = 0; i < context.searchContexts().size(); i++) {
@@ -682,6 +684,7 @@ public class ComputeService {
                     return DriverCompletionInfo.excludingProfiles(drivers);
                 }
             });
+            System.err.println("--> prepare drivers took [" + (System.nanoTime() - startInNanos) + "] ns");
             driverRunner.executeDrivers(
                 task,
                 drivers,

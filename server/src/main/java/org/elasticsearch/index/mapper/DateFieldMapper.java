@@ -50,6 +50,7 @@ import org.elasticsearch.index.fielddata.plain.SortedNumericIndexFieldData;
 import org.elasticsearch.index.query.DateRangeIncludingNowQuery;
 import org.elasticsearch.index.query.QueryRewriteContext;
 import org.elasticsearch.index.query.SearchExecutionContext;
+import org.elasticsearch.lucene.queries.LongRangeQuery;
 import org.elasticsearch.script.DateFieldScript;
 import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptCompiler;
@@ -759,16 +760,7 @@ public final class DateFieldMapper extends FieldMapper {
                 parser = forcedDateParser;
             }
             return dateRangeQuery(lowerTerm, upperTerm, includeLower, includeUpper, timeZone, parser, context, resolution, (l, u) -> {
-                Query query;
-                if (isIndexed()) {
-                    query = LongPoint.newRangeQuery(name(), l, u);
-                    if (hasDocValues()) {
-                        Query dvQuery = SortedNumericDocValuesField.newSlowRangeQuery(name(), l, u);
-                        query = new IndexOrDocValuesQuery(query, dvQuery);
-                    }
-                } else {
-                    query = SortedNumericDocValuesField.newSlowRangeQuery(name(), l, u);
-                }
+                Query query = new LongRangeQuery(name(), hasDocValues(), l, u);
                 if (hasDocValues() && context.indexSortedOnField(name())) {
                     query = new IndexSortSortedNumericDocValuesRangeQuery(name(), l, u, query);
                 }

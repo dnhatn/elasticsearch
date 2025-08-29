@@ -8,8 +8,13 @@
 package org.elasticsearch.compute.lucene;
 
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MatchNoDocsQuery;
+import org.apache.lucene.search.PointRangeQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Weight;
@@ -18,6 +23,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.lucene.queries.LongRangeQuery;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -27,6 +33,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -214,9 +221,12 @@ public final class LuceneSliceQueue {
                  * into MatchAll.
                  */
                 try {
-                    query = ctx.searcher().rewrite(query);
+                    query = rewriteQuery(query, ctx.searcher());
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
+                }
+                if (query instanceof MatchNoDocsQuery) {
+                    continue;
                 }
                 PartitioningStrategy partitioning = PartitioningStrategy.pick(dataPartitioning, autoStrategy, ctx, query);
                 partitioningStrategies.put(ctx.shardIdentifier(), partitioning);
@@ -233,6 +243,61 @@ public final class LuceneSliceQueue {
             }
         }
         return new LuceneSliceQueue(slices, partitioningStrategies);
+    }
+
+    private static List<Query> extractFilters(Query q) {
+        if (q instanceof ConstantScoreQuery c) {
+            return extractFilters(c.getQuery());
+        }
+        if (q instanceof BoostQuery b) {
+            return extractFilters(b.getQuery());
+        }
+        List<Query> filters = new ArrayList<>();
+        if (q instanceof BooleanQuery b) {
+            for (BooleanClause c : b.clauses()) {
+                filters.addAll(extractFilters(c.query()));
+            }
+        } else {
+            filters.add(q);
+        }
+        return filters;
+    }
+
+    private static Query combineFilters(List<Query> filters) {
+        Map<String, List<LongRangeQuery>> byNames = new HashMap<>();
+        Iterator<Query> it = filters.iterator();
+        while (it.hasNext()) {
+            Query f = it.next();
+            if (f instanceof LongRangeQuery r) {
+                byNames.computeIfAbsent(r.name, k -> new ArrayList<>()).add(r);
+                it.remove();
+            }
+        }
+        for (Map.Entry<String, List<LongRangeQuery>> e : byNames.entrySet()) {
+            List<LongRangeQuery> queries = e.getValue();
+            boolean withDocValues = true;
+            long minValue = Long.MIN_VALUE;
+            long maxValue = Long.MAX_VALUE;
+            for (LongRangeQuery q : queries) {
+                withDocValues &= q.withDocValues;
+                minValue = Math.max(minValue, q.lowerValue);
+                maxValue = Math.min(maxValue, q.upperValue);
+            }
+            if (minValue > maxValue) {
+                return new MatchNoDocsQuery();
+            }
+            filters.add(new LongRangeQuery(e.getKey(), withDocValues, minValue, maxValue));
+        }
+        BooleanQuery.Builder builder = new BooleanQuery.Builder();
+        for (Query filter : filters) {
+            builder.add(filter, BooleanClause.Occur.FILTER);
+        }
+        return new ConstantScoreQuery(builder.build());
+    }
+
+    private static Query rewriteQuery(Query query, IndexSearcher searcher) throws IOException {
+        query = combineFilters(extractFilters(query));
+        return query.rewrite(searcher);
     }
 
     /**
