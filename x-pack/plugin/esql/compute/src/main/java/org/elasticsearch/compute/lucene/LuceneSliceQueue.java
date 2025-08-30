@@ -273,7 +273,7 @@ public final class LuceneSliceQueue {
     private static Query combineFilters(Query query) {
         List<Query> filters = extractFilters(query);
         if (filters == null) {
-            return query;
+            return new MatchNoDocsQuery();
         }
         Map<String, List<LongRangeQuery>> byNames = new HashMap<>();
         Iterator<Query> it = filters.iterator();
