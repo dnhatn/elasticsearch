@@ -186,14 +186,7 @@ public final class LuceneSliceQueue {
     }
 
     public Collection<String> remainingShardsIdentifiers() {
-        List<String> remaining = new ArrayList<>(slices.length());
-        for (int i = 0; i < slices.length(); i++) {
-            LuceneSlice slice = slices.get(i);
-            if (slice != null) {
-                remaining.add(slice.shardContext().shardIdentifier());
-            }
-        }
-        return remaining;
+        return List.of();
     }
 
     public static LuceneSliceQueue create(

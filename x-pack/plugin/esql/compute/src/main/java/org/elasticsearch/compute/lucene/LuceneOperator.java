@@ -283,6 +283,7 @@ public abstract class LuceneOperator extends SourceOperator {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
+        // too expensive...
         sb.append(this.getClass().getSimpleName()).append("[");
         sb.append("shards = ").append(sortedUnion(processedShards, sliceQueue.remainingShardsIdentifiers()));
         sb.append(", maxPageSize = ").append(maxPageSize);
