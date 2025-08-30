@@ -434,7 +434,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
         ActionListener<DataNodeComputeResponse> listener
     ) {
         final Map<ShardId, Exception> shardLevelFailures = new HashMap<>();
-        System.err.println("--> start running data node request " + System.nanoTime());
+        // System.err.println("--> start running data node request " + System.nanoTime());
         try (
             ComputeListener computeListener = new ComputeListener(
                 transportService.getThreadPool(),

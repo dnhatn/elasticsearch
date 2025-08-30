@@ -437,7 +437,7 @@ public class ComputeService {
                     // starts computes on data nodes on the main cluster
                     if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
                         final var dataNodesListener = localListener.acquireCompute();
-                        System.err.println("--> start sending data node request " + System.nanoTime());
+                        // System.err.println("--> start sending data node request " + System.nanoTime());
                         dataNodeComputeHandler.startComputeOnDataNodes(
                             sessionId,
                             LOCAL_CLUSTER,
@@ -684,7 +684,7 @@ public class ComputeService {
                     return DriverCompletionInfo.excludingProfiles(drivers);
                 }
             });
-            System.err.println("--> prepare drivers took [" + (System.nanoTime() - startInNanos) + "] ns");
+            // System.err.println("--> prepare drivers took [" + (System.nanoTime() - startInNanos) + "] ns");
             driverRunner.executeDrivers(
                 task,
                 drivers,
