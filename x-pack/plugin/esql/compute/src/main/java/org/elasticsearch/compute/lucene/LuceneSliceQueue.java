@@ -276,17 +276,17 @@ public final class LuceneSliceQueue {
         for (Map.Entry<String, List<LongRangeQuery>> e : byNames.entrySet()) {
             List<LongRangeQuery> queries = e.getValue();
             boolean withDocValues = true;
-            long minValue = Long.MIN_VALUE;
-            long maxValue = Long.MAX_VALUE;
+            long lowerValue = Long.MIN_VALUE;
+            long upperValue = Long.MAX_VALUE;
             for (LongRangeQuery q : queries) {
                 withDocValues &= q.withDocValues;
-                minValue = Math.max(minValue, q.lowerValue);
-                maxValue = Math.min(maxValue, q.upperValue);
+                lowerValue = Math.max(lowerValue, q.lowerValue);
+                upperValue = Math.min(upperValue, q.upperValue);
             }
-            if (minValue > maxValue) {
+            if (lowerValue > upperValue) {
                 return new MatchNoDocsQuery();
             }
-            filters.add(new LongRangeQuery(e.getKey(), withDocValues, minValue, maxValue));
+            filters.add(new LongRangeQuery(e.getKey(), withDocValues, lowerValue, upperValue));
         }
         BooleanQuery.Builder builder = new BooleanQuery.Builder();
         for (Query filter : filters) {
@@ -296,8 +296,11 @@ public final class LuceneSliceQueue {
     }
 
     private static Query rewriteQuery(Query query, IndexSearcher searcher) throws IOException {
+        System.err.println("--> original " + query);
         query = combineFilters(extractFilters(query));
-        return query.rewrite(searcher);
+        query = query.rewrite(searcher);
+        System.err.println("--> rewrite " + query);
+        return query;
     }
 
     /**
