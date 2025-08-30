@@ -254,8 +254,15 @@ public final class LuceneSliceQueue {
         }
         List<Query> filters = new ArrayList<>();
         if (q instanceof BooleanQuery b) {
+            if (b.getClauses(BooleanClause.Occur.MUST_NOT).isEmpty() == false) {
+                return null;
+            }
             for (BooleanClause c : b.clauses()) {
-                filters.addAll(extractFilters(c.query()));
+                List<Query> subs = extractFilters(c.query());
+                if (subs == null) {
+                    return null;
+                }
+                filters.addAll(subs);
             }
         } else {
             filters.add(q);
@@ -263,7 +270,11 @@ public final class LuceneSliceQueue {
         return filters;
     }
 
-    private static Query combineFilters(List<Query> filters) {
+    private static Query combineFilters(Query query) {
+        List<Query> filters = extractFilters(query);
+        if (filters == null) {
+            return query;
+        }
         Map<String, List<LongRangeQuery>> byNames = new HashMap<>();
         Iterator<Query> it = filters.iterator();
         while (it.hasNext()) {
@@ -297,7 +308,7 @@ public final class LuceneSliceQueue {
 
     private static Query rewriteQuery(Query query, IndexSearcher searcher) throws IOException {
         System.err.println("--> original " + query);
-        query = combineFilters(extractFilters(query));
+        query = combineFilters(query);
         query = query.rewrite(searcher);
         System.err.println("--> rewrite " + query);
         return query;
