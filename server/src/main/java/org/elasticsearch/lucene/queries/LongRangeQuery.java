@@ -42,9 +42,9 @@ public class LongRangeQuery extends Query {
         Query point = LongPoint.newRangeQuery(name, lowerValue, upperValue);
         if (withDocValues) {
             var dv = SortedNumericDocValuesField.newSlowRangeQuery(name, lowerValue, upperValue);
-            return new IndexOrDocValuesQuery(point, dv);
+            return new IndexOrDocValuesQuery(point, dv).rewrite(indexSearcher);
         } else {
-            return point;
+            return point.rewrite(indexSearcher);
         }
     }
 

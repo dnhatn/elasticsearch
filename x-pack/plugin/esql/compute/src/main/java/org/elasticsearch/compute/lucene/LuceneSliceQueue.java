@@ -307,10 +307,8 @@ public final class LuceneSliceQueue {
     }
 
     private static Query rewriteQuery(Query query, IndexSearcher searcher) throws IOException {
-        System.err.println("--> original " + query);
         query = combineFilters(query);
         query = query.rewrite(searcher);
-        System.err.println("--> rewrite " + query);
         return query;
     }
 
