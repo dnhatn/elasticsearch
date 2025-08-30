@@ -329,7 +329,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                         null,
                         () -> exchangeSink.createExchangeSink(pagesProduced::incrementAndGet)
                     );
-                    System.err.println("--> start running data node compute " + System.nanoTime());
+//                    System.err.println("--> start running data node compute " + System.nanoTime());
                     computeService.runCompute(parentTask, computeContext, request.plan(), batchListener);
                 }
             }, batchListener::onFailure));
