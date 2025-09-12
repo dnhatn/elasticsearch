@@ -447,9 +447,6 @@ public final class RateIntGroupingAggregatorFunction implements GroupingAggregat
         }
 
         void maybeFlush() {
-            if (pendingCount == 0) {
-                return;
-            }
             if (reduced == null) {
                 reduced = new ReducedState();
             }

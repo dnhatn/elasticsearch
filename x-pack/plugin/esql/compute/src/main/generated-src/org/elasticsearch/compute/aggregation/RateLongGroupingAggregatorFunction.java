@@ -447,9 +447,6 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
         }
 
         void maybeFlush() {
-            if (pendingCount == 0) {
-                return;
-            }
             if (reduced == null) {
                 reduced = new ReducedState();
             }
