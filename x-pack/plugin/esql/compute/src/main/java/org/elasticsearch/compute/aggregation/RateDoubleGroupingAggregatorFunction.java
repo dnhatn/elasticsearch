@@ -737,7 +737,9 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                 var reduced = reducedStates.size() > group ? reducedStates.get(group) : null;
                 if (reduced == null) {
                     Buffer buffer = buffers.size() > group ? buffers.get(group) : null;
-                    buffer.flush();
+                    if (buffer != null) {
+                        buffer.flush();
+                    }
                 }
                 if (reduced == null || reduced.samples < 2) {
                     rates.appendNull();
