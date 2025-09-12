@@ -496,6 +496,14 @@ public final class RateIntGroupingAggregatorFunction implements GroupingAggregat
         }
 
         void flush(ReducedState state) {
+            if (reduced != null) {
+                state.samples += reduced.samples;
+                state.resets += reduced.resets;
+                for (int i = 0; i < reduced.timestamps.length; i++) {
+                    state.appendOneValue(reduced.timestamps[i], reduced.values[i]);
+                }
+                reduced = null;
+            }
             if (pendingCount == 0) {
                 return;
             }
