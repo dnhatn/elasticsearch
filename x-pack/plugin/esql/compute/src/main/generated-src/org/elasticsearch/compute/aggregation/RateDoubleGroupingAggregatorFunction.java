@@ -132,14 +132,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             assert false : "expected next timestamp vector in time-series aggregation";
             throw new IllegalStateException("expected next timestamp vector in time-series aggregation");
         }
-
-        int positionCount = page.getPositionCount();
-        // If the smallest of the current timestamp is larger than the next potential max timestamp,
-        // then we can flush all buffers, and proceed the current data directly.
         final long nextTimestamp = nextTimestampsVector.getLong(0);
-        if (timestampsVector.getLong(positionCount - 1) > nextTimestampsVector.getLong(0)) {
-            System.err.println("flush outstanding buffers [" + nextTimestamp + "]");
-        }
         return new AddInput() {
             @Override
             public void add(int positionOffset, IntArrayBlock groupIds) {
@@ -155,7 +148,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             public void add(int positionOffset, IntVector groupIds) {
                 var valuesVector = valuesBlock.asVector();
                 if (valuesVector != null) {
-                    addRawInput(positionOffset, groupIds, valuesVector, timestampsVector);
+                    addRawInput(positionOffset, groupIds, valuesVector, timestampsVector, nextTimestamp);
                 } else {
                     addRawInput(positionOffset, groupIds, valuesBlock, timestampsVector);
                 }
@@ -234,14 +227,30 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         }
     }
 
-    private void addRawInput(int positionOffset, IntVector groups, DoubleVector valueVector, LongVector timestampVector) {
+    private void addRawInput(int positionOffset, IntVector groups, DoubleVector valueVector, LongVector timestampVector, long nextTimestamp) {
         int positionCount = groups.getPositionCount();
         if (groups.isConstant()) {
             int groupId = groups.getInt(0);
-            Buffer buffer = getBuffer(groupId, positionCount, timestampVector.getLong(0));
-            for (int p = 0; p < positionCount; p++) {
-                int valuePosition = positionOffset + p;
-                buffer.appendWithoutResize(timestampVector.getLong(valuePosition), valueVector.getDouble(valuePosition));
+            var tn = timestampVector.getLong(positionOffset + positionCount - 1);
+            if (tn > nextTimestamp) {
+                buffers = bigArrays.grow(buffers, groupId + 1);
+                Buffer buffer = buffers.get(groupId);
+                if (buffer == null) {
+                    buffer = new Buffer(bigArrays, 16);
+                    buffers.set(groupId, buffer);
+                }
+                buffer.maybeFlush();
+                for (int p = 0; p < positionCount; p++) {
+                   int valuePosition = positionOffset + p;
+                   buffer.combineDirectly(timestampVector.getLong(valuePosition), valueVector.getDouble(valuePosition));
+                }
+            } else {
+                var t0 = timestampVector.getLong(0);
+                Buffer buffer = getBuffer(groupId, positionCount, t0);
+                for (int p = 0; p < positionCount; p++) {
+                    int valuePosition = positionOffset + p;
+                    buffer.appendWithoutResize(timestampVector.getLong(valuePosition), valueVector.getDouble(valuePosition));
+                }
             }
         } else {
             int lastGroup = -1;
@@ -423,6 +432,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         private int pendingCount;
         int[] sliceOffsets;
         private static final int[] EMPTY_SLICES = new int[0];
+        ReducedState reduced;
 
         Buffer(BigArrays bigArrays, int initialSize) {
             this.timestamps = bigArrays.newLongArray(Math.max(initialSize, 32), false);
@@ -434,6 +444,37 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             timestamps.set(pendingCount, timestamp);
             values.set(pendingCount, value);
             pendingCount++;
+        }
+
+        void maybeFlush() {
+            if (pendingCount == 0) {
+                return;
+            }
+            if (reduced == null) {
+                reduced = new ReducedState();
+            }
+            flush(reduced);
+            pendingCount = 0;
+            sliceOffsets = EMPTY_SLICES;
+        }
+
+        void combineDirectly(long timestamp, double v) {
+            if (reduced.samples == 0) {
+                reduced.appendOneValue(timestamp, v);
+                reduced.samples = 1;
+                return;
+            }
+            if (reduced.samples == 1) {
+                var r = new ReducedState();
+                r.appendTwoValues(reduced.timestamps[0], reduced.values[0], timestamp, v);
+                r.samples = 2;
+                reduced = r;
+                return;
+            }
+            reduced.samples++;
+            reduced.resets += dv(v, reduced.values[1]) + dv(reduced.values[1], reduced.values[0]) - dv(v, reduced.values[0]);
+            reduced.timestamps[1] = timestamp;
+            reduced.values[1] = v;
         }
 
         void maybeResizeAndAppend(BigArrays bigArrays, long timestamp, double value) {

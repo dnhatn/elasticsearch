@@ -87,9 +87,9 @@ public class TimeSeriesSourceOperator extends LuceneSourceOperator {
                 assert skipper != null;
                 return skipper.maxValue();
             } else {
-                PointValues tsPointValues = reader.getPointValues(DataStream.TIMESTAMP_FIELD_NAME);
-                assert tsPointValues != null;
-                return LongPoint.decodeDimension(tsPointValues.getMaxPackedValue(), 0);
+                PointValues pointValues = reader.getPointValues(DataStream.TIMESTAMP_FIELD_NAME);
+                assert pointValues != null;
+                return LongPoint.decodeDimension(pointValues.getMaxPackedValue(), 0);
             }
         } else {
             return Long.MAX_VALUE;
