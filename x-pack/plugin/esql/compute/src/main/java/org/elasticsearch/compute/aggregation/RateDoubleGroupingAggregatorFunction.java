@@ -11,7 +11,6 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.PriorityQueue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.DoubleArray;
-import org.elasticsearch.common.util.IntArray;
 import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.common.util.ObjectArray;
 import org.elasticsearch.compute.data.Block;
@@ -236,13 +235,21 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                 buffers = bigArrays.grow(buffers, groupId + 1);
                 Buffer buffer = buffers.get(groupId);
                 if (buffer == null) {
-                    buffer = new Buffer(bigArrays, 16);
+                    buffer = new Buffer(bigArrays, 0);
                     buffers.set(groupId, buffer);
                 }
-                buffer.flush();
+                Reduced reduced = buffer.flush();
                 for (int p = 0; p < positionCount; p++) {
-                   int valuePosition = positionOffset + p;
-                   buffer.combineDirectly(timestampVector.getLong(valuePosition), valueVector.getDouble(valuePosition));
+                    int valuePosition = positionOffset + p;
+                    double v = valueVector.getDouble(valuePosition);
+                    if (reduced.samples >= 2) {
+                        reduced.append(v);
+                    } else {
+                        reduced.append(timestampVector.getLong(valuePosition), v);
+                    }
+                }
+                if (reduced.samples > 2) {
+                    reduced.t1 = tn;
                 }
             } else {
                 var t0 = timestampVector.getLong(0);
@@ -305,14 +312,14 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             }
             int groupId = groups.getInt(groupPosition);
             reducedStates = bigArrays.grow(reducedStates, groupId + 1);
-            ReducedState state = reducedStates.get(groupId);
-            if (state == null) {
-                state = new ReducedState();
-                reducedStates.set(groupId, state);
+            var reduced = reducedStates.get(groupId);
+            if (reduced == null) {
+                reduced = new ReducedState();
+                reducedStates.set(groupId, reduced);
             }
-            state.appendValuesFromBlocks(timestamps, values, valuePosition);
-            state.samples += sampleCount;
-            state.resets += resets.getDouble(valuePosition);
+            reduced.appendValuesFromBlocks(timestamps, values, valuePosition);
+            reduced.samples += sampleCount;
+            reduced.resets += resets.getDouble(valuePosition);
         }
     }
 
@@ -353,7 +360,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
     }
 
     @Override
-    public final void evaluateIntermediate(Block[] blocks, int offset, IntVector selected) {
+    public void evaluateIntermediate(Block[] blocks, int offset, IntVector selected) {
         BlockFactory blockFactory = driverContext.blockFactory();
         int positionCount = selected.getPositionCount();
         try (
@@ -364,23 +371,27 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         ) {
             for (int p = 0; p < positionCount; p++) {
                 int group = selected.getInt(p);
-                var state = flushAndCombineState(group);
-                if (state != null && state.timestamps.length > 0) {
-                    if (state.samples > 1) {
+                Buffer buffer = buffers.size() > group ? buffers.get(group) : null;
+                Reduced reduced = null;
+                if (buffer != null) {
+                    reduced = buffer.flush();
+                }
+                if (reduced != null && reduced.samples > 0) {
+                    if (reduced.samples > 1) {
                         timestamps.beginPositionEntry();
-                        values.beginPositionEntry();
-                        for (int s = 0; s < state.timestamps.length; s++) {
-                            timestamps.appendLong(state.timestamps[s]);
-                            values.appendDouble(state.values[s]);
-                        }
+                        timestamps.appendLong(reduced.t1);
+                        timestamps.appendLong(reduced.t2);
                         timestamps.endPositionEntry();
+                        values.beginPositionEntry();
+                        values.appendDouble(reduced.v1);
+                        values.appendDouble(reduced.v2);
                         values.endPositionEntry();
                     } else {
-                        timestamps.appendLong(state.timestamps[0]);
-                        values.appendDouble(state.values[0]);
+                        timestamps.appendLong(reduced.t1);
+                        values.appendDouble(reduced.v1);
                     }
-                    sampleCounts.appendInt(state.samples);
-                    resets.appendDouble(state.resets);
+                    sampleCounts.appendInt(reduced.samples);
+                    resets.appendDouble(reduced.increases);
                 } else {
                     timestamps.appendLong(0);
                     values.appendDouble(0);
@@ -416,221 +427,6 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             buffer.ensureCapacity(bigArrays, newElements, firstTimestamp);
         }
         return buffer;
-    }
-
-    /**
-     * Buffers data points in two arrays: one for timestamps and one for values, partitioned into multiple slices.
-     * Each slice is sorted in descending order of timestamp. A new slice is created when a data point has a
-     * timestamp greater than the last point of the current slice. Since each page is sorted by descending timestamp,
-     * we only need to compare the first point of the new page with the last point of the current slice to decide
-     * if a new slice is needed. During merging, a priority queue is used to iterate through the slices, selecting
-     * the slice with the greatest timestamp.
-     */
-    static final class Buffer implements Releasable {
-        private LongArray timestamps;
-        private DoubleArray values;
-        private int pendingCount;
-        int[] sliceOffsets;
-        private static final int[] EMPTY_SLICES = new int[0];
-        ReducedState reduced;
-
-        Buffer(BigArrays bigArrays, int initialSize) {
-            this.timestamps = bigArrays.newLongArray(Math.max(initialSize, 32), false);
-            this.values = bigArrays.newDoubleArray(Math.max(initialSize, 32), false);
-            this.sliceOffsets = EMPTY_SLICES;
-        }
-
-        void appendWithoutResize(long timestamp, double value) {
-            timestamps.set(pendingCount, timestamp);
-            values.set(pendingCount, value);
-            pendingCount++;
-        }
-
-        void combineDirectly(long timestamp, double v) {
-            if (reduced.samples == 0) {
-                reduced.appendOneValue(timestamp, v);
-                reduced.samples = 1;
-                return;
-            }
-            if (reduced.samples == 1) {
-                var r = new ReducedState();
-                r.appendTwoValues(reduced.timestamps[0], reduced.values[0], timestamp, v);
-                r.samples = 2;
-                reduced = r;
-                return;
-            }
-            reduced.samples++;
-            reduced.resets += dv(v, reduced.values[1]) + dv(reduced.values[1], reduced.values[0]) - dv(v, reduced.values[0]);
-            reduced.timestamps[1] = timestamp;
-            reduced.values[1] = v;
-        }
-
-        void maybeResizeAndAppend(BigArrays bigArrays, long timestamp, double value) {
-            timestamps = bigArrays.grow(timestamps, pendingCount + 1);
-            values = bigArrays.grow(values, pendingCount + 1);
-
-            timestamps.set(pendingCount, timestamp);
-            values.set(pendingCount, value);
-            pendingCount++;
-        }
-
-        void ensureCapacity(BigArrays bigArrays, int count, long firstTimestamp) {
-            int newSize = pendingCount + count;
-            timestamps = bigArrays.grow(timestamps, newSize);
-            values = bigArrays.grow(values, newSize);
-            if (pendingCount > 0 && firstTimestamp > timestamps.get(pendingCount - 1)) {
-                if (sliceOffsets.length == 0 || sliceOffsets[sliceOffsets.length - 1] != pendingCount) {
-                    sliceOffsets = ArrayUtil.growExact(sliceOffsets, sliceOffsets.length + 1);
-                    sliceOffsets[sliceOffsets.length - 1] = pendingCount;
-                }
-            }
-        }
-
-        ReducedState flush() {
-            if (reduced == null) {
-                reduced = new ReducedState();
-            }
-            if (pendingCount == 0) {
-                return reduced;
-            }
-            if (pendingCount == 1) {
-                combineDirectly(timestamps.get(0), values.get(0));
-                return reduced;
-            }
-            PriorityQueue<Slice> pq = mergeQueue();
-            // first
-            final long lastTimestamp;
-            final double lastValue;
-            {
-                Slice top = pq.top();
-                lastTimestamp = top.timestamp;
-                int position = top.next();
-                lastValue = values.get(position);
-                if (top.exhausted()) {
-                    pq.pop();
-                } else {
-                    pq.updateTop();
-                }
-            }
-            var prevValue = lastValue;
-            double reset = 0;
-            int position = -1;
-            while (pq.size() > 0) {
-                Slice top = pq.top();
-                position = top.next();
-                if (top.exhausted()) {
-                    pq.pop();
-                } else {
-                    pq.updateTop();
-                }
-                var val = values.get(position);
-                reset += dv(val, prevValue) + dv(prevValue, lastValue) - dv(val, lastValue);
-                prevValue = val;
-            }
-            reduced.samples += pendingCount;
-            reduced.resets += reset;
-            combineDirectly(lastTimestamp, lastValue);
-            combineDirectly(timestamps.get(position), prevValue);
-            pendingCount = 0;
-            sliceOffsets = EMPTY_SLICES;
-            return reduced;
-        }
-
-        private PriorityQueue<Slice> mergeQueue() {
-            PriorityQueue<Slice> pq = new PriorityQueue<>(this.sliceOffsets.length + 1) {
-                @Override
-                protected boolean lessThan(Slice a, Slice b) {
-                    return a.timestamp > b.timestamp; // want the latest timestamp first
-                }
-            };
-            int startOffset = 0;
-            for (int sliceOffset : sliceOffsets) {
-                pq.add(new Slice(this, startOffset, sliceOffset));
-                startOffset = sliceOffset;
-            }
-            pq.add(new Slice(this, startOffset, pendingCount));
-            return pq;
-        }
-
-        @Override
-        public void close() {
-            timestamps.close();
-            values.close();
-        }
-    }
-
-    static final class Slice {
-        int start;
-        long timestamp;
-        final int end;
-        final Buffer buffer;
-
-        Slice(Buffer buffer, int start, int end) {
-            this.buffer = buffer;
-            this.start = start;
-            this.end = end;
-            this.timestamp = buffer.timestamps.get(start);
-        }
-
-        boolean exhausted() {
-            return start >= end;
-        }
-
-        int next() {
-            int index = start++;
-            if (start < end) {
-                timestamp = buffer.timestamps.get(start);
-            }
-            return index;
-        }
-    }
-
-    @Override
-    public final void evaluateFinal(Block[] blocks, int offset, IntVector selected, GroupingAggregatorEvaluationContext evalContext) {
-        BlockFactory blockFactory = driverContext.blockFactory();
-        int positionCount = selected.getPositionCount();
-        try (var rates = blockFactory.newDoubleBlockBuilder(positionCount)) {
-            for (int p = 0; p < positionCount; p++) {
-                int group = selected.getInt(p);
-                var state = flushAndCombineState(group);
-                if (state == null || state.timestamps.length < 2) {
-                    rates.appendNull();
-                    continue;
-                }
-                final double rate;
-                if (evalContext instanceof TimeSeriesGroupingAggregatorEvaluationContext tsContext) {
-                    rate = extrapolateRate(state, tsContext.rangeStartInMillis(group), tsContext.rangeEndInMillis(group));
-                } else {
-                    rate = computeRateWithoutExtrapolate(state);
-                }
-                rates.appendDouble(rate);
-            }
-            blocks[offset] = rates.build();
-        }
-    }
-
-    ReducedState flushAndCombineState(int groupId) {
-        ReducedState state = groupId < reducedStates.size() ? reducedStates.getAndSet(groupId, null) : null;
-        if (state != null) {
-            return state;
-        }
-        Buffer buffer = groupId < buffers.size() ? buffers.getAndSet(groupId, null) : null;
-        if (buffer != null) {
-            try (buffer) {
-                return buffer.flush();
-            }
-        } else {
-            return null;
-        }
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(getClass().getSimpleName()).append("[");
-        sb.append("channels=").append(channels);
-        sb.append("]");
-        return sb.toString();
     }
 
     static final class ReducedState {
@@ -707,46 +503,262 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         return (lastValue - firstValue) * 1000.0 / (lastTS - firstTS);
     }
 
+    static class IntermediateState {
+        double increases;
+        int samples;
+        Interval[] intervals;
+
+        public IntermediateState(double increases, int samples, Interval interval) {
+            this.increases = increases;
+            this.samples = samples;
+            this.intervals = new Interval[]{interval};
+        }
+
+        void addInterval(int samples, double increase, Interval interval) {
+            this.samples += samples;
+            this.increases += increase;
+            intervals = ArrayUtil.growExact(intervals, intervals.length + 1);
+            intervals[intervals.length - 1] = interval;
+        }
+
+        Reduced reduce() {
+            return new Reduced();
+        }
+    }
+
+    static class Reduced {
+        double increases;
+        int samples;
+        long t1;
+        double v1;
+        long t2;
+        double v2;
+
+        void append(long t, double v) {
+            if (samples == 0) {
+                t1 = t;
+                v1 = v;
+            } else if (samples == 1) {
+                t2 = t;
+                v2 = v;
+            } else {
+                increases += dv(v, v2) + dv(v2, v1) - dv(v, v1);
+                t2 = t;
+                v2 = v;
+            }
+        }
+
+        void append(double v) {
+            increases += dv(v, v2) + dv(v2, v1) - dv(v, v1);
+
+        }
+    }
+
+    static class Interval {
+        final boolean twoValues;
+        final long t1;
+        final double v1;
+        final long t2;
+        final double v2;
+
+        Interval(long t1, double v1, long t2, double v2) {
+            this.t1 = t1;
+            this.v1 = v1;
+            this.t2 = t2;
+            this.v2 = v2;
+            this.twoValues = true;
+        }
+
+        Interval(long t1, double v1) {
+            this.t1 = t1;
+            this.v1 = v1;
+            this.t2 = 0;
+            this.v2 = 0;
+            this.twoValues = false;
+        }
+    }
+
     /**
-     * Credit to PromQL for this extrapolation algorithm:
-     * If samples are close enough to the rangeStart and rangeEnd, we extrapolate the rate all the way to the boundary in question.
-     * "Close enough" is defined as "up to 10% more than the average duration between samples within the range".
-     * Essentially, we assume a more or less regular spacing between samples. If we don't see a sample where we would expect one,
-     * we assume the series does not cover the whole range but starts and/or ends within the range.
-     * We still extrapolate the rate in this case, but not all the way to the boundary, only by half of the average duration between
-     * samples (which is our guess for where the series actually starts or ends).
+     * Buffers data points in two arrays: one for timestamps and one for values, partitioned into multiple slices.
+     * Each slice is sorted in descending order of timestamp. A new slice is created when a data point has a
+     * timestamp greater than the last point of the current slice. Since each page is sorted by descending timestamp,
+     * we only need to compare the first point of the new page with the last point of the current slice to decide
+     * if a new slice is needed. During merging, a priority queue is used to iterate through the slices, selecting
+     * the slice with the greatest timestamp.
      */
-    private static double extrapolateRate(ReducedState state, long rangeStart, long rangeEnd) {
-        final int len = state.timestamps.length;
-        assert len >= 2 : "rate requires at least two samples; got " + len;
-        final long firstTS = state.timestamps[state.timestamps.length - 1];
-        final long lastTS = state.timestamps[0];
-        double reset = state.resets;
-        for (int i = 1; i < len; i++) {
-            if (state.values[i - 1] < state.values[i]) {
-                reset += state.values[i];
+    static final class Buffer implements Releasable {
+        private LongArray timestamps;
+        private DoubleArray values;
+        private int pendingCount;
+        int[] sliceOffsets;
+        private static final int[] EMPTY_SLICES = new int[0];
+        private final Reduced reduced = new Reduced();
+
+        Buffer(BigArrays bigArrays, int initialSize) {
+            this.timestamps = bigArrays.newLongArray(Math.max(initialSize, 32), false);
+            this.values = bigArrays.newDoubleArray(Math.max(initialSize, 32), false);
+            this.sliceOffsets = EMPTY_SLICES;
+        }
+
+        void appendWithoutResize(long timestamp, double value) {
+            timestamps.set(pendingCount, timestamp);
+            values.set(pendingCount, value);
+            pendingCount++;
+        }
+
+        void maybeResizeAndAppend(BigArrays bigArrays, long timestamp, double value) {
+            timestamps = bigArrays.grow(timestamps, pendingCount + 1);
+            values = bigArrays.grow(values, pendingCount + 1);
+
+            timestamps.set(pendingCount, timestamp);
+            values.set(pendingCount, value);
+            pendingCount++;
+        }
+
+        void ensureCapacity(BigArrays bigArrays, int count, long firstTimestamp) {
+            int newSize = pendingCount + count;
+            timestamps = bigArrays.grow(timestamps, newSize);
+            values = bigArrays.grow(values, newSize);
+            if (pendingCount > 0 && firstTimestamp > timestamps.get(pendingCount - 1)) {
+                if (sliceOffsets.length == 0 || sliceOffsets[sliceOffsets.length - 1] != pendingCount) {
+                    sliceOffsets = ArrayUtil.growExact(sliceOffsets, sliceOffsets.length + 1);
+                    sliceOffsets[sliceOffsets.length - 1] = pendingCount;
+                }
             }
         }
-        double firstValue = state.values[len - 1];
-        double lastValue = state.values[0] + reset;
-        final double sampleTS = lastTS - firstTS;
-        final double averageSampleInterval = sampleTS / state.samples;
-        final double slope = (lastValue - firstValue) / sampleTS;
-        double startGap = firstTS - rangeStart;
-        if (startGap > 0) {
-            if (startGap > averageSampleInterval * 1.1) {
-                startGap = averageSampleInterval / 2.0;
+
+        Reduced flush() {
+            if (pendingCount == 0) {
+                return reduced;
             }
-            firstValue = Math.max(0.0, firstValue - startGap * slope);
-        }
-        double endGap = rangeEnd - lastTS;
-        if (endGap > 0) {
-            if (endGap > averageSampleInterval * 1.1) {
-                endGap = averageSampleInterval / 2.0;
+            if (pendingCount == 1) {
+                reduced.append(timestamps.get(0), values.get(0));
+                reduced.samples++;
+                return reduced;
             }
-            lastValue = lastValue + endGap * slope;
+            PriorityQueue<Slice> pq = mergeQueue();
+            // first
+            final long lastTimestamp;
+            final double lastValue;
+            {
+                Slice top = pq.top();
+                lastTimestamp = top.timestamp;
+                int position = top.next();
+                lastValue = values.get(position);
+                if (top.exhausted()) {
+                    pq.pop();
+                } else {
+                    pq.updateTop();
+                }
+            }
+            var prevValue = lastValue;
+            double reset = 0;
+            int position = -1;
+            while (pq.size() > 0) {
+                Slice top = pq.top();
+                position = top.next();
+                if (top.exhausted()) {
+                    pq.pop();
+                } else {
+                    pq.updateTop();
+                }
+                var val = values.get(position);
+                reset += dv(val, prevValue) + dv(prevValue, lastValue) - dv(val, lastValue);
+                prevValue = val;
+            }
+            reduced.increases += reset;
+            reduced.append(lastTimestamp, lastValue);
+            reduced.append(timestamps.get(position), prevValue);
+            reduced.samples += pendingCount;
+            pendingCount = 0;
+            sliceOffsets = EMPTY_SLICES;
+            return reduced;
         }
-        return (lastValue - firstValue) * 1000.0 / (rangeEnd - rangeStart);
+
+        private PriorityQueue<Slice> mergeQueue() {
+            PriorityQueue<Slice> pq = new PriorityQueue<>(this.sliceOffsets.length + 1) {
+                @Override
+                protected boolean lessThan(Slice a, Slice b) {
+                    return a.timestamp > b.timestamp; // want the latest timestamp first
+                }
+            };
+            int startOffset = 0;
+            for (int sliceOffset : sliceOffsets) {
+                pq.add(new Slice(this, startOffset, sliceOffset));
+                startOffset = sliceOffset;
+            }
+            pq.add(new Slice(this, startOffset, pendingCount));
+            return pq;
+        }
+
+        @Override
+        public void close() {
+            timestamps.close();
+            values.close();
+        }
+    }
+
+    static final class Slice {
+        int start;
+        long timestamp;
+        final int end;
+        final Buffer buffer;
+
+        Slice(Buffer buffer, int start, int end) {
+            this.buffer = buffer;
+            this.start = start;
+            this.end = end;
+            this.timestamp = buffer.timestamps.get(start);
+        }
+
+        boolean exhausted() {
+            return start >= end;
+        }
+
+        int next() {
+            int index = start++;
+            if (start < end) {
+                timestamp = buffer.timestamps.get(start);
+            }
+            return index;
+        }
+    }
+
+    @Override
+    public void evaluateFinal(Block[] blocks, int offset, IntVector selected, GroupingAggregatorEvaluationContext evalContext) {
+        BlockFactory blockFactory = driverContext.blockFactory();
+        int positionCount = selected.getPositionCount();
+        try (var rates = blockFactory.newDoubleBlockBuilder(positionCount)) {
+            for (int p = 0; p < positionCount; p++) {
+                int group = selected.getInt(p);
+                var reduced = reducedStates.size() > group ? reducedStates.get(group) : null;
+                if (reduced == null) {
+                    Buffer buffer = buffers.size() > group ? buffers.get(group) : null;
+                    buffer.flush();
+                }
+                if (reduced == null || reduced.samples < 2) {
+                    rates.appendNull();
+                    continue;
+                }
+                final double rate;
+                if (evalContext instanceof TimeSeriesGroupingAggregatorEvaluationContext tsContext) {
+                    rate = 1.0;
+                } else {
+                    rate = 0.5;
+                }
+                rates.appendDouble(rate);
+            }
+            blocks[offset] = rates.build();
+        }
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(getClass().getSimpleName()).append("[");
+        sb.append("channels=").append(channels);
+        sb.append("]");
+        return sb.toString();
     }
 
     // TODO: copied from old rate - simplify this or explain why we need it?
