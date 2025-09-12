@@ -156,6 +156,14 @@ public abstract class LuceneOperator extends SourceOperator {
 
     protected abstract Page getCheckedOutput() throws IOException;
 
+    protected LuceneSlice currentSlice() {
+        return currentSlice;
+    }
+
+    protected int indexOfCurrentSlice() {
+        return sliceIndex;
+    }
+
     @Override
     public final void close() {
         shardContextCounters.forEach(RefCounted::decRef);

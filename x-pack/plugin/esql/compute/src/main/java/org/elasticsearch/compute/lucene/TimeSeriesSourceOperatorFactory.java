@@ -7,6 +7,9 @@
 
 package org.elasticsearch.compute.lucene;
 
+import org.elasticsearch.compute.operator.DriverContext;
+import org.elasticsearch.compute.operator.SourceOperator;
+
 import java.util.List;
 import java.util.function.Function;
 
@@ -28,6 +31,11 @@ public class TimeSeriesSourceOperatorFactory extends LuceneSourceOperator.Factor
             limit,
             false
         );
+    }
+
+    @Override
+    public SourceOperator get(DriverContext driverContext) {
+        return new TimeSeriesSourceOperator(contexts, driverContext.blockFactory(), maxPageSize, sliceQueue, limit, limiter, needsScore);
     }
 
     public static TimeSeriesSourceOperatorFactory create(

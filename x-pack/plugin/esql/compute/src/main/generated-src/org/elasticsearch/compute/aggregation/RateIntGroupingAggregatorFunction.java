@@ -126,6 +126,20 @@ public final class RateIntGroupingAggregatorFunction implements GroupingAggregat
             assert false : "expected timestamp vector in time-series aggregation";
             throw new IllegalStateException("expected timestamp vector in time-series aggregation");
         }
+        LongBlock nextTimestampsBlock = page.getBlock(channels.get(2));
+        LongVector nextTimestampsVector = nextTimestampsBlock.asVector();
+        if (timestampsVector == null) {
+            assert false : "expected next timestamp vector in time-series aggregation";
+            throw new IllegalStateException("expected next timestamp vector in time-series aggregation");
+        }
+
+        int positionCount = page.getPositionCount();
+        // If the smallest of the current timestamp is larger than the next potential max timestamp,
+        // then we can flush all buffers, and proceed the current data directly.
+        final long nextTimestamp = nextTimestampsVector.getLong(0);
+        if (timestampsVector.getLong(positionCount - 1) > nextTimestampsVector.getLong(0)) {
+            System.err.println("flush outstanding buffers [" + nextTimestamp + "]");
+        }
         return new AddInput() {
             @Override
             public void add(int positionOffset, IntArrayBlock groupIds) {

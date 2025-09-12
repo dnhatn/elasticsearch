@@ -31,8 +31,10 @@ import org.elasticsearch.xpack.esql.core.expression.NamedExpression;
 import org.elasticsearch.xpack.esql.evaluator.EvalMapper;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.AggregateFunction;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Count;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Rate;
 import org.elasticsearch.xpack.esql.expression.function.grouping.Categorize;
 import org.elasticsearch.xpack.esql.plan.physical.AggregateExec;
+import org.elasticsearch.xpack.esql.plan.physical.EsQueryExec;
 import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesAggregateExec;
 import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.LocalExecutionPlannerContext;
 import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.PhysicalOperation;
@@ -83,6 +85,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
 
             // create the agg factories
             aggregatesToFactory(
+                aggregateExec,
                 aggregates,
                 aggregatorMode,
                 sourceLayout,
@@ -158,6 +161,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
 
             // create the agg factories
             aggregatesToFactory(
+                aggregateExec,
                 aggregates,
                 aggregatorMode,
                 sourceLayout,
@@ -247,7 +251,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
     private record AggFunctionSupplierContext(AggregatorFunctionSupplier supplier, List<Integer> channels, AggregatorMode mode) {}
 
     private void aggregatesToFactory(
-
+        AggregateExec aggregateExec,
         List<? extends NamedExpression> aggregates,
         AggregatorMode mode,
         Layout layout,
@@ -289,6 +293,14 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
                                     );
                                 }
                                 sourceAttr.add(attr);
+                            }
+                            // TODO: quick hack for Rate, we should streamline this
+                            if (aggregateFunction instanceof Rate) {
+                                for (Attribute attr : aggregateExec.child().output()) {
+                                    if (attr.name().equals(EsQueryExec.TIME_SERIES_NEXT_MAX_TIMESTAMP_FIELD.getName())) {
+                                        sourceAttr.add(attr);
+                                    }
+                                }
                             }
                         }
                     }

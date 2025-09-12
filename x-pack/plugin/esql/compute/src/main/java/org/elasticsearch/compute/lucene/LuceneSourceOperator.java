@@ -60,9 +60,9 @@ public class LuceneSourceOperator extends LuceneOperator {
     private final int minPageSize;
 
     public static class Factory extends LuceneOperator.Factory {
-        private final List<? extends RefCounted> contexts;
-        private final int maxPageSize;
-        private final Limiter limiter;
+        protected final List<? extends RefCounted> contexts;
+        protected final int maxPageSize;
+        protected final Limiter limiter;
 
         public Factory(
             List<? extends ShardContext> contexts,

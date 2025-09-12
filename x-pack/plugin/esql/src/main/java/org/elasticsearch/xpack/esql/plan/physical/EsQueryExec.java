@@ -40,6 +40,18 @@ public class EsQueryExec extends LeafExec implements EstimatesRowSize {
         EsField.TimeSeriesFieldType.NONE
     );
 
+    /**
+     * For time-series sources, we also return the maximum potential timestamp of remaining segments in the same slice.
+     * This allows downstream operators, such as rate, to process data intermediately instead of buffering it in memory.
+     */
+    public static final EsField TIME_SERIES_NEXT_MAX_TIMESTAMP_FIELD = new EsField(
+        "_ts_next_max_timestamp",
+        DataType.LONG,
+        Map.of(),
+        false,
+        EsField.TimeSeriesFieldType.NONE
+    );
+
     private final String indexPattern;
     private final IndexMode indexMode;
     private final Map<String, IndexMode> indexNameWithModes;

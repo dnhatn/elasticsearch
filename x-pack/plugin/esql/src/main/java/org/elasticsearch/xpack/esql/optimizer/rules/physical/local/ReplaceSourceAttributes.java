@@ -7,6 +7,7 @@
 
 package org.elasticsearch.xpack.esql.optimizer.rules.physical.local;
 
+import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.xpack.esql.core.expression.Attribute;
 import org.elasticsearch.xpack.esql.core.expression.FieldAttribute;
 import org.elasticsearch.xpack.esql.core.expression.MetadataAttribute;
@@ -31,20 +32,30 @@ public class ReplaceSourceAttributes extends PhysicalOptimizerRules.OptimizerRul
         var docId = new FieldAttribute(plan.source(), null, null, EsQueryExec.DOC_ID_FIELD.getName(), EsQueryExec.DOC_ID_FIELD);
         final List<Attribute> attributes = new ArrayList<>();
         attributes.add(docId);
-
-        var outputIterator = plan.output().iterator();
-        Attribute score = null;
-        while (score == null && outputIterator.hasNext()) {
-            Attribute attr = outputIterator.next();
-            if (attr instanceof MetadataAttribute ma) {
-                if (ma.name().equals(MetadataAttribute.SCORE)) {
-                    score = attr;
+        if (plan.indexMode() == IndexMode.TIME_SERIES) {
+            attributes.add(
+                new FieldAttribute(
+                    plan.source(),
+                    null,
+                    null,
+                    EsQueryExec.TIME_SERIES_NEXT_MAX_TIMESTAMP_FIELD.getName(),
+                    EsQueryExec.TIME_SERIES_NEXT_MAX_TIMESTAMP_FIELD
+                )
+            );
+        } else {
+            var outputIterator = plan.output().iterator();
+            Attribute score = null;
+            while (score == null && outputIterator.hasNext()) {
+                Attribute attr = outputIterator.next();
+                if (attr instanceof MetadataAttribute ma) {
+                    if (ma.name().equals(MetadataAttribute.SCORE)) {
+                        score = attr;
+                    }
                 }
             }
-        }
-        // TODO: Add timestamp_watermark for time-series
-        if (score != null) {
-            attributes.add(score);
+            if (score != null) {
+                attributes.add(score);
+            }
         }
         return new EsQueryExec(
             plan.source(),
