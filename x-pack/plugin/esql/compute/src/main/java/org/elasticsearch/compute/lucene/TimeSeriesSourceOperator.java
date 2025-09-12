@@ -79,7 +79,7 @@ public class TimeSeriesSourceOperator extends LuceneSourceOperator {
         }
     }
 
-    static long readMaxTimestamp(LeafReader reader) throws IOException {
+    public static long readMaxTimestamp(LeafReader reader) throws IOException {
         FieldInfo info = reader.getFieldInfos().fieldInfo(DataStream.TIMESTAMP_FIELD_NAME);
         if (info != null) {
             if (info.docValuesSkipIndexType() == DocValuesSkipIndexType.RANGE) {

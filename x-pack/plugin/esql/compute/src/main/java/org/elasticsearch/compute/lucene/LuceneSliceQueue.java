@@ -7,12 +7,19 @@
 
 package org.elasticsearch.compute.lucene;
 
+import org.apache.lucene.document.LongPoint;
+import org.apache.lucene.index.DocValuesSkipIndexType;
+import org.apache.lucene.index.DocValuesSkipper;
+import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.PointValues;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Weight;
+import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -177,6 +184,20 @@ public final class LuceneSliceQueue {
         return partitioningStrategies;
     }
 
+
+    private static void printTimestamps(LeafReaderContext leafContext) {
+        try {
+            PointValues pointValues = leafContext.reader().getPointValues(DataStream.TIMESTAMP_FIELD_NAME);
+            if (pointValues != null) {
+                long min = LongPoint.decodeDimension(pointValues.getMinPackedValue(), 0);
+                long max = LongPoint.decodeDimension(pointValues.getMaxPackedValue(), 0);
+                System.err.println("--> reader " + leafContext.ord + " min=" + min + " max=" + max);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public static LuceneSliceQueue create(
         List<? extends ShardContext> contexts,
         Function<ShardContext, List<QueryAndTags>> queryFunction,
@@ -190,6 +211,9 @@ public final class LuceneSliceQueue {
 
         int nextSliceId = 0;
         for (ShardContext ctx : contexts) {
+            for (LeafReaderContext leafContext : ctx.searcher().getLeafContexts()) {
+                printTimestamps(leafContext);
+            }
             for (QueryAndTags queryAndExtra : queryFunction.apply(ctx)) {
                 var scoreMode = scoreModeFunction.apply(ctx);
                 Query query = queryAndExtra.query;
