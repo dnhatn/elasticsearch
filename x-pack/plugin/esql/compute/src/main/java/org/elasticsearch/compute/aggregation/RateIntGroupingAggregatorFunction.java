@@ -240,8 +240,8 @@ public final class RateIntGroupingAggregatorFunction implements GroupingAggregat
                 }
                 buffer.flush();
                 for (int p = 0; p < positionCount; p++) {
-                   int valuePosition = positionOffset + p;
-                   buffer.combineDirectly(timestampVector.getLong(valuePosition), valueVector.getInt(valuePosition));
+                    int valuePosition = positionOffset + p;
+                    buffer.combineDirectly(timestampVector.getLong(valuePosition), valueVector.getInt(valuePosition));
                 }
             } else {
                 var t0 = timestampVector.getLong(0);

@@ -193,6 +193,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
 
     private void addRawInput(int positionOffset, IntVector groups, DoubleBlock valueBlock, LongVector timestampVector) {
         if (groups.isConstant()) {
+            // TODO: optimize here
             int groupId = groups.getInt(0);
             Buffer buffer = getBuffer(groupId, groups.getPositionCount(), timestampVector.getLong(0));
             for (int p = 0; p < groups.getPositionCount(); p++) {
@@ -226,7 +227,13 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         }
     }
 
-    private void addRawInput(int positionOffset, IntVector groups, DoubleVector valueVector, LongVector timestampVector, long nextTimestamp) {
+    private void addRawInput(
+        int positionOffset,
+        IntVector groups,
+        DoubleVector valueVector,
+        LongVector timestampVector,
+        long nextTimestamp
+    ) {
         int positionCount = groups.getPositionCount();
         if (groups.isConstant()) {
             int groupId = groups.getInt(0);
@@ -239,17 +246,14 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                     buffers.set(groupId, buffer);
                 }
                 Reduced reduced = buffer.flush();
-                for (int p = 0; p < positionCount; p++) {
+                reduced.append(timestampVector.getLong(positionOffset), valueVector.getDouble(positionOffset));
+                for (int p = 1; p < positionCount - 1; p++) {
                     int valuePosition = positionOffset + p;
-                    double v = valueVector.getDouble(valuePosition);
-                    if (reduced.samples >= 2) {
-                        reduced.append(v);
-                    } else {
-                        reduced.append(timestampVector.getLong(valuePosition), v);
-                    }
+                    reduced.append(valueVector.getDouble(valuePosition));
                 }
-                if (reduced.samples > 2) {
-                    reduced.t1 = tn;
+                if (positionCount > 1) {
+                    int p = positionOffset + positionCount - 1;
+                    reduced.append(timestampVector.getLong(p), valueVector.getDouble(p));
                 }
             } else {
                 var t0 = timestampVector.getLong(0);
@@ -511,7 +515,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         public IntermediateState(double increases, int samples, Interval interval) {
             this.increases = increases;
             this.samples = samples;
-            this.intervals = new Interval[]{interval};
+            this.intervals = new Interval[] { interval };
         }
 
         void addInterval(int samples, double increase, Interval interval) {
@@ -550,7 +554,6 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
 
         void append(double v) {
             increases += dv(v, v2) + dv(v2, v1) - dv(v, v1);
-
         }
     }
 

@@ -239,8 +239,8 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
                 }
                 buffer.flush();
                 for (int p = 0; p < positionCount; p++) {
-                   int valuePosition = positionOffset + p;
-                   buffer.combineDirectly(timestampVector.getLong(valuePosition), valueVector.getLong(valuePosition));
+                    int valuePosition = positionOffset + p;
+                    buffer.combineDirectly(timestampVector.getLong(valuePosition), valueVector.getLong(valuePosition));
                 }
             } else {
                 var t0 = timestampVector.getLong(0);
