@@ -9,6 +9,7 @@ package org.elasticsearch.compute.aggregation;
 // begin generated imports
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.PriorityQueue;
+import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.DoubleArray;
 import org.elasticsearch.common.util.IntArray;
@@ -29,6 +30,9 @@ import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.indices.breaker.AllCircuitBreakerStats;
+import org.elasticsearch.indices.breaker.CircuitBreakerService;
+import org.elasticsearch.indices.breaker.CircuitBreakerStats;
 
 import java.util.List;
 // end generated imports
@@ -78,7 +82,22 @@ public final class RateIntGroupingAggregatorFunction implements GroupingAggregat
     public RateIntGroupingAggregatorFunction(List<Integer> channels, DriverContext driverContext) {
         this.channels = channels;
         this.driverContext = driverContext;
-        this.bigArrays = driverContext.bigArrays();
+        this.bigArrays = driverContext.bigArrays().withBreakerService(new CircuitBreakerService() {
+            @Override
+            public CircuitBreaker getBreaker(String name) {
+                return driverContext.breaker();
+            }
+
+            @Override
+            public AllCircuitBreakerStats stats() {
+                return driverContext.bigArrays().breakerService().stats();
+            }
+
+            @Override
+            public CircuitBreakerStats stats(String name) {
+                return driverContext.bigArrays().breakerService().stats(name);
+            }
+        });
         ObjectArray<Buffer> buffers = driverContext.bigArrays().newObjectArray(256);
         try {
             this.reducedStates = driverContext.bigArrays().newObjectArray(256);
