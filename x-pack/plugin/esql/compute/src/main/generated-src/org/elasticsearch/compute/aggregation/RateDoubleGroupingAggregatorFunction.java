@@ -239,7 +239,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                     buffer = new Buffer(bigArrays, 16);
                     buffers.set(groupId, buffer);
                 }
-                buffer.maybeFlush();
+                buffer.flush();
                 for (int p = 0; p < positionCount; p++) {
                    int valuePosition = positionOffset + p;
                    buffer.combineDirectly(timestampVector.getLong(valuePosition), valueVector.getDouble(valuePosition));
@@ -446,15 +446,6 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             pendingCount++;
         }
 
-        void maybeFlush() {
-            if (reduced == null) {
-                reduced = new ReducedState();
-            }
-            flush(reduced);
-            pendingCount = 0;
-            sliceOffsets = EMPTY_SLICES;
-        }
-
         void combineDirectly(long timestamp, double v) {
             if (reduced.samples == 0) {
                 reduced.appendOneValue(timestamp, v);
@@ -495,22 +486,16 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             }
         }
 
-        void flush(ReducedState state) {
-            if (reduced != null) {
-                state.samples += reduced.samples;
-                state.resets += reduced.resets;
-                for (int i = 0; i < reduced.timestamps.length; i++) {
-                    state.appendOneValue(reduced.timestamps[i], reduced.values[i]);
-                }
-                reduced = null;
+        ReducedState flush() {
+            if (reduced == null) {
+                reduced = new ReducedState();
             }
             if (pendingCount == 0) {
-                return;
+                return reduced;
             }
             if (pendingCount == 1) {
-                state.samples++;
-                state.appendOneValue(timestamps.get(0), values.get(0));
-                return;
+                combineDirectly(timestamps.get(0), values.get(0));
+                return reduced;
             }
             PriorityQueue<Slice> pq = mergeQueue();
             // first
@@ -542,9 +527,13 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                 reset += dv(val, prevValue) + dv(prevValue, lastValue) - dv(val, lastValue);
                 prevValue = val;
             }
-            state.samples += pendingCount;
-            state.resets += reset;
-            state.appendTwoValues(lastTimestamp, lastValue, timestamps.get(position), prevValue);
+            reduced.samples += pendingCount;
+            reduced.resets += reset;
+            combineDirectly(lastTimestamp, lastValue);
+            combineDirectly(timestamps.get(position), prevValue);
+            pendingCount = 0;
+            sliceOffsets = EMPTY_SLICES;
+            return reduced;
         }
 
         private PriorityQueue<Slice> mergeQueue() {
@@ -622,16 +611,17 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
 
     ReducedState flushAndCombineState(int groupId) {
         ReducedState state = groupId < reducedStates.size() ? reducedStates.getAndSet(groupId, null) : null;
+        if (state != null) {
+            return state;
+        }
         Buffer buffer = groupId < buffers.size() ? buffers.getAndSet(groupId, null) : null;
         if (buffer != null) {
             try (buffer) {
-                if (state == null) {
-                    state = new ReducedState();
-                }
-                buffer.flush(state);
+                return buffer.flush();
             }
+        } else {
+            return null;
         }
-        return state;
     }
 
     @Override
