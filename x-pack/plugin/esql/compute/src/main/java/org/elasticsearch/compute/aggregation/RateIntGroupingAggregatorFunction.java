@@ -10,7 +10,6 @@ package org.elasticsearch.compute.aggregation;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.PriorityQueue;
 import org.elasticsearch.common.util.BigArrays;
-import org.elasticsearch.common.util.DoubleArray;
 import org.elasticsearch.common.util.IntArray;
 import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.common.util.ObjectArray;
@@ -33,7 +32,7 @@ import org.elasticsearch.core.Releasables;
 import java.util.List;
 // end generated imports
 
-public final class RateDoubleGroupingAggregatorFunction implements GroupingAggregatorFunction {
+public final class RateIntGroupingAggregatorFunction implements GroupingAggregatorFunction {
 
     public static final class FunctionSupplier implements AggregatorFunctionSupplier {
         @Override
@@ -52,19 +51,19 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         }
 
         @Override
-        public RateDoubleGroupingAggregatorFunction groupingAggregator(DriverContext driverContext, List<Integer> channels) {
-            return new RateDoubleGroupingAggregatorFunction(channels, driverContext);
+        public RateIntGroupingAggregatorFunction groupingAggregator(DriverContext driverContext, List<Integer> channels) {
+            return new RateIntGroupingAggregatorFunction(channels, driverContext);
         }
 
         @Override
         public String describe() {
-            return "rate of double";
+            return "rate of int";
         }
     }
 
     static final List<IntermediateStateDesc> INTERMEDIATE_STATE_DESC = List.of(
         new IntermediateStateDesc("timestamps", ElementType.LONG),
-        new IntermediateStateDesc("values", ElementType.DOUBLE),
+        new IntermediateStateDesc("values", ElementType.INT),
         new IntermediateStateDesc("sampleCounts", ElementType.INT),
         new IntermediateStateDesc("resets", ElementType.DOUBLE)
     );
@@ -75,7 +74,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
     private final BigArrays bigArrays;
     private ObjectArray<ReducedState> reducedStates;
 
-    public RateDoubleGroupingAggregatorFunction(List<Integer> channels, DriverContext driverContext) {
+    public RateIntGroupingAggregatorFunction(List<Integer> channels, DriverContext driverContext) {
         this.channels = channels;
         this.driverContext = driverContext;
         this.bigArrays = driverContext.bigArrays();
@@ -96,7 +95,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
 
     @Override
     public AddInput prepareProcessRawInputPage(SeenGroupIds seenGroupIds, Page page) {
-        DoubleBlock valuesBlock = page.getBlock(channels.get(0));
+        IntBlock valuesBlock = page.getBlock(channels.get(0));
         if (valuesBlock.areAllValuesNull()) {
             return new AddInput() {
                 @Override
@@ -155,7 +154,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
     }
 
     // Note that this path can be executed randomly in tests, not in production
-    private void addRawInput(int positionOffset, IntBlock groups, DoubleBlock valueBlock, LongVector timestampVector) {
+    private void addRawInput(int positionOffset, IntBlock groups, IntBlock valueBlock, LongVector timestampVector) {
         int lastGroup = -1;
         Buffer buffer = null;
         int positionCount = groups.getPositionCount();
@@ -173,7 +172,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             long timestamp = timestampVector.getLong(valuePosition);
             for (int g = groupStart; g < groupEnd; g++) {
                 final int groupId = groups.getInt(g);
-                final var value = valueBlock.getDouble(valueBlock.getFirstValueIndex(valuePosition));
+                final var value = valueBlock.getInt(valueBlock.getFirstValueIndex(valuePosition));
                 if (lastGroup != groupId) {
                     buffer = getBuffer(groupId, 1, timestamp);
                     buffer.appendWithoutResize(timestamp, value);
@@ -185,7 +184,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         }
     }
 
-    private void addRawInput(int positionOffset, IntVector groups, DoubleBlock valueBlock, LongVector timestampVector) {
+    private void addRawInput(int positionOffset, IntVector groups, IntBlock valueBlock, LongVector timestampVector) {
         if (groups.isConstant()) {
             int groupId = groups.getInt(0);
             Buffer buffer = getBuffer(groupId, groups.getPositionCount(), timestampVector.getLong(0));
@@ -195,7 +194,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                     continue;
                 }
                 assert valueBlock.getValueCount(valuePosition) == 1 : "expected single-valued block " + valueBlock;
-                buffer.appendWithoutResize(timestampVector.getLong(valuePosition), valueBlock.getDouble(valuePosition));
+                buffer.appendWithoutResize(timestampVector.getLong(valuePosition), valueBlock.getInt(valuePosition));
             }
         } else {
             int lastGroup = -1;
@@ -207,7 +206,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                 }
                 assert valueBlock.getValueCount(valuePosition) == 1 : "expected single-valued block " + valueBlock;
                 long timestamp = timestampVector.getLong(valuePosition);
-                var value = valueBlock.getDouble(valuePosition);
+                var value = valueBlock.getInt(valuePosition);
                 int groupId = groups.getInt(p);
                 if (lastGroup != groupId) {
                     buffer = getBuffer(groupId, 1, timestamp);
@@ -220,14 +219,14 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         }
     }
 
-    private void addRawInput(int positionOffset, IntVector groups, DoubleVector valueVector, LongVector timestampVector) {
+    private void addRawInput(int positionOffset, IntVector groups, IntVector valueVector, LongVector timestampVector) {
         int positionCount = groups.getPositionCount();
         if (groups.isConstant()) {
             int groupId = groups.getInt(0);
             Buffer buffer = getBuffer(groupId, positionCount, timestampVector.getLong(0));
             for (int p = 0; p < positionCount; p++) {
                 int valuePosition = positionOffset + p;
-                buffer.appendWithoutResize(timestampVector.getLong(valuePosition), valueVector.getDouble(valuePosition));
+                buffer.appendWithoutResize(timestampVector.getLong(valuePosition), valueVector.getInt(valuePosition));
             }
         } else {
             int lastGroup = -1;
@@ -235,7 +234,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             for (int p = 0; p < positionCount; p++) {
                 int valuePosition = positionOffset + p;
                 long timestamp = timestampVector.getLong(valuePosition);
-                var value = valueVector.getDouble(valuePosition);
+                var value = valueVector.getInt(valuePosition);
                 int groupId = groups.getInt(p);
                 if (lastGroup != groupId) {
                     buffer = getBuffer(groupId, 1, timestamp);
@@ -267,7 +266,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
     public void addIntermediateInput(int positionOffset, IntVector groups, Page page) {
         assert channels.size() == intermediateBlockCount();
         LongBlock timestamps = page.getBlock(channels.get(0));
-        DoubleBlock values = page.getBlock(channels.get(1));
+        IntBlock values = page.getBlock(channels.get(1));
         assert timestamps.getTotalValueCount() == values.getTotalValueCount() : "timestamps=" + timestamps + "; values=" + values;
         if (values.areAllValuesNull()) {
             return;
@@ -296,7 +295,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
     private void addIntermediateInputBlock(int positionOffset, IntBlock groups, Page page) {
         assert channels.size() == intermediateBlockCount();
         LongBlock timestamps = page.getBlock(channels.get(0));
-        DoubleBlock values = page.getBlock(channels.get(1));
+        IntBlock values = page.getBlock(channels.get(1));
         assert timestamps.getTotalValueCount() == values.getTotalValueCount() : "timestamps=" + timestamps + "; values=" + values;
         if (values.areAllValuesNull()) {
             return;
@@ -335,7 +334,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         int positionCount = selected.getPositionCount();
         try (
             var timestamps = blockFactory.newLongBlockBuilder(positionCount * 2);
-            var values = blockFactory.newDoubleBlockBuilder(positionCount * 2);
+            var values = blockFactory.newIntBlockBuilder(positionCount * 2);
             var sampleCounts = blockFactory.newIntVectorFixedBuilder(positionCount);
             var resets = blockFactory.newDoubleVectorFixedBuilder(positionCount)
         ) {
@@ -348,19 +347,19 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                         values.beginPositionEntry();
                         for (int s = 0; s < state.timestamps.length; s++) {
                             timestamps.appendLong(state.timestamps[s]);
-                            values.appendDouble(state.values[s]);
+                            values.appendInt(state.values[s]);
                         }
                         timestamps.endPositionEntry();
                         values.endPositionEntry();
                     } else {
                         timestamps.appendLong(state.timestamps[0]);
-                        values.appendDouble(state.values[0]);
+                        values.appendInt(state.values[0]);
                     }
                     sampleCounts.appendInt(state.samples);
                     resets.appendDouble(state.resets);
                 } else {
                     timestamps.appendLong(0);
-                    values.appendDouble(0);
+                    values.appendInt(0);
                     sampleCounts.appendInt(0);
                     resets.appendDouble(0);
                 }
@@ -405,24 +404,24 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
      */
     static final class Buffer implements Releasable {
         private LongArray timestamps;
-        private DoubleArray values;
+        private IntArray values;
         private int pendingCount;
         int[] sliceOffsets;
         private static final int[] EMPTY_SLICES = new int[0];
 
         Buffer(BigArrays bigArrays, int initialSize) {
             this.timestamps = bigArrays.newLongArray(Math.max(initialSize, 32), false);
-            this.values = bigArrays.newDoubleArray(Math.max(initialSize, 32), false);
+            this.values = bigArrays.newIntArray(Math.max(initialSize, 32), false);
             this.sliceOffsets = EMPTY_SLICES;
         }
 
-        void appendWithoutResize(long timestamp, double value) {
+        void appendWithoutResize(long timestamp, int value) {
             timestamps.set(pendingCount, timestamp);
             values.set(pendingCount, value);
             pendingCount++;
         }
 
-        void maybeResizeAndAppend(BigArrays bigArrays, long timestamp, double value) {
+        void maybeResizeAndAppend(BigArrays bigArrays, long timestamp, int value) {
             timestamps = bigArrays.grow(timestamps, pendingCount + 1);
             values = bigArrays.grow(values, pendingCount + 1);
 
@@ -455,7 +454,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             PriorityQueue<Slice> pq = mergeQueue();
             // first
             final long lastTimestamp;
-            final double lastValue;
+            final int lastValue;
             {
                 Slice top = pq.top();
                 lastTimestamp = top.timestamp;
@@ -585,13 +584,13 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
 
     static final class ReducedState {
         private static final long[] EMPTY_LONGS = new long[0];
-        private static final double[] EMPTY_VALUES = new double[0];
+        private static final int[] EMPTY_VALUES = new int[0];
         int samples;
         double resets;
         long[] timestamps = EMPTY_LONGS;
-        double[] values = EMPTY_VALUES;
+        int[] values = EMPTY_VALUES;
 
-        void appendOneValue(long t, double v) {
+        void appendOneValue(long t, int v) {
             int currentSize = timestamps.length;
             this.timestamps = ArrayUtil.growExact(timestamps, currentSize + 1);
             this.values = ArrayUtil.growExact(values, currentSize + 1);
@@ -599,7 +598,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             this.values[currentSize] = v;
         }
 
-        void appendTwoValues(long t1, double v1, long t2, double v2) {
+        void appendTwoValues(long t1, int v1, long t2, int v2) {
             int currentSize = timestamps.length;
             this.timestamps = ArrayUtil.growExact(timestamps, currentSize + 2);
             this.values = ArrayUtil.growExact(values, currentSize + 2);
@@ -610,13 +609,13 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             this.values[currentSize] = v2;
         }
 
-        void appendValuesFromBlocks(LongBlock ts, DoubleBlock vs, int position) {
+        void appendValuesFromBlocks(LongBlock ts, IntBlock vs, int position) {
             int tsFirst = ts.getFirstValueIndex(position);
             int vsFirst = vs.getFirstValueIndex(position);
             int count = ts.getValueCount(position);
             int total = timestamps.length + count;
             long[] mergedTimestamps = new long[total];
-            double[] mergedValues = new double[total];
+            int[] mergedValues = new int[total];
             int i = 0, j = 0, k = 0;
             while (i < timestamps.length && j < count) {
                 long t = ts.getLong(tsFirst + j);
@@ -625,7 +624,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                     mergedValues[k++] = values[i++];
                 } else {
                     mergedTimestamps[k] = t;
-                    mergedValues[k++] = vs.getDouble(vsFirst + j++);
+                    mergedValues[k++] = vs.getInt(vsFirst + j++);
                 }
             }
             while (i < timestamps.length) {
@@ -634,7 +633,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             }
             while (j < count) {
                 mergedTimestamps[k] = ts.getLong(tsFirst + j);
-                mergedValues[k++] = vs.getDouble(vsFirst + j++);
+                mergedValues[k++] = vs.getInt(vsFirst + j++);
             }
             this.timestamps = mergedTimestamps;
             this.values = mergedValues;
