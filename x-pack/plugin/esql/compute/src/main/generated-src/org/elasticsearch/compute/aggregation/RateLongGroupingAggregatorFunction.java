@@ -89,9 +89,9 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
         this.driverContext = driverContext;
         this.localBreakerService = new LocalBreakerService(driverContext.bigArrays().breakerService());
         this.bigArrays = driverContext.bigArrays().withBreakerService(localBreakerService);
-        ObjectArray<Buffer> buffers = driverContext.bigArrays().newObjectArray(256);
+        ObjectArray<Buffer> buffers = bigArrays.newObjectArray(256);
         try {
-            this.reducedStates = driverContext.bigArrays().newObjectArray(256);
+            this.reducedStates = bigArrays.newObjectArray(256);
             this.buffers = buffers;
             buffers = null;
         } finally {
