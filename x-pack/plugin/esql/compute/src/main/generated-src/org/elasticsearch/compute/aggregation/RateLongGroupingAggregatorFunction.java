@@ -29,6 +29,9 @@ import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.indices.breaker.AllCircuitBreakerStats;
+import org.elasticsearch.indices.breaker.CircuitBreakerService;
+import org.elasticsearch.indices.breaker.CircuitBreakerStats;
 
 import java.util.List;
 // end generated imports
@@ -72,13 +75,15 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
     private ObjectArray<Buffer> buffers;
     private final List<Integer> channels;
     private final DriverContext driverContext;
+    private final LocalBreakerService localBreakerService;
     private final BigArrays bigArrays;
     private ObjectArray<ReducedState> reducedStates;
 
     public RateLongGroupingAggregatorFunction(List<Integer> channels, DriverContext driverContext) {
         this.channels = channels;
         this.driverContext = driverContext;
-        this.bigArrays = driverContext.bigArrays();
+        this.localBreakerService = new LocalBreakerService(driverContext.bigArrays().breakerService());
+        this.bigArrays = driverContext.bigArrays().withBreakerService(localBreakerService);
         ObjectArray<Buffer> buffers = driverContext.bigArrays().newObjectArray(256);
         try {
             this.reducedStates = driverContext.bigArrays().newObjectArray(256);
@@ -380,7 +385,7 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
                 buffer.close();
             }
         }
-        Releasables.close(reducedStates, buffers);
+        Releasables.close(reducedStates, buffers, localBreakerService);
     }
 
     private Buffer getBuffer(int groupId, int newElements, long firstTimestamp) {
@@ -702,5 +707,38 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
     // TODO: copied from old rate - simplify this or explain why we need it?
     static double dv(double v0, double v1) {
         return v0 > v1 ? v1 : v1 - v0;
+    }
+
+    private static class LocalBreakerService extends CircuitBreakerService implements Releasable {
+        private final CircuitBreakerService delegate;
+        private final Map<String, LocalCircuitBreaker> breakers = new HashMap<>();
+
+        LocalBreakerService(CircuitBreakerService delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void close() {
+            Releasables.close(breakers.values());
+        }
+
+        @Override
+        public CircuitBreaker getBreaker(String name) {
+            return breakers.computeIfAbsent(name,
+                n -> new LocalCircuitBreaker(delegate.getBreaker(n),
+                    ByteSizeValue.ofMb(1).getBytes(),
+                    ByteSizeValue.ofMb(100).getBytes()
+                ));
+        }
+
+        @Override
+        public AllCircuitBreakerStats stats() {
+            return delegate.stats();
+        }
+
+        @Override
+        public CircuitBreakerStats stats(String name) {
+            return delegate.stats(name);
+        }
     }
 }
