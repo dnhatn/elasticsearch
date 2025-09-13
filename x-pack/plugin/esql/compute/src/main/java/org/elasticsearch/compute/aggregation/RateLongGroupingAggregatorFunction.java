@@ -535,7 +535,7 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
     }
 
     @Override
-    public final void evaluateFinal(Block[] blocks, int offset, IntVector selected, GroupingAggregatorEvaluationContext evalContext) {
+    public void evaluateFinal(Block[] blocks, int offset, IntVector selected, GroupingAggregatorEvaluationContext evalContext) {
         BlockFactory blockFactory = driverContext.blockFactory();
         int positionCount = selected.getPositionCount();
         try (var rates = blockFactory.newDoubleBlockBuilder(positionCount)) {
