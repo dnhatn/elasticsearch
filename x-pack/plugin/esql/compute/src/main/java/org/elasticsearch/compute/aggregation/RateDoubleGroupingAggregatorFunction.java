@@ -370,15 +370,22 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
         }
     }
 
+    static final Interval[] EMPTY_INTERVALS = new Interval[0];
     static class ReducedState {
         long samples;
         double increases;
-        Interval[] intervals = new Interval[0];
+        Interval[] intervals = EMPTY_INTERVALS;
 
         void appendInterval(Interval interval) {
             int curr = intervals.length;
-            intervals = ArrayUtil.growExact(intervals, curr + 1);
-            intervals[curr] = interval;
+            if (curr == 0) {
+                intervals = new Interval[]{interval};
+            } else {
+                var newIntervals = new Interval[curr + 1];
+                System.arraycopy(intervals, 0, newIntervals, 0, curr);
+                newIntervals[curr] = interval;
+                this.intervals = newIntervals;
+            }
         }
     }
 
@@ -439,7 +446,6 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             reduced.samples++;
         }
         if (pq.size() == 0) {
-            reduced.samples++;
             reduced.appendInterval(new Interval(lastTimestamp, lastValue, lastTimestamp, lastValue));
             return;
         }
@@ -556,7 +562,7 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
                     continue;
                 }
                 var intervals = reduced.intervals;
-                Arrays.sort(intervals);
+                ArrayUtil.timSort(intervals);
                 double increase = 0.0;
                 long t1 = intervals[0].t1;
                 long t2 = intervals[intervals.length - 1].t2;
