@@ -212,9 +212,9 @@ public final class RateDoubleGroupingAggregatorFunction implements GroupingAggre
             int[] slices = getRawSlices(groupId, timestampVector.getLong(0));
             for (int p = 0; p < positionCount; p++) {
                 int valuePosition = positionOffset + p;
-                int bufferPosition = bufferSize + p;
-                timestamps.set(bufferPosition, timestampVector.getLong(valuePosition));
-                values.set(bufferPosition, valueVector.getDouble(valuePosition));
+                timestamps.set(bufferSize, timestampVector.getLong(valuePosition));
+                values.set(bufferSize, valueVector.getDouble(valuePosition));
+                ++bufferSize;
             }
             slices[0] = bufferSize;
         } else {
