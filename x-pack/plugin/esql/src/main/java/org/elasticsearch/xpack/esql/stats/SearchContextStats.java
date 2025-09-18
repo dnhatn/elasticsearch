@@ -87,6 +87,11 @@ public class SearchContextStats implements SearchStats {
         assert contexts != null && contexts.isEmpty() == false;
     }
 
+    @Override
+    public List<SearchExecutionContext> contexts() {
+        return contexts;
+    }
+
     private FieldStats makeFieldStats(String field) {
         var stat = new FieldStats();
         stat.config = makeFieldConfig(field);

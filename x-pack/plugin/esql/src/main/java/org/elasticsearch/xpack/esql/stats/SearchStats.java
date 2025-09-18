@@ -8,8 +8,11 @@
 package org.elasticsearch.xpack.esql.stats;
 
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.index.query.SearchExecutionContext;
 import org.elasticsearch.xpack.esql.core.expression.FieldAttribute;
 import org.elasticsearch.xpack.esql.core.expression.FieldAttribute.FieldName;
+
+import java.util.List;
 
 /**
  * Interface for determining information about fields in the index.
@@ -17,6 +20,10 @@ import org.elasticsearch.xpack.esql.core.expression.FieldAttribute.FieldName;
  */
 public interface SearchStats {
     SearchStats EMPTY = new EmptySearchStats();
+
+    default List<SearchExecutionContext> contexts() {
+        return List.of();
+    }
 
     boolean exists(FieldName field);
 

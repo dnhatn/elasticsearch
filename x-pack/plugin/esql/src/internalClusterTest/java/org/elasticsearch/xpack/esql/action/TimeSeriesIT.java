@@ -111,12 +111,11 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             hostToClusters.put("p" + i, randomFrom("qa", "prod"));
         }
         long timestamp = DEFAULT_DATE_TIME_FORMATTER.parseMillis("2024-04-15T00:00:00Z");
-        int numDocs = between(20, 100);
+        int numDocs = 1000;
         docs.clear();
         Map<String, Integer> requestCounts = new HashMap<>();
         for (int i = 0; i < numDocs; i++) {
             List<String> hosts = randomSubsetOf(between(1, hostToClusters.size()), hostToClusters.keySet());
-            timestamp += between(1, 10) * 1000L;
             for (String host : hosts) {
                 var requestCount = requestCounts.compute(host, (k, curr) -> {
                     if (curr == null || randomInt(100) <= 20) {
@@ -129,6 +128,7 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
                 ByteSizeValue memory = ByteSizeValue.ofBytes(randomIntBetween(1024, 1024 * 1024));
                 docs.add(new Doc(host, hostToClusters.get(host), timestamp, requestCount, cpu, memory));
             }
+            timestamp += 60 * 1000L;
         }
         Randomness.shuffle(docs);
         for (Doc doc : docs) {
@@ -590,6 +590,27 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
         request.profile(true);
         String tsFunction = randomFrom("sum_over_time", "avg_over_time");
         request.query("TS hosts | STATS AVG(" + tsFunction + "(cpu)) BY cluster, bucket(@timestamp, 1minute) | SORT cluster");
+        try (var resp = run(request)) {
+            EsqlQueryResponse.Profile profile = resp.profile();
+            List<DriverProfile> dataProfiles = profile.drivers().stream().filter(d -> d.description().equals("data")).toList();
+            assertThat(dataProfiles, not(empty()));
+            for (DriverProfile p : dataProfiles) {
+                List<OperatorStatus> aggregatorOperators = p.operators()
+                    .stream()
+                    .filter(s -> s.status() instanceof TimeSeriesAggregationOperator.Status)
+                    .toList();
+                assertThat(aggregatorOperators, hasSize(1));
+                assertThat(aggregatorOperators.getFirst().operator(), containsString("LossySumDoubleGroupingAggregatorFunction"));
+            }
+        }
+    }
+
+    public void testRewrite() {
+        EsqlQueryRequest request = new EsqlQueryRequest();
+        request.profile(true);
+        request.query(
+            "TS hosts | WHERE @timestamp >= \"2024-04-15T00:00:30Z\" AND @timestamp < \"2024-04-15T00:01:30Z\" | STATS sum(rate(request_count)) BY cluster, bucket(@timestamp, 1minute) | SORT cluster"
+        );
         try (var resp = run(request)) {
             EsqlQueryResponse.Profile profile = resp.profile();
             List<DriverProfile> dataProfiles = profile.drivers().stream().filter(d -> d.description().equals("data")).toList();

@@ -230,7 +230,7 @@ public class SingleValueQuery extends Query {
      * Builds a {@code bool} query combining the "next" query and a {@link SingleValueMatchQuery}.
      */
     public static class Builder extends AbstractBuilder {
-        Builder(QueryBuilder next, String field, Source source) {
+        public Builder(QueryBuilder next, String field, Source source) {
             super(next, field, source);
         }
 

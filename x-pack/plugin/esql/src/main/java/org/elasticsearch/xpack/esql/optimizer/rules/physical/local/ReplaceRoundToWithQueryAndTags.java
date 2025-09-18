@@ -7,6 +7,7 @@
 
 package org.elasticsearch.xpack.esql.optimizer.rules.physical.local;
 
+import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
@@ -374,12 +375,21 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             for (int i = 1; i < count; i++) {
                 upper = points.get(i);
                 // build predicates and range queries for RoundTo ranges
-                queries.add(rangeBucket(source, field, dataType, lower, upper, tag, zoneId, queryExec, pushdownPredicates, clause));
+                if (queryExec.indexMode() == IndexMode.TIME_SERIES && upper instanceof Long to && lower instanceof Long from) {
+                    long slices = 6; // Math.ceilDiv(to - from, maxIntervals);
+                    var interval = Math.ceilDiv(to - from, slices);
+                    while (from <= to) {
+                        queries.add(rangeBucket(source, field, dataType, from, Math.min(from + interval, to), tag, zoneId, queryExec, pushdownPredicates, clause));
+                        from += interval;
+                    }
+                } else {
+                    queries.add(rangeBucket(source, field, dataType, lower, upper, tag, zoneId, queryExec, pushdownPredicates, clause));
+                }
                 lower = upper;
                 tag = upper;
             }
             // build the last/gte bucket
-            queries.add(rangeBucket(source, field, dataType, lower, null, lower, zoneId, queryExec, pushdownPredicates, clause));
+            queries.add(rangeBucket(source, field, dataType, lower, null, tag, zoneId, queryExec, pushdownPredicates, clause));
             // build null bucket
             queries.add(nullBucket(source, field, queryExec, pushdownPredicates, clause));
         }
@@ -463,8 +473,8 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
         List<Object> tags
     ) {
         Query queryDSL = TRANSLATOR_HANDLER.asQuery(pushdownPredicates, expression);
-        QueryBuilder mainQuery = queryExec.query();
         QueryBuilder newQuery = queryDSL.toQueryBuilder();
+        QueryBuilder mainQuery = queryExec.query();
         QueryBuilder combinedQuery = Queries.combine(clause, mainQuery != null ? List.of(mainQuery, newQuery) : List.of(newQuery));
         return new EsQueryExec.QueryBuilderAndTags(combinedQuery, tags);
     }
