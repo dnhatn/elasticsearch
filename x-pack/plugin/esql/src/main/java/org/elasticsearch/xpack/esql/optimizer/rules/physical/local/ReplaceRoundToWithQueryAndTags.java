@@ -374,7 +374,15 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             for (int i = 1; i < count; i++) {
                 upper = points.get(i);
                 // build predicates and range queries for RoundTo ranges
-                queries.add(rangeBucket(source, field, dataType, lower, upper, tag, zoneId, queryExec, pushdownPredicates, clause));
+                if (upper instanceof Long to && lower instanceof Long from) {
+                    long interval = Math.ceilDiv(to - from, 4);
+                    while (from < to) {
+                        rangeBucket(source, field, dataType, from, from + interval, tag, zoneId, queryExec, pushdownPredicates, clause);
+                        from += interval;
+                    }
+                } else {
+                    queries.add(rangeBucket(source, field, dataType, lower, upper, tag, zoneId, queryExec, pushdownPredicates, clause));
+                }
                 lower = upper;
                 tag = upper;
             }
