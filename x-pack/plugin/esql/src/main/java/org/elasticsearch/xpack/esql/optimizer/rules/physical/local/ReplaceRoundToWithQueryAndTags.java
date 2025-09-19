@@ -392,7 +392,7 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             // build the last/gte bucket
             queries.add(rangeBucket(source, field, dataType, lower, null, lower, zoneId, queryExec, pushdownPredicates, clause));
             // build null bucket
-//            queries.add(nullBucket(source, field, queryExec, pushdownPredicates, clause));
+            // queries.add(nullBucket(source, field, queryExec, pushdownPredicates, clause));
         }
         return queries;
     }
@@ -476,15 +476,26 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
         Query queryDSL = TRANSLATOR_HANDLER.asQuery(pushdownPredicates, expression);
         QueryBuilder newQuery = queryDSL.toQueryBuilder();
         QueryBuilder mainQuery = queryExec.query();
-        if (mainQuery instanceof BoolQueryBuilder b) {
+        if (clause == Queries.Clause.MUST
+            && mainQuery instanceof BoolQueryBuilder b
+            && newQuery instanceof SingleValueQuery.Builder sb1
+            && sb1.next() instanceof RangeQueryBuilder r1) {
+            boolean changed = false;
             BoolQueryBuilder copy = b.shallowCopy();
-            copy.must().removeIf(r -> r instanceof SingleValueQuery.Builder sb && sb.next() instanceof RangeQueryBuilder);
-            copy.must().add(newQuery);
-            return new EsQueryExec.QueryBuilderAndTags(copy, tags);
-        } else {
-            QueryBuilder combinedQuery = Queries.combine(clause, mainQuery != null ? List.of(mainQuery, newQuery) : List.of(newQuery));
-            return new EsQueryExec.QueryBuilderAndTags(combinedQuery, tags);
+            for (int i = 0; i < copy.must().size(); i++) {
+                if (copy.must().get(i) instanceof SingleValueQuery.Builder sb2 && sb2.next() instanceof RangeQueryBuilder r2) {
+                    if (r1.fieldName().equals(r2.fieldName())) {
+                        copy.must().set(i, new SingleValueQuery.Builder(combineRangeQuery(r1, r2), sb2.field(), sb2.source()));
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) {
+                return new EsQueryExec.QueryBuilderAndTags(copy, tags);
+            }
         }
+        QueryBuilder combinedQuery = Queries.combine(clause, mainQuery != null ? List.of(mainQuery, newQuery) : List.of(newQuery));
+        return new EsQueryExec.QueryBuilderAndTags(combinedQuery, tags);
     }
 
     /**
@@ -502,5 +513,23 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             roundingPointsThreshold = queryLevelRoundingPointsThreshold;
         }
         return roundingPointsThreshold;
+    }
+
+    @SuppressWarnings("unchecked")
+    static RangeQueryBuilder combineRangeQuery(RangeQueryBuilder r1, RangeQueryBuilder r2) {
+        RangeQueryBuilder combined = new RangeQueryBuilder(r1.fieldName());
+        combined.from(r1.from(), r1.includeLower());
+        combined.to(r1.to(), r1.includeUpper());
+        if (r2.from() != null) {
+            if (combined.from() == null || ((Comparable<Object>) r2.from()).compareTo(combined.from()) > 0) {
+                combined.from(r2.from(), r2.includeLower());
+            }
+        }
+        if (r2.to() != null) {
+            if (combined.to() == null || ((Comparable<Object>) r2.to()).compareTo(combined.to()) < 0) {
+                combined.to(r2.to(), r2.includeUpper());
+            }
+        }
+        return combined;
     }
 }

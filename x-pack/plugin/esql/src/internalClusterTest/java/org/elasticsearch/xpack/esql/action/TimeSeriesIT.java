@@ -22,7 +22,6 @@ import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.plugin.QueryPragmas;
 import org.hamcrest.Matchers;
 import org.junit.Before;
-import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -610,7 +609,11 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
         EsqlQueryRequest request = new EsqlQueryRequest();
         request.profile(true);
         String tsFunction = randomFrom("sum_over_time", "avg_over_time");
-        request.query("TS hosts | WHERE @timestamp >= \"2024-04-15T00:00:30Z\" AND @timestamp < \"2024-04-15T00:01:30Z\" | STATS AVG(" + tsFunction + "(cpu)) BY cluster, bucket(@timestamp, 1minute) | SORT cluster");
+        request.query(
+            "TS hosts | WHERE @timestamp >= \"2024-04-15T00:00:30Z\" AND @timestamp < \"2024-04-15T00:01:30Z\" | STATS AVG("
+                + tsFunction
+                + "(cpu)) BY cluster, bucket(@timestamp, 1minute) | SORT cluster"
+        );
         try (var resp = run(request)) {
             EsqlQueryResponse.Profile profile = resp.profile();
             List<DriverProfile> dataProfiles = profile.drivers().stream().filter(d -> d.description().equals("data")).toList();
