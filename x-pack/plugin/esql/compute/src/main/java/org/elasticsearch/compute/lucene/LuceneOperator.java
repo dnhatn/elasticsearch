@@ -116,17 +116,23 @@ public abstract class LuceneOperator extends SourceOperator {
             boolean needsScore,
             Function<ShardContext, ScoreMode> scoreModeFunction
         ) {
-            this.limit = limit;
+
+            this(dataPartitioning,LuceneSliceQueue.create(
+                    contexts,
+                    queryFunction,
+                    dataPartitioning,
+                    autoStrategy,
+                    taskConcurrency,
+                    scoreModeFunction
+                ), taskConcurrency, limit, needsScore);
+        }
+
+        protected Factory(DataPartitioning dataPartitioning, LuceneSliceQueue sliceQueue,
+                          int taskConcurrency, int limit, boolean needsScore) {
             this.dataPartitioning = dataPartitioning;
-            this.sliceQueue = LuceneSliceQueue.create(
-                contexts,
-                queryFunction,
-                dataPartitioning,
-                autoStrategy,
-                taskConcurrency,
-                scoreModeFunction
-            );
-            this.taskConcurrency = Math.min(sliceQueue.totalSlices(), taskConcurrency);
+            this.sliceQueue = sliceQueue;
+            this.taskConcurrency = taskConcurrency;
+            this.limit = limit;
             this.needsScore = needsScore;
         }
 

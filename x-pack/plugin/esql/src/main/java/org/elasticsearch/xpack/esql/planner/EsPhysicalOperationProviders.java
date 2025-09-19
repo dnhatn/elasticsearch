@@ -128,11 +128,6 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         }
 
         /**
-         * Convert a {@link QueryBuilder} into a real {@link Query lucene query}.
-         */
-        public abstract Query toQuery(QueryBuilder queryBuilder);
-
-        /**
          * Tuning parameter for deciding when to use the "merge" stored field loader.
          * Think of it as "how similar to a sequential block of documents do I have to
          * be before I'll use the merge reader?" So a value of {@code 1} means I have to
@@ -308,9 +303,11 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
                 scoring
             );
         } else if (esQueryExec.indexMode() == IndexMode.TIME_SERIES) {
-            luceneFactory = new TimeSeriesSourceOperator.Factory(
+            var queryAndTags = esQueryExec.queryBuilderAndTags().stream()
+                .map(q -> new TimeSeriesSourceOperator.QueryBuilderAndTags(q.query(), q.tags())).toList();
+            luceneFactory = new TimeSeriesSourceOperator.TSFactory(
                 shardContexts,
-                querySupplier(esQueryExec.queryBuilderAndTags()),
+                queryAndTags,
                 context.queryPragmas().taskConcurrency(),
                 context.pageSize(rowEstimatedSize),
                 limit

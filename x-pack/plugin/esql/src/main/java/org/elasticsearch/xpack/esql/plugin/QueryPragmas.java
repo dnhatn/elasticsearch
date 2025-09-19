@@ -94,6 +94,8 @@ public final class QueryPragmas implements Writeable {
      */
     public static final Setting<Integer> ROUNDTO_PUSHDOWN_THRESHOLD = Setting.intSetting("roundto_pushdown_threshold", -1, -1);
 
+    public static final Setting<Integer> TIME_SERIES_MAX_DOC_INTERVALS = Setting.intSetting("time_series.max_doc_interval",10_000_000, 1);
+
     public static final QueryPragmas EMPTY = new QueryPragmas(Settings.EMPTY);
 
     private final Settings settings;
@@ -213,6 +215,10 @@ public final class QueryPragmas implements Writeable {
 
     public int roundToPushDownThreshold() {
         return ROUNDTO_PUSHDOWN_THRESHOLD.get(settings);
+    }
+
+    public int timeSeriesMaxDocIntervals() {
+        return TIME_SERIES_MAX_DOC_INTERVALS.get(settings);
     }
 
     public boolean isEmpty() {

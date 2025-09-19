@@ -8,11 +8,13 @@
 package org.elasticsearch.compute.lucene;
 
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.core.RefCounted;
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.SourceLoader;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.search.sort.SortAndFormats;
 import org.elasticsearch.search.sort.SortBuilder;
 
@@ -33,6 +35,11 @@ public interface ShardContext extends RefCounted {
      * Get {@link IndexSearcher} holding the actual data.
      */
     IndexSearcher searcher();
+
+    /**
+     * Convert a {@link QueryBuilder} into a real {@link Query lucene query}.
+     */
+    Query toQuery(QueryBuilder queryBuilder);
 
     /**
      * Build a "sort" configuration from an Elasticsearch style builder.

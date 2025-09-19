@@ -7,40 +7,44 @@
 
 package org.elasticsearch.compute.lucene;
 
+import org.apache.lucene.search.ConstantScoreQuery;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.search.Weight;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Limiter;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.RefCounted;
+import org.elasticsearch.index.query.QueryBuilder;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import java.util.function.Function;
+import java.util.Map;
 
 /**
  * Extension of {@link LuceneSourceOperator} for time-series aggregation that inserts metadata blocks,
  * such as slice index and future max timestamp, to allow downstream operators to optimize processing.
  */
 public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
+    public record QueryBuilderAndTags(QueryBuilder query, List<Object> tags) {
 
-    public static final class Factory extends LuceneSourceOperator.Factory {
-        public Factory(
-            List<? extends ShardContext> contexts,
-            Function<ShardContext, List<LuceneSliceQueue.QueryAndTags>> queryFunction,
-            int taskConcurrency,
-            int maxPageSize,
-            int limit
-        ) {
-            super(
-                contexts,
-                queryFunction,
-                DataPartitioning.SHARD,
-                query -> { throw new UnsupportedOperationException("locked to SHARD partitioning"); },
-                taskConcurrency,
-                maxPageSize,
-                limit,
-                false
-            );
+    }
+
+    public static final class TSFactory extends LuceneOperator.Factory {
+        private final List<? extends ShardContext> contexts;
+        private final int maxPageSize;
+        private final Limiter limiter;
+
+        public TSFactory(List<? extends ShardContext> contexts, List<QueryBuilderAndTags> queryAndTags, int taskConcurrency, int maxPageSize, int limit) {
+            super(DataPartitioning.SHARD, createTimeSeriesLuceneQueue(contexts, queryAndTags), taskConcurrency, limit, false);
+            this.contexts = contexts;
+            this.maxPageSize = maxPageSize;
+            this.limiter = limit == NO_LIMIT ? Limiter.NO_LIMIT : new Limiter(limit);
         }
 
         @Override
@@ -53,6 +57,36 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
             return "TimeSeriesSourceOperator[maxPageSize = " + maxPageSize + ", limit = " + limit + "]";
         }
     }
+
+    static LuceneSliceQueue createTimeSeriesLuceneQueue(List<? extends ShardContext> contexts, List<QueryBuilderAndTags> queryAndTags) {
+        List<LuceneSlice> sliceList = new ArrayList<>();
+        int slicePosition = 0;
+        Map<String, LuceneSliceQueue.PartitioningStrategy> dataPartitioning = new HashMap<>();
+        // make at least 3
+        // sort by @timestamp
+        for (int s = 0; s < contexts.size(); s++) {
+            ShardContext shard = contexts.get(s);
+            var leaves = shard.searcher().getLeafContexts().stream().map(PartialLeafReaderContext::new).toList();
+            for (int q = 0; q < queryAndTags.size(); q++) {
+                var qt = queryAndTags.get(q);
+                Weight weight;
+                try {
+                    Query query = new ConstantScoreQuery(shard.toQuery(qt.query));
+                    query = shard.searcher().rewrite(query);
+                    weight = shard.searcher().createWeight(query, ScoreMode.COMPLETE_NO_SCORES, 1.0f);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+                sliceList.add(new LuceneSlice(slicePosition, q == 0, shard, leaves, weight, qt.tags));
+            }
+            dataPartitioning.put(shard.shardIdentifier(), LuceneSliceQueue.PartitioningStrategy.SHARD);
+        }
+        return new LuceneSliceQueue(
+            sliceList,
+            dataPartitioning
+        );
+    }
+
 
     public TimeSeriesSourceOperator(
         List<? extends RefCounted> shardContextCounters,

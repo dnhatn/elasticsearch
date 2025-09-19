@@ -7,10 +7,7 @@
 
 package org.elasticsearch.xpack.esql.optimizer.rules.physical.local;
 
-import org.elasticsearch.index.IndexMode;
-import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.index.query.RangeQueryBuilder;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.xpack.esql.core.expression.Alias;
@@ -33,7 +30,6 @@ import org.elasticsearch.xpack.esql.optimizer.PhysicalOptimizerRules;
 import org.elasticsearch.xpack.esql.plan.physical.EsQueryExec;
 import org.elasticsearch.xpack.esql.plan.physical.EvalExec;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
-import org.elasticsearch.xpack.esql.querydsl.query.SingleValueQuery;
 
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -378,15 +374,7 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             for (int i = 1; i < count; i++) {
                 upper = points.get(i);
                 // build predicates and range queries for RoundTo ranges
-                if (queryExec.indexMode() == IndexMode.TIME_SERIES && upper instanceof Long to && lower instanceof Long from) {
-                    long interval = Math.ceilDiv(to - from, 12);
-                    while (from < to) {
-                        rangeBucket(source, field, dataType, from, from + interval, tag, zoneId, queryExec, pushdownPredicates, clause);
-                        from += interval;
-                    }
-                } else {
-                    queries.add(rangeBucket(source, field, dataType, lower, upper, tag, zoneId, queryExec, pushdownPredicates, clause));
-                }
+                queries.add(rangeBucket(source, field, dataType, lower, upper, tag, zoneId, queryExec, pushdownPredicates, clause));
                 lower = upper;
                 tag = upper;
             }
@@ -475,26 +463,8 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
         List<Object> tags
     ) {
         Query queryDSL = TRANSLATOR_HANDLER.asQuery(pushdownPredicates, expression);
-        QueryBuilder newQuery = queryDSL.toQueryBuilder();
         QueryBuilder mainQuery = queryExec.query();
-        if (clause == Queries.Clause.FILTER
-            && mainQuery instanceof BoolQueryBuilder b
-            && newQuery instanceof SingleValueQuery.Builder sb1
-            && sb1.next() instanceof RangeQueryBuilder r1) {
-            boolean changed = false;
-            BoolQueryBuilder copy = b.shallowCopy();
-            for (int i = 0; i < copy.must().size(); i++) {
-                if (copy.must().get(i) instanceof SingleValueQuery.Builder sb2 && sb2.next() instanceof RangeQueryBuilder r2) {
-                    if (r1.fieldName().equals(r2.fieldName())) {
-                        copy.must().set(i, new SingleValueQuery.Builder(combineRangeQuery(r1, r2), sb2.field(), sb2.source()));
-                        changed = true;
-                    }
-                }
-            }
-            if (changed) {
-                return new EsQueryExec.QueryBuilderAndTags(copy, tags);
-            }
-        }
+        QueryBuilder newQuery = queryDSL.toQueryBuilder();
         QueryBuilder combinedQuery = Queries.combine(clause, mainQuery != null ? List.of(mainQuery, newQuery) : List.of(newQuery));
         return new EsQueryExec.QueryBuilderAndTags(combinedQuery, tags);
     }
@@ -514,23 +484,5 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             roundingPointsThreshold = queryLevelRoundingPointsThreshold;
         }
         return roundingPointsThreshold;
-    }
-
-    @SuppressWarnings("unchecked")
-    static RangeQueryBuilder combineRangeQuery(RangeQueryBuilder r1, RangeQueryBuilder r2) {
-        RangeQueryBuilder combined = new RangeQueryBuilder(r1.fieldName());
-        combined.from(r1.from(), r1.includeLower());
-        combined.to(r1.to(), r1.includeUpper());
-        if (r2.from() != null) {
-            if (combined.from() == null || ((Comparable<Object>) r2.from()).compareTo(combined.from()) > 0) {
-                combined.from(r2.from(), r2.includeLower());
-            }
-        }
-        if (r2.to() != null) {
-            if (combined.to() == null || ((Comparable<Object>) r2.to()).compareTo(combined.to()) < 0) {
-                combined.to(r2.to(), r2.includeUpper());
-            }
-        }
-        return combined;
     }
 }
