@@ -393,7 +393,7 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             // build the last/gte bucket
             queries.add(rangeBucket(source, field, dataType, lower, null, lower, zoneId, queryExec, pushdownPredicates, clause));
             // build null bucket
-            // queries.add(nullBucket(source, field, queryExec, pushdownPredicates, clause));
+            queries.add(nullBucket(source, field, queryExec, pushdownPredicates, clause));
         }
         return queries;
     }
