@@ -7,7 +7,9 @@
 
 package org.elasticsearch.xpack.esql.optimizer.rules.physical.local;
 
+import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.index.query.RangeQueryBuilder;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.xpack.esql.core.expression.Alias;
@@ -30,6 +32,7 @@ import org.elasticsearch.xpack.esql.optimizer.PhysicalOptimizerRules;
 import org.elasticsearch.xpack.esql.plan.physical.EsQueryExec;
 import org.elasticsearch.xpack.esql.plan.physical.EvalExec;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
+import org.elasticsearch.xpack.esql.querydsl.query.SingleValueQuery;
 
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -389,7 +392,7 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             // build the last/gte bucket
             queries.add(rangeBucket(source, field, dataType, lower, null, lower, zoneId, queryExec, pushdownPredicates, clause));
             // build null bucket
-            queries.add(nullBucket(source, field, queryExec, pushdownPredicates, clause));
+//            queries.add(nullBucket(source, field, queryExec, pushdownPredicates, clause));
         }
         return queries;
     }
@@ -471,10 +474,17 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
         List<Object> tags
     ) {
         Query queryDSL = TRANSLATOR_HANDLER.asQuery(pushdownPredicates, expression);
-        QueryBuilder mainQuery = queryExec.query();
         QueryBuilder newQuery = queryDSL.toQueryBuilder();
-        QueryBuilder combinedQuery = Queries.combine(clause, mainQuery != null ? List.of(mainQuery, newQuery) : List.of(newQuery));
-        return new EsQueryExec.QueryBuilderAndTags(combinedQuery, tags);
+        QueryBuilder mainQuery = queryExec.query();
+        if (mainQuery instanceof BoolQueryBuilder b) {
+            BoolQueryBuilder copy = b.shallowCopy();
+            copy.must().removeIf(r -> r instanceof SingleValueQuery.Builder sb && sb.next() instanceof RangeQueryBuilder);
+            copy.must().add(newQuery);
+            return new EsQueryExec.QueryBuilderAndTags(copy, tags);
+        } else {
+            QueryBuilder combinedQuery = Queries.combine(clause, mainQuery != null ? List.of(mainQuery, newQuery) : List.of(newQuery));
+            return new EsQueryExec.QueryBuilderAndTags(combinedQuery, tags);
+        }
     }
 
     /**

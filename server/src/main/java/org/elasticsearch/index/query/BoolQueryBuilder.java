@@ -78,6 +78,7 @@ public class BoolQueryBuilder extends AbstractQueryBuilder<BoolQueryBuilder> {
         minimumShouldMatch = in.readOptionalString();
     }
 
+
     @Override
     protected void doWriteTo(StreamOutput out) throws IOException {
         writeQueries(out, mustClauses);
