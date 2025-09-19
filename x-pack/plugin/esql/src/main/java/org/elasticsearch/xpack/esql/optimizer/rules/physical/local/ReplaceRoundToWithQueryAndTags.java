@@ -7,6 +7,7 @@
 
 package org.elasticsearch.xpack.esql.optimizer.rules.physical.local;
 
+import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.RangeQueryBuilder;
@@ -377,7 +378,7 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             for (int i = 1; i < count; i++) {
                 upper = points.get(i);
                 // build predicates and range queries for RoundTo ranges
-                if (upper instanceof Long to && lower instanceof Long from) {
+                if (queryExec.indexMode() == IndexMode.TIME_SERIES && upper instanceof Long to && lower instanceof Long from) {
                     long interval = Math.ceilDiv(to - from, 12);
                     while (from < to) {
                         rangeBucket(source, field, dataType, from, from + interval, tag, zoneId, queryExec, pushdownPredicates, clause);
