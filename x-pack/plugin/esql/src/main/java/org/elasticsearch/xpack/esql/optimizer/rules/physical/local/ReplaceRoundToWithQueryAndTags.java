@@ -476,7 +476,7 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
         Query queryDSL = TRANSLATOR_HANDLER.asQuery(pushdownPredicates, expression);
         QueryBuilder newQuery = queryDSL.toQueryBuilder();
         QueryBuilder mainQuery = queryExec.query();
-        if (clause == Queries.Clause.MUST
+        if (clause == Queries.Clause.FILTER
             && mainQuery instanceof BoolQueryBuilder b
             && newQuery instanceof SingleValueQuery.Builder sb1
             && sb1.next() instanceof RangeQueryBuilder r1) {
