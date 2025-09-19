@@ -66,6 +66,7 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
         // sort by @timestamp
         for (int s = 0; s < contexts.size(); s++) {
             ShardContext shard = contexts.get(s);
+            // rounded so that we can leverage cache
             var leaves = shard.searcher().getLeafContexts().stream().map(PartialLeafReaderContext::new).toList();
             for (int q = 0; q < queryAndTags.size(); q++) {
                 var qt = queryAndTags.get(q);
@@ -77,7 +78,7 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
-                sliceList.add(new LuceneSlice(slicePosition, q == 0, shard, leaves, weight, qt.tags));
+                sliceList.add(new LuceneSlice(slicePosition++, q == 0, shard, leaves, weight, qt.tags));
             }
             dataPartitioning.put(shard.shardIdentifier(), LuceneSliceQueue.PartitioningStrategy.SHARD);
         }
