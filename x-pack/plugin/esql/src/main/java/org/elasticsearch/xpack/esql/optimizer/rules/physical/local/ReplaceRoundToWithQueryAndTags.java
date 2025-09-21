@@ -376,9 +376,9 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
                 upper = points.get(i);
                 // build predicates and range queries for RoundTo ranges
                 if (queryExec.indexMode() == IndexMode.TIME_SERIES && upper instanceof Long to && lower instanceof Long from) {
-                    long slices = 6; // Math.ceilDiv(to - from, maxIntervals);
+                    long slices = 2; // Math.ceilDiv(to - from, maxIntervals);
                     var interval = Math.ceilDiv(to - from, slices);
-                    while (from <= to) {
+                    while (from < to) {
                         queries.add(rangeBucket(source, field, dataType, from, Math.min(from + interval, to), tag, zoneId, queryExec, pushdownPredicates, clause));
                         from += interval;
                     }
