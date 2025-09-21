@@ -50,7 +50,7 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                             timeRange = new TimeRange(min, max);
                         }
                     }
-                }catch (IOException e) {
+                } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
                 if (timeRange != null) {
@@ -70,14 +70,17 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                 continue;
             }
             long dataLength = shardTimeRange.max - shardTimeRange.min + 1;
+            // 829_440_000
             for (int i = 0; i < queryAndTags.size(); i++) {
                 TimeRange queryTimeRange = queryAndTimeRanges.get(i).v2();
                 var intersected = queryTimeRange == null ? shardTimeRange : TimeRange.and(queryTimeRange, shardTimeRange);
+                // TODO: nulls issue
                 if (intersected.canMatch() == false) {
                     continue;
                 }
                 assert intersected.min != null && intersected.max != null;
                 long queryLength = intersected.max - intersected.min + 1;
+                System.err.println("--> query length " + queryLength + " data length " + dataLength + " num docs " + numDocs);
                 long queryingDocs = Math.ceilDiv(numDocs * queryLength, dataLength);
                 totalDocs += queryingDocs;
             }

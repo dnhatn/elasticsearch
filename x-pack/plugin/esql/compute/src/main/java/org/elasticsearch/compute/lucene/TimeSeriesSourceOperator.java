@@ -44,8 +44,8 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
             super(DataPartitioning.SHARD,       TimeSeriesSliceQueue.createQueue(
                 contexts,
                 queryAndTags,
-                taskConcurrency,
-                maxDocsPerSlice
+                maxDocsPerSlice,
+                taskConcurrency
             ), taskConcurrency, limit, false);
             this.contexts = contexts;
             this.maxPageSize = maxPageSize;
