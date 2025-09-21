@@ -201,6 +201,7 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                 timeRange = extractTimeRangeFromQuery(rangeQuery);
             }
         }
+        System.err.println("--> removed time range " + timeRange + " from query " + originalQuery);
         return Tuple.tuple(queryWithoutTimeRange, timeRange);
     }
 
