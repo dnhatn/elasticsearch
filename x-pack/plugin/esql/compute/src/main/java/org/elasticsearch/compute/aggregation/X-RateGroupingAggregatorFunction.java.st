@@ -190,7 +190,6 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
                 final var value = valueBlock.get$Type$(valueBlock.getFirstValueIndex(valuePosition));
                 if (lastGroup != groupId) {
                     buffer = getBuffer(groupId, 1, timestamp);
-                    buffer.appendWithoutResize(timestamp, value);
                     lastGroup = groupId;
                 } else {
                     buffer.maybeResizeAndAppend(bigArrays, timestamp, value);
@@ -200,10 +199,11 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
     }
 
     private void addRawInput(int positionOffset, IntVector groups, $Type$Block valueBlock, LongVector timestampVector) {
+        int positionCount = groups.getPositionCount();
         if (groups.isConstant()) {
             int groupId = groups.getInt(0);
-            Buffer buffer = getBuffer(groupId, groups.getPositionCount(), timestampVector.getLong(positionOffset));
-            for (int p = 0; p < groups.getPositionCount(); p++) {
+            Buffer buffer = getBuffer(groupId, positionCount, timestampVector.getLong(positionOffset));
+            for (int p = 0; p < positionCount; p++) {
                 int valuePosition = positionOffset + p;
                 if (valueBlock.isNull(valuePosition)) {
                     continue;
@@ -214,7 +214,7 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
         } else {
             int lastGroup = -1;
             Buffer buffer = null;
-            for (int p = 0; p < groups.getPositionCount(); p++) {
+            for (int p = 0; p < positionCount; p++) {
                 int valuePosition = positionOffset + p;
                 if (valueBlock.isNull(valuePosition)) {
                     continue;
@@ -224,7 +224,7 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
                 var value = valueBlock.get$Type$(valuePosition);
                 int groupId = groups.getInt(p);
                 if (lastGroup != groupId) {
-                    buffer = getBuffer(groupId, 1, timestamp);
+                    buffer = getBuffer(groupId, Math.min(positionCount - p, 512), timestamp);
                     buffer.appendWithoutResize(timestamp, value);
                     lastGroup = groupId;
                 } else {
@@ -252,7 +252,7 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
                 var value = valueVector.get$Type$(valuePosition);
                 int groupId = groups.getInt(p);
                 if (lastGroup != groupId) {
-                    buffer = getBuffer(groupId, 1, timestamp);
+                    buffer = getBuffer(groupId, Math.min(positionCount - p, 512), timestamp);
                     buffer.appendWithoutResize(timestamp, value);
                     lastGroup = groupId;
                 } else {
