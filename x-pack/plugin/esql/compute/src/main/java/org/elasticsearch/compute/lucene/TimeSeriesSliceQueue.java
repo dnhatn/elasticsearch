@@ -116,7 +116,7 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                 } else {
                     int numSlices = Math.toIntExact(queryingDocs / maxDocsPerSlice);
                     System.err.println("--> num slices " + numSlices + " for " + queryingDocs + " docs");
-                    long sliceLength = Math.max(1, queryLength / numSlices);
+                    long sliceLength = Math.max(1, Math.ceilDiv(queryLength, numSlices));
                     long sliceMin = intersected.min;
                     while (sliceMin <= intersected.max) {
                         long sliceMax = Math.min(intersected.max, sliceMin + sliceLength - 1);
@@ -131,7 +131,7 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                             queryAndTags.get(i).tags()
                         );
                         sliceList.add(slice);
-                        sliceMin = Math.addExact(sliceMax, 1L);
+                        sliceMin = Math.addExact(sliceMax, sliceLength);
                     }
                 }
             }
