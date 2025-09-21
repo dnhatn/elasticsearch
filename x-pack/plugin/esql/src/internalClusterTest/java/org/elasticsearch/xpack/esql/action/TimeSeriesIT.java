@@ -608,11 +608,8 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
     public void testRewrite() {
         EsqlQueryRequest request = new EsqlQueryRequest();
         request.profile(true);
-        String tsFunction = randomFrom("sum_over_time", "avg_over_time");
         request.query(
-            "TS hosts | WHERE @timestamp >= \"2024-04-15T00:00:30Z\" AND @timestamp < \"2024-04-15T00:01:30Z\" | STATS AVG("
-                + tsFunction
-                + "(cpu)) BY cluster, bucket(@timestamp, 1minute) | SORT cluster"
+            "TS hosts | WHERE @timestamp >= \"2024-04-15T00:00:30Z\" AND @timestamp < \"2024-04-15T00:01:30Z\" | STATS sum(rate(request_count)) BY cluster, bucket(@timestamp, 1minute) | SORT cluster"
         );
         try (var resp = run(request)) {
             EsqlQueryResponse.Profile profile = resp.profile();

@@ -18,6 +18,7 @@ import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.compute.lucene.LuceneSourceOperator;
+import org.elasticsearch.compute.lucene.SingleValueQueryBuilder;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.FilterOperator;
 import org.elasticsearch.compute.operator.Warnings;
@@ -130,7 +131,7 @@ public class SingleValueQuery extends Query {
         return next.containsPlan();
     }
 
-    public abstract static class AbstractBuilder extends AbstractQueryBuilder<AbstractBuilder> {
+    public abstract static class AbstractBuilder extends AbstractQueryBuilder<AbstractBuilder>  implements SingleValueQueryBuilder {
         private final QueryBuilder next;
         private final String field;
         private final Source source;
@@ -161,6 +162,11 @@ public class SingleValueQuery extends Query {
             out.writeNamedWriteable(next);
             out.writeString(field);
             source.writeTo(out);
+        }
+
+        @Override
+        public QueryBuilder subQuery() {
+            return next;
         }
 
         public QueryBuilder next() {

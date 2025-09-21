@@ -32,7 +32,8 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
         List<LuceneSlice> sliceList = new ArrayList<>(contexts.size() * queryAndTags.size());
         List<Tuple<QueryBuilder, TimeRange>> queryAndTimeRanges = new ArrayList<>(queryAndTags.size());
         for (var queryAndTag : queryAndTags) {
-            queryAndTimeRanges.add(removeTimeRange(queryAndTag.query()));
+            Tuple<QueryBuilder, TimeRange> removed = removeTimeRange(queryAndTag.query());
+            queryAndTimeRanges.add(removed);
         }
         final Map<LeafReaderContext, TimeRange> leafTimeRanges = new HashMap<>();
         final Map<Integer, TimeRange> shardTimeRanges = new HashMap<>();
