@@ -115,6 +115,7 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                     sliceList.add(slice);
                 } else {
                     int numSlices = Math.toIntExact(queryingDocs / maxDocsPerSlice);
+                    System.err.println("--> num slices " + numSlices + " for " + queryingDocs + " docs");
                     long sliceLength = Math.max(1, queryLength / numSlices);
                     long sliceMin = intersected.min;
                     while (sliceMin <= intersected.max) {
