@@ -101,6 +101,7 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                 assert intersected.min != null && intersected.max != null;
                 long queryLength = intersected.max - intersected.min + 1;
                 long queryingDocs = Math.ceilDiv(totalDocs * queryLength, dataLength);
+                System.err.println("--> querying doc " + queryingDocs + " num docs " + numDocs);
                 if (queryingDocs <= maxDocsPerSlice) {
                     QueryBuilder subQuery = withTimeRange(queryAndTimeRanges.get(i).v1(), intersected);
                     Weight weight = createWeight(subQuery, context);
@@ -114,8 +115,9 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                     );
                     sliceList.add(slice);
                 } else {
-                    int slices = Math.toIntExact(queryingDocs / maxDocsPerSlice);
-                    long sliceLength = Math.max(1, queryLength / slices);
+                    int numSlices = Math.toIntExact(queryingDocs / maxDocsPerSlice);
+                    System.err.println("--> split into " + numSlices + " slices");
+                    long sliceLength = Math.max(1, queryLength / numSlices);
                     long sliceMin = intersected.min;
                     while (sliceMin <= intersected.max) {
                         long sliceMax = Math.min(intersected.max, sliceMin + sliceLength - 1);
