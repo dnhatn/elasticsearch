@@ -574,6 +574,8 @@ public interface BlockLoader {
         SingletonLongBuilder appendLong(long value);
 
         SingletonLongBuilder appendLongs(long[] values, int from, int length);
+
+        SingletonLongBuilder fillValues(long value, int length);
     }
 
     /**
@@ -604,6 +606,8 @@ public interface BlockLoader {
         SingletonOrdinalsBuilder appendOrd(int value);
 
         SingletonOrdinalsBuilder appendOrds(int[] values, int from, int length, int minOrd, int maxOrd);
+
+        SingletonOrdinalsBuilder fillOrds(int value, int length);
     }
 
     interface SortedSetOrdinalsBuilder extends Builder {

@@ -1577,6 +1577,22 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 public long longValue() {
                     return ordinalsReader.readValueAndAdvance(doc);
                 }
+
+                @Override
+                BlockLoader.Block tryRead(BlockLoader.SingletonLongBuilder builder, BlockLoader.Docs docs, int offset) throws IOException {
+                    final int docsCount = docs.count();
+                    final int lastDoc = docs.get(docsCount - 1);
+                    int currentDoc = docs.get(offset);
+                    while (currentDoc <= lastDoc) {
+                        long ord = ordinalsReader.readValueAndAdvance(currentDoc);
+                        int bound = Math.min(Math.toIntExact(ordinalsReader.rangeEndExclusive - 1), lastDoc);
+                        for (int i = currentDoc; i < bound; i++) {
+                            builder.appendLong(ord); // fillWith
+                        }
+                        currentDoc = bound;
+                    }
+                    return builder.build();
+                }
             };
         } else {
             final var disi = new IndexedDISI(
@@ -1872,6 +1888,12 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         @Override
+        public BlockLoader.SingletonLongBuilder fillValues(long value, int length) {
+            builder.fillOrds(Math.toIntExact(value), length);
+            return this;
+        }
+
+        @Override
         public BlockLoader.Block build() {
             return builder.build();
         }
@@ -1976,6 +1998,11 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         public BlockLoader.SingletonLongBuilder appendLongs(long[] values, int from, int length) {
             builder.appendLongs(values, from, length);
             return this;
+        }
+
+        @Override
+        public BlockLoader.SingletonLongBuilder fillValues(long value, int length) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

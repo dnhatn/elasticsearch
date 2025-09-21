@@ -379,7 +379,20 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
                     long slices = ctx.configuration().pragmas().timeSeriesSlices();
                     var interval = Math.ceilDiv(to - from, slices);
                     while (from < to) {
-                        queries.add(rangeBucket(source, field, dataType, from, Math.min(from + interval, to), tag, zoneId, queryExec, pushdownPredicates, clause));
+                        queries.add(
+                            rangeBucket(
+                                source,
+                                field,
+                                dataType,
+                                from,
+                                Math.min(from + interval, to),
+                                tag,
+                                zoneId,
+                                queryExec,
+                                pushdownPredicates,
+                                clause
+                            )
+                        );
                         from += interval;
                     }
                 } else {
