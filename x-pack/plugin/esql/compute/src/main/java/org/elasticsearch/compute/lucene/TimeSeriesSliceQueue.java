@@ -86,7 +86,6 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
             }
         }
         maxDocsPerSlice = Math.clamp(totalDocs / taskConcurrency, Math.max(1, maxDocsPerSlice / 100), maxDocsPerSlice);
-        System.err.println("--> total docs " + totalDocs + " max docs per slice " + maxDocsPerSlice);
         int slicePosition = 0;
         for (ShardContext context : contexts) {
             TimeRange shardTimeRange = shardTimeRanges.get(context.index());
@@ -105,7 +104,8 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                 assert intersected.min != null && intersected.max != null;
                 long queryLength = intersected.max - intersected.min + 1;
                 long queryingDocs = Math.ceilDiv(numDocs * queryLength, dataLength);
-                if (queryingDocs <= maxDocsPerSlice) {
+                System.err.println("--> query length " + queryLength + " data length " + dataLength + " num docs " + numDocs + " querying docs " + queryingDocs);
+                if (queryAndTags.size() > 1 && queryingDocs <= maxDocsPerSlice) {
                     QueryBuilder subQuery = withTimeRange(queryAndTimeRanges.get(i).v1(), intersected);
                     Weight weight = createWeight(subQuery, context);
                     LuceneSlice slice = new LuceneSlice(
@@ -119,7 +119,6 @@ record TimeSeriesSliceQueue(LuceneSliceQueue queue) {
                     sliceList.add(slice);
                 } else {
                     int numSlices = Math.toIntExact(queryingDocs / maxDocsPerSlice);
-                    System.err.println("--> num slices " + numSlices + " for " + queryingDocs + " docs " + " ");
                     long sliceLength = Math.max(1, Math.ceilDiv(queryLength, numSlices));
                     long sliceMin = intersected.min;
                     while (sliceMin <= intersected.max) {
