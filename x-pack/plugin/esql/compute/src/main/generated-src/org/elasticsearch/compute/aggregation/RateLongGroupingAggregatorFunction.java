@@ -252,12 +252,10 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
                 var value = valueVector.getLong(valuePosition);
                 int groupId = groups.getInt(p);
                 if (lastGroup != groupId) {
-                    buffer = getBuffer(groupId, 1, timestamp);
-                    buffer.appendWithoutResize(timestamp, value);
+                    buffer = getBuffer(groupId, positionCount - p, timestamp);
                     lastGroup = groupId;
-                } else {
-                    buffer.maybeResizeAndAppend(bigArrays, timestamp, value);
                 }
+                buffer.appendWithoutResize(timestamp, value);
             }
         }
     }
