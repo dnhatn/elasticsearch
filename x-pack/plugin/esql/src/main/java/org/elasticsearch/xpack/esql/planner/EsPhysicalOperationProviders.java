@@ -303,12 +303,15 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
                 scoring
             );
         } else if (esQueryExec.indexMode() == IndexMode.TIME_SERIES) {
-            var queryAndTags = esQueryExec.queryBuilderAndTags().stream()
-                .map(q -> new TimeSeriesSourceOperator.QueryBuilderAndTags(q.query(), q.tags())).toList();
+            var queryAndTags = esQueryExec.queryBuilderAndTags()
+                .stream()
+                .map(q -> new TimeSeriesSourceOperator.QueryBuilderAndTags(q.query(), q.tags()))
+                .toList();
             luceneFactory = new TimeSeriesSourceOperator.TSFactory(
                 shardContexts,
                 queryAndTags,
                 context.queryPragmas().taskConcurrency(),
+                context.queryPragmas().timeSeriesMaxDocIntervals(),
                 context.pageSize(rowEstimatedSize),
                 limit
             );

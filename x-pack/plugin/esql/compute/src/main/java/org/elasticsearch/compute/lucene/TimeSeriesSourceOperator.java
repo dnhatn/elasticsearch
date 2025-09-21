@@ -40,8 +40,13 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
         private final int maxPageSize;
         private final Limiter limiter;
 
-        public TSFactory(List<? extends ShardContext> contexts, List<QueryBuilderAndTags> queryAndTags, int taskConcurrency, int maxPageSize, int limit) {
-            super(DataPartitioning.SHARD, createTimeSeriesLuceneQueue(contexts, queryAndTags), taskConcurrency, limit, false);
+        public TSFactory(List<? extends ShardContext> contexts, List<QueryBuilderAndTags> queryAndTags, int taskConcurrency, int maxDocsPerSlice, int maxPageSize, int limit) {
+            super(DataPartitioning.SHARD,       TimeSeriesSliceQueue.createQueue(
+                contexts,
+                queryAndTags,
+                taskConcurrency,
+                maxDocsPerSlice
+            ), taskConcurrency, limit, false);
             this.contexts = contexts;
             this.maxPageSize = maxPageSize;
             this.limiter = limit == NO_LIMIT ? Limiter.NO_LIMIT : new Limiter(limit);
@@ -57,37 +62,6 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
             return "TimeSeriesSourceOperator[maxPageSize = " + maxPageSize + ", limit = " + limit + "]";
         }
     }
-
-    static LuceneSliceQueue createTimeSeriesLuceneQueue(List<? extends ShardContext> contexts, List<QueryBuilderAndTags> queryAndTags) {
-        List<LuceneSlice> sliceList = new ArrayList<>();
-        int slicePosition = 0;
-        Map<String, LuceneSliceQueue.PartitioningStrategy> dataPartitioning = new HashMap<>();
-        // make at least 3
-        // sort by @timestamp
-        for (int s = 0; s < contexts.size(); s++) {
-            ShardContext shard = contexts.get(s);
-            // rounded so that we can leverage cache
-            var leaves = shard.searcher().getLeafContexts().stream().map(PartialLeafReaderContext::new).toList();
-            for (int q = 0; q < queryAndTags.size(); q++) {
-                var qt = queryAndTags.get(q);
-                Weight weight;
-                try {
-                    Query query = new ConstantScoreQuery(shard.toQuery(qt.query));
-                    query = shard.searcher().rewrite(query);
-                    weight = shard.searcher().createWeight(query, ScoreMode.COMPLETE_NO_SCORES, 1.0f);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-                sliceList.add(new LuceneSlice(slicePosition++, q == 0, shard, leaves, weight, qt.tags));
-            }
-            dataPartitioning.put(shard.shardIdentifier(), LuceneSliceQueue.PartitioningStrategy.SHARD);
-        }
-        return new LuceneSliceQueue(
-            sliceList,
-            dataPartitioning
-        );
-    }
-
 
     public TimeSeriesSourceOperator(
         List<? extends RefCounted> shardContextCounters,
