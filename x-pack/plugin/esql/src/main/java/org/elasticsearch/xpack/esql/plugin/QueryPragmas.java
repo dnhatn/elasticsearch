@@ -94,7 +94,7 @@ public final class QueryPragmas implements Writeable {
      */
     public static final Setting<Integer> ROUNDTO_PUSHDOWN_THRESHOLD = Setting.intSetting("roundto_pushdown_threshold", -1, -1);
 
-    public static final Setting<Integer> TIME_SERIES_SLICES = Setting.intSetting("time_series_slices", 1, 1);
+    public static final Setting<Integer> TIME_SERIES_SLICES = Setting.intSetting("time_series_slices",6, 1);
 
 
     public static final QueryPragmas EMPTY = new QueryPragmas(Settings.EMPTY);
