@@ -86,7 +86,7 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
 
     protected Directory newFSDirectory(Path location, LockFactory lockFactory, IndexSettings indexSettings) throws IOException {
         final String storeType = indexSettings.getSettings()
-            .get(IndexModule.INDEX_STORE_TYPE_SETTING.getKey(), IndexModule.Type.FS.getSettingsKey());
+            .get(IndexModule.INDEX_STORE_TYPE_SETTING.getKey(), IndexModule.DEFAULT_STORE_TYPE_SETTING.get(indexSettings.getSettings()));
         IndexModule.Type type;
         if (IndexModule.Type.FS.match(storeType)) {
             type = IndexModule.defaultStoreType(IndexModule.NODE_STORE_ALLOW_MMAP.get(indexSettings.getNodeSettings()));

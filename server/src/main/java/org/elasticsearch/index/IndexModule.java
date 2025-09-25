@@ -108,6 +108,12 @@ public final class IndexModule {
 
     private static final IndexStorePlugin.RecoveryStateFactory DEFAULT_RECOVERY_STATE_FACTORY = RecoveryState::new;
 
+    public static final Setting<String> DEFAULT_STORE_TYPE_SETTING = Setting.simpleString(
+        "store.type",
+        Type.FS.getSettingsKey(),
+        Property.NodeScope
+    );
+
     public static final Setting<String> INDEX_STORE_TYPE_SETTING = Setting.simpleString(
         "index.store.type",
         Property.IndexScope,
