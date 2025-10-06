@@ -268,23 +268,22 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
             }
         });
         NamedExpression timeBucket = timeBucketRef.get();
-        for (Expression group : aggregate.groupings()) {
+        int timeBucketIndex = -1;
+        for (int i = 0; i < aggregate.groupings().size(); i++) {
+            Expression group = aggregate.groupings().get(i);
             if (group instanceof Attribute == false) {
                 throw new EsqlIllegalArgumentException("expected named expression for grouping; got " + group);
             }
             final Attribute g = (Attribute) group;
             if (timeBucket != null && g.id().equals(timeBucket.id())) {
+                timeBucketIndex = i;
                 var newFinalGroup = timeBucket.toAttribute();
                 firstPassGroupings.add(newFinalGroup);
                 secondPassGroupings.add(new Alias(g.source(), g.name(), newFinalGroup.toAttribute(), g.id()));
             } else {
                 var valuesAgg = new Alias(g.source(), g.name(), new Values(g.source(), g));
                 firstPassAggs.add(valuesAgg);
-                Alias pack = new Alias(
-                    g.source(),
-                    internalNames.next("pack"),
-                    new InternalPackValues(g.source(), valuesAgg.toAttribute())
-                );
+                Alias pack = new Alias(g.source(), internalNames.next("pack"), new InternalPackValues(g.source(), valuesAgg.toAttribute()));
                 packGroupings.add(pack);
                 Alias grouping = new Alias(g.source(), internalNames.next("grouping"), pack.toAttribute());
                 secondPassGroupings.add(grouping);
@@ -338,8 +337,13 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
             for (NamedExpression agg : secondPassAggs) {
                 projects.add(Expressions.attribute(agg));
             }
-            for (Alias unpack : unpackGroupings) {
-                projects.add(unpack.toAttribute());
+            int offset = 0;
+            for (int i = 0; i < secondPassGroupings.size(); i++) {
+                if (i != timeBucketIndex) {
+                    projects.add(Expressions.attribute(secondPassGroupings.get(i)));
+                } else {
+                    projects.add(unpackGroupings.get(offset++).toAttribute());
+                }
             }
             return new Project(newChild.source(), unpackValues, projects);
         }
