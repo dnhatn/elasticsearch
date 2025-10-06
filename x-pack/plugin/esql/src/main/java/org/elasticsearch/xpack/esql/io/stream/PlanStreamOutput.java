@@ -10,6 +10,7 @@ package org.elasticsearch.xpack.esql.io.stream;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import org.elasticsearch.common.io.stream.NamedWriteable;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
@@ -295,5 +296,13 @@ public final class PlanStreamOutput extends StreamOutput implements org.elastics
             key.writeString(column);
             return key.bytes();
         }
+    }
+
+    @Override
+    public void writeNamedWriteable(NamedWriteable namedWriteable) throws IOException {
+        if (namedWriteable instanceof VersionedExpression v) {
+            namedWriteable = v.getVersionedNamedWriteable(getTransportVersion());
+        }
+        super.writeNamedWriteable(namedWriteable);
     }
 }

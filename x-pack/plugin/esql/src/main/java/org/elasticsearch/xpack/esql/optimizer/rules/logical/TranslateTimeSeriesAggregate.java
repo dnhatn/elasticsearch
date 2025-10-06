@@ -20,6 +20,7 @@ import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.core.util.CollectionUtils;
 import org.elasticsearch.xpack.esql.core.util.Holder;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.AggregateFunction;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.DimensionValues;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.LastOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.TimeSeriesAggregateFunction;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Values;
@@ -59,16 +60,16 @@ import java.util.Map;
  * becomes
  *
  * TS k8s
- * | STATS rate_$1=rate(request), VALUES(host) BY _tsid
- * | STATS max(rate_$1) BY host=`VALUES(host)`
+ * | STATS rate_$1=rate(request), DIMENSION_VALUES(host) BY _tsid
+ * | STATS max(rate_$1) BY host=`DIMENSION_VALUES(host)`
  *
  * TS k8s | STATS avg(rate(request)) BY host
  *
  * becomes
  *
  * TS k8s
- * | STATS rate_$1=rate(request), VALUES(host) BY _tsid
- * | STATS sum(rate_$1), count(rate_$1) BY host=`VALUES(host)`
+ * | STATS rate_$1=rate(request), DIMENSION_VALUES(host) BY _tsid
+ * | STATS sum(rate_$1), count(rate_$1) BY host=`DIMENSION_VALUES(host)`
  * | EVAL `avg(rate(request))` = `sum(rate_$1)` / `count(rate_$1)`
  * | KEEP `avg(rate(request))`, host
  *
@@ -78,8 +79,8 @@ import java.util.Map;
  *
  * TS k8s
  * | EVAL  `bucket(@timestamp, 1minute)`=datetrunc(@timestamp, 1minute)
- * | STATS rate_$1=rate(request), VALUES(host) BY _tsid,`bucket(@timestamp, 1minute)`
- * | STATS sum=sum(rate_$1), count(rate_$1) BY host=`VALUES(host)`, `bucket(@timestamp, 1minute)`
+ * | STATS rate_$1=rate(request), DIMENSION_VALUES(host) BY _tsid,`bucket(@timestamp, 1minute)`
+ * | STATS sum=sum(rate_$1), count(rate_$1) BY host=`DIMENSION_VALUES(host)`, `bucket(@timestamp, 1minute)`
  * | EVAL `avg(rate(request))` = `sum(rate_$1)` / `count(rate_$1)`
  * | KEEP `avg(rate(request))`, host, `bucket(@timestamp, 1minute)`
  * </pre>
@@ -99,8 +100,8 @@ import java.util.Map;
  * becomes
  *
  * TS k8s
- * | STATS rate_$1=rate(request), $p1=last_over_time(memory_used), VALUES(host) BY _tsid
- * | STATS max(rate_$1), $sum=sum($p1), $count=count($p1) BY host=`VALUES(host)`
+ * | STATS rate_$1=rate(request), $p1=last_over_time(memory_used), DIMENSION_VALUES(host) BY _tsid
+ * | STATS max(rate_$1), $sum=sum($p1), $count=count($p1) BY host=`DIMENSION_VALUES(host)`
  * | EVAL `avg(memory_used)` = $sum / $count
  * | KEEP `max(rate(request))`, `avg(memory_used)`, host
  *
@@ -110,8 +111,8 @@ import java.util.Map;
  *
  * TS k8s
  * | EVAL `bucket(@timestamp, 5m)` = datetrunc(@timestamp, '5m')
- * | STATS rate_$1=rate(request), $p1=last_over_time(memory_used)), VALUES(pod) BY _tsid, `bucket(@timestamp, 5m)`
- * | STATS sum(rate_$1), `min(memory_used)` = min($p1) BY pod=`VALUES(pod)`, `bucket(@timestamp, 5m)`
+ * | STATS rate_$1=rate(request), $p1=last_over_time(memory_used)), DIMENSION_VALUES(pod) BY _tsid, `bucket(@timestamp, 5m)`
+ * | STATS sum(rate_$1), `min(memory_used)` = min($p1) BY pod=`DIMENSION_VALUES(pod)`, `bucket(@timestamp, 5m)`
  * | KEEP `min(memory_used)`, `sum(rate_$1)`, pod, `bucket(@timestamp, 5m)`
  *
  * {agg}_over_time time-series aggregation will be rewritten in the similar way
@@ -121,7 +122,7 @@ import java.util.Map;
  * becomes
  *
  * FROM k8s
- * | STATS max_over_time_$1 = max(memory_usage), host_values=VALUES(host) BY _tsid, time_bucket=bucket(@timestamp, 1minute)
+ * | STATS max_over_time_$1 = max(memory_usage), host_values=DIMENSION_VALUES(host) BY _tsid, time_bucket=bucket(@timestamp, 1minute)
  * | STATS sum(max_over_time_$1) BY host_values, time_bucket
  *
  *
@@ -130,7 +131,7 @@ import java.util.Map;
  * becomes
  *
  * FROM k8s
- * | STATS avg_over_time_$1 = avg(memory_usage), host_values=VALUES(host) BY _tsid, time_bucket=bucket(@timestamp, 1minute)
+ * | STATS avg_over_time_$1 = avg(memory_usage), host_values=DIMENSION_VALUES(host) BY _tsid, time_bucket=bucket(@timestamp, 1minute)
  * | STATS sum(avg_over_time_$1) BY host_values, time_bucket
  *
  * TS k8s | STATS max(rate(post_requests) + rate(get_requests)) BY host, bucket(@timestamp, 1minute)
@@ -272,7 +273,11 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
                 newFinalGroup = timeBucket.toAttribute();
                 firstPassGroupings.add(newFinalGroup);
             } else {
-                newFinalGroup = new Alias(g.source(), g.name(), new Values(g.source(), g), g.id());
+                if (g.isDimension()) {
+                    newFinalGroup = new Alias(g.source(), g.name(), new DimensionValues(g.source(), g, Literal.TRUE), g.id());
+                } else {
+                    newFinalGroup = new Alias(g.source(), g.name(), new Values(g.source(), g, Literal.TRUE), g.id());
+                }
                 firstPassAggs.add(newFinalGroup);
             }
             secondPassGroupings.add(new Alias(g.source(), g.name(), newFinalGroup.toAttribute(), g.id()));

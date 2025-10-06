@@ -48,6 +48,7 @@ import org.elasticsearch.xpack.esql.expression.Order;
 import org.elasticsearch.xpack.esql.expression.function.EsqlFunctionRegistry;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.AggregateFunction;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Count;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.DimensionValues;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.LastOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Max;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Min;
@@ -7465,7 +7466,7 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
 
         Rate rate = as(Alias.unwrap(aggsByTsid.aggregates().get(0)), Rate.class);
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
-        Values values = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), Values.class);
+        DimensionValues values = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
         assertThat(Expressions.attribute(values.field()).name(), equalTo("cluster"));
     }
 
@@ -7502,9 +7503,9 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         assertThat(aggsByTsid.aggregates(), hasSize(3)); // rates, values(cluster), values(pod)
         Rate rate = as(Alias.unwrap(aggsByTsid.aggregates().get(0)), Rate.class);
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
-        Values values1 = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), Values.class);
+        DimensionValues values1 = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
         assertThat(Expressions.attribute(values1.field()).name(), equalTo("cluster"));
-        Values values2 = as(Alias.unwrap(aggsByTsid.aggregates().get(2)), Values.class);
+        DimensionValues values2 = as(Alias.unwrap(aggsByTsid.aggregates().get(2)), DimensionValues.class);
         assertThat(Expressions.attribute(values2.field()).name(), equalTo("pod"));
     }
 
@@ -7571,9 +7572,9 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         assertThat(aggsByTsid.aggregates(), hasSize(4)); // rate, values(pod), values(cluster), bucket
         Rate rate = as(Alias.unwrap(aggsByTsid.aggregates().get(0)), Rate.class);
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
-        Values podValues = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), Values.class);
+        DimensionValues podValues = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
         assertThat(Expressions.attribute(podValues.field()).name(), equalTo("pod"));
-        Values clusterValues = as(Alias.unwrap(aggsByTsid.aggregates().get(3)), Values.class);
+        DimensionValues clusterValues = as(Alias.unwrap(aggsByTsid.aggregates().get(3)), DimensionValues.class);
         assertThat(Expressions.attribute(clusterValues.field()).name(), equalTo("cluster"));
     }
 
@@ -7640,8 +7641,29 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
         LastOverTime lastSum = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), LastOverTime.class);
         assertThat(Expressions.attribute(lastSum.field()).name(), equalTo("network.cost"));
-        Values clusterValues = as(Alias.unwrap(aggsByTsid.aggregates().get(3)), Values.class);
+        DimensionValues clusterValues = as(Alias.unwrap(aggsByTsid.aggregates().get(3)), DimensionValues.class);
         assertThat(Expressions.attribute(clusterValues.field()).name(), equalTo("cluster"));
+    }
+
+    public void testGroupByNonDimensionFields() {
+        var query = """
+            TS k8s
+            | STATS sum(rate(network.total_bytes_in)) BY bucket(@timestamp, 5 minute), event, cluster
+            | LIMIT 10
+            """;
+        var plan = logicalOptimizer.optimize(metricsAnalyzer.analyze(parser.createStatement(query, EsqlTestUtils.TEST_CFG)));
+        var limit = as(plan, Limit.class);
+        var secondAgg = as(limit.child(), Aggregate.class);
+        assertThat(secondAgg, not(instanceOf(TimeSeriesAggregate.class)));
+        var firstAgg = as(secondAgg.child(), TimeSeriesAggregate.class);
+        Rate rate = as(Alias.unwrap(firstAgg.aggregates().get(0)), Rate.class);
+        assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
+        Values valuesOfEvent = as(Alias.unwrap(firstAgg.aggregates().get(2)), Values.class);
+        assertThat(Expressions.attribute(valuesOfEvent.field()).name(), equalTo("event"));
+        DimensionValues dimensionValuesOfCluster = as(Alias.unwrap(firstAgg.aggregates().get(3)), DimensionValues.class);
+        assertThat(Expressions.attribute(dimensionValuesOfCluster.field()).name(), equalTo("cluster"));
+        Eval eval = as(firstAgg.child(), Eval.class);
+        as(eval.child(), EsRelation.class);
     }
 
     public void testAdjustMetricsRateBeforeFinalAgg() {
@@ -7697,7 +7719,7 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         assertThat(mul.right().fold(FoldContext.small()), equalTo(1.05));
         Rate rate = as(Alias.unwrap(aggsByTsid.aggregates().get(0)), Rate.class);
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
-        Values values = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), Values.class);
+        DimensionValues values = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
         assertThat(Expressions.attribute(values.field()).name(), equalTo("cluster"));
     }
 
