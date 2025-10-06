@@ -249,7 +249,7 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
         firstPassGroupings.add(tsid.get());
         List<Alias> packGroupings = new ArrayList<>();
         List<Expression> secondPassGroupings = new ArrayList<>();
-        List<Alias> unpackSecondGroupings = new ArrayList<>();
+        List<Alias> unpackGroupings = new ArrayList<>();
         Holder<NamedExpression> timeBucketRef = new Holder<>();
         aggregate.child().forEachExpressionUp(NamedExpression.class, e -> {
             for (Expression child : e.children()) {
@@ -273,18 +273,17 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
                 throw new EsqlIllegalArgumentException("expected named expression for grouping; got " + group);
             }
             final Attribute g = (Attribute) group;
-            final NamedExpression newFinalGroup;
             if (timeBucket != null && g.id().equals(timeBucket.id())) {
-                newFinalGroup = timeBucket.toAttribute();
+                var newFinalGroup = timeBucket.toAttribute();
                 firstPassGroupings.add(newFinalGroup);
                 secondPassGroupings.add(new Alias(g.source(), g.name(), newFinalGroup.toAttribute(), g.id()));
             } else {
-                newFinalGroup = new Alias(g.source(), g.name(), new Values(g.source(), g), g.id());
-                firstPassAggs.add(newFinalGroup);
+                var valuesAgg = new Alias(g.source(), g.name(), new Values(g.source(), g));
+                firstPassAggs.add(valuesAgg);
                 Alias pack = new Alias(
                     g.source(),
                     internalNames.next("pack"),
-                    new InternalPackValues(g.source(), newFinalGroup.toAttribute())
+                    new InternalPackValues(g.source(), valuesAgg.toAttribute())
                 );
                 packGroupings.add(pack);
                 Alias grouping = new Alias(g.source(), internalNames.next("grouping"), pack.toAttribute());
@@ -292,10 +291,10 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
                 Alias unpack = new Alias(
                     g.source(),
                     g.name(),
-                    new InternalUnpackValues(g.source(), grouping.toAttribute(), newFinalGroup.dataType()),
+                    new InternalUnpackValues(g.source(), grouping.toAttribute(), g.dataType()),
                     g.id()
                 );
-                unpackSecondGroupings.add(unpack);
+                unpackGroupings.add(unpack);
             }
         }
         LogicalPlan newChild = aggregate.child().transformUp(EsRelation.class, r -> {
@@ -334,12 +333,12 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
                 secondPassGroupings,
                 mergeExpressions(secondPassAggs, secondPassGroupings)
             );
-            Eval unpackValues = new Eval(secondPhase.source(), secondPhase, unpackSecondGroupings);
+            Eval unpackValues = new Eval(secondPhase.source(), secondPhase, unpackGroupings);
             List<NamedExpression> projects = new ArrayList<>();
             for (NamedExpression agg : secondPassAggs) {
                 projects.add(Expressions.attribute(agg));
             }
-            for (Alias unpack : unpackSecondGroupings) {
+            for (Alias unpack : unpackGroupings) {
                 projects.add(unpack.toAttribute());
             }
             return new Project(newChild.source(), unpackValues, projects);
