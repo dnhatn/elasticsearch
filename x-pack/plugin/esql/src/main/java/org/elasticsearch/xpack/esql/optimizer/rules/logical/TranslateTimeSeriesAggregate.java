@@ -25,9 +25,13 @@ import org.elasticsearch.xpack.esql.expression.function.aggregate.TimeSeriesAggr
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Values;
 import org.elasticsearch.xpack.esql.expression.function.grouping.Bucket;
 import org.elasticsearch.xpack.esql.expression.function.grouping.TBucket;
+import org.elasticsearch.xpack.esql.expression.function.scalar.internal.InternalPackValues;
+import org.elasticsearch.xpack.esql.expression.function.scalar.internal.InternalUnpackValues;
 import org.elasticsearch.xpack.esql.plan.logical.Aggregate;
 import org.elasticsearch.xpack.esql.plan.logical.EsRelation;
+import org.elasticsearch.xpack.esql.plan.logical.Eval;
 import org.elasticsearch.xpack.esql.plan.logical.LogicalPlan;
+import org.elasticsearch.xpack.esql.plan.logical.Project;
 import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesAggregate;
 
 import java.util.ArrayList;
@@ -243,7 +247,9 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
         // time-series aggregates must be grouped by _tsid (and time-bucket) first and re-group by users key
         List<Expression> firstPassGroupings = new ArrayList<>();
         firstPassGroupings.add(tsid.get());
+        List<Alias> packGroupings = new ArrayList<>();
         List<Expression> secondPassGroupings = new ArrayList<>();
+        List<Alias> unpackSecondGroupings = new ArrayList<>();
         Holder<NamedExpression> timeBucketRef = new Holder<>();
         aggregate.child().forEachExpressionUp(NamedExpression.class, e -> {
             for (Expression child : e.children()) {
@@ -271,11 +277,26 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
             if (timeBucket != null && g.id().equals(timeBucket.id())) {
                 newFinalGroup = timeBucket.toAttribute();
                 firstPassGroupings.add(newFinalGroup);
+                secondPassGroupings.add(new Alias(g.source(), g.name(), newFinalGroup.toAttribute(), g.id()));
             } else {
                 newFinalGroup = new Alias(g.source(), g.name(), new Values(g.source(), g), g.id());
                 firstPassAggs.add(newFinalGroup);
+                Alias pack = new Alias(
+                    g.source(),
+                    internalNames.next("pack"),
+                    new InternalPackValues(g.source(), newFinalGroup.toAttribute())
+                );
+                packGroupings.add(pack);
+                Alias grouping = new Alias(g.source(), internalNames.next("grouping"), pack.toAttribute());
+                secondPassGroupings.add(grouping);
+                Alias unpack = new Alias(
+                    g.source(),
+                    g.name(),
+                    new InternalUnpackValues(g.source(), grouping.toAttribute(), newFinalGroup.dataType()),
+                    g.id()
+                );
+                unpackSecondGroupings.add(unpack);
             }
-            secondPassGroupings.add(new Alias(g.source(), g.name(), newFinalGroup.toAttribute(), g.id()));
         }
         LogicalPlan newChild = aggregate.child().transformUp(EsRelation.class, r -> {
             IndexMode indexMode = requiredTimeSeriesSource.get() ? r.indexMode() : IndexMode.STANDARD;
@@ -298,7 +319,31 @@ public final class TranslateTimeSeriesAggregate extends OptimizerRules.Optimizer
             mergeExpressions(firstPassAggs, firstPassGroupings),
             (Bucket) Alias.unwrap(timeBucket)
         );
-        return new Aggregate(firstPhase.source(), firstPhase, secondPassGroupings, mergeExpressions(secondPassAggs, secondPassGroupings));
+        if (packGroupings.isEmpty()) {
+            return new Aggregate(
+                firstPhase.source(),
+                firstPhase,
+                secondPassGroupings,
+                mergeExpressions(secondPassAggs, secondPassGroupings)
+            );
+        } else {
+            Eval packValues = new Eval(firstPhase.source(), firstPhase, packGroupings);
+            Aggregate secondPhase = new Aggregate(
+                firstPhase.source(),
+                packValues,
+                secondPassGroupings,
+                mergeExpressions(secondPassAggs, secondPassGroupings)
+            );
+            Eval unpackValues = new Eval(secondPhase.source(), secondPhase, unpackSecondGroupings);
+            List<NamedExpression> projects = new ArrayList<>();
+            for (NamedExpression agg : secondPassAggs) {
+                projects.add(Expressions.attribute(agg));
+            }
+            for (Alias unpack : unpackSecondGroupings) {
+                projects.add(unpack.toAttribute());
+            }
+            return new Project(newChild.source(), unpackValues, projects);
+        }
     }
 
     private static List<? extends NamedExpression> mergeExpressions(
