@@ -242,6 +242,10 @@ public final class DimensionValuesByteRefGroupingAggregatorFunction implements G
     @Override
     public void evaluateIntermediate(Block[] blocks, int offset, IntVector selected) {
         int positionCount = selected.getPositionCount();
+        if (positionCount == 0) {
+            blocks[offset] = driverContext.blockFactory().newConstantNullBlock(positionCount);
+            return;
+        }
         int lastGroup = selected.getInt(positionCount - 1);
         if (selected.getInt(0) == 0 && lastGroup > maxGroupId) {
             for (int i = maxGroupId + 1; i <= lastGroup; i++) {
