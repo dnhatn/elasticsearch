@@ -254,14 +254,15 @@ public final class DimensionValuesByteRefGroupingAggregatorFunction implements G
             blocks[offset] = builder.build();
             return;
         }
-        int estimateBytesSize = Math.toIntExact(Math.min(builder.estimatedBytes(), ByteSizeValue.ofMb(100).getBytes()));
+        final BytesRef scratch = new BytesRef();
+        int estimateBytesSize = Math.toIntExact(Math.min(builder.estimatedBytes(), ByteSizeValue.ofMb(1).getBytes()));
         try (var block = builder.build(); var outputBuilder = driverContext.blockFactory().newBytesRefBlockBuilder(estimateBytesSize)) {
             for (int i = 0; i < positionCount; i++) {
                 int groupId = selected.getInt(i);
                 if (groupId <= maxGroupId) {
-                    builder.copyFrom(block, groupId, new BytesRef());
+                    outputBuilder.copyFrom(block, groupId, scratch);
                 } else {
-                    builder.appendNull();
+                    outputBuilder.appendNull();
                 }
             }
             blocks[offset] = outputBuilder.build();
