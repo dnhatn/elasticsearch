@@ -12,11 +12,14 @@ import org.elasticsearch.common.io.stream.NamedWriteable;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.compute.aggregation.AggregatorFunctionSupplier;
+import org.elasticsearch.compute.aggregation.DimensionValuesByteRefGroupingAggregatorFunction;
+import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.core.tree.NodeInfo;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.io.stream.VersionedExpression;
+import org.elasticsearch.xpack.esql.planner.PlannerUtils;
 import org.elasticsearch.xpack.esql.planner.ToAggregator;
 
 import java.io.IOException;
@@ -86,6 +89,10 @@ public class DimensionValues extends AggregateFunction implements ToAggregator, 
 
     @Override
     public AggregatorFunctionSupplier supplier() {
+        ElementType elementType = PlannerUtils.toElementType(dataType());
+        if (elementType == ElementType.BYTES_REF) {
+            return new DimensionValuesByteRefGroupingAggregatorFunction.FunctionSupplier();
+        }
         // TODO: link new implementation
         return new Values(source(), field(), filter()).supplier();
     }
