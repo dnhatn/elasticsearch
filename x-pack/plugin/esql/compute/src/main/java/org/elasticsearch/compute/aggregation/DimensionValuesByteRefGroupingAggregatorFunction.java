@@ -140,11 +140,8 @@ public final class DimensionValuesByteRefGroupingAggregatorFunction implements G
             for (int g = groupStart; g < groupEnd; g++) {
                 final int groupId = groups.getInt(g);
                 if (maxGroupId < groupId) {
-                    for (int i = maxGroupId; i < groupId; i++) {
-                        builder.appendNull();
-                    }
+                    fillEmptyGroups(groupId);
                     builder.copyFrom(valueBlock, valuePosition, scratch);
-                    maxGroupId = groupId;
                 }
             }
         }
@@ -156,19 +153,14 @@ public final class DimensionValuesByteRefGroupingAggregatorFunction implements G
         if (groups.isConstant()) {
             int groupId = groups.getInt(0);
             if (groupId > maxGroupId) {
-                for (int i = maxGroupId; i < groupId; i++) {
-                    builder.appendNull();
-                }
+                fillEmptyGroups(groupId);
                 builder.copyFrom(valueBlock, positionOffset, scratch);
-                maxGroupId = groupId;
             }
         } else {
             for (int p = 0; p < positionCount; p++) {
                 int groupId = groups.getInt(p);
                 if (groupId > maxGroupId) {
-                    for (int i = maxGroupId; i < groupId; i++) {
-                        builder.appendNull();
-                    }
+                    fillEmptyGroups(groupId);
                     builder.copyFrom(valueBlock, positionOffset + p, scratch);
                     maxGroupId = groupId;
                 }
@@ -182,24 +174,25 @@ public final class DimensionValuesByteRefGroupingAggregatorFunction implements G
         if (groups.isConstant()) {
             int groupId = groups.getInt(0);
             if (groupId > maxGroupId) {
-                for (int i = maxGroupId; i < groupId; i++) {
-                    builder.appendNull();
-                }
+                fillEmptyGroups(groupId);
                 builder.appendBytesRef(valueVector.getBytesRef(positionOffset, scratch));
-                maxGroupId = groupId;
             }
         } else {
             for (int p = 0; p < positionCount; p++) {
                 int groupId = groups.getInt(p);
                 if (groupId > maxGroupId) {
-                    for (int i = maxGroupId; i < groupId; i++) {
-                        builder.appendNull();
-                    }
+                    fillEmptyGroups(groupId);
                     builder.appendBytesRef(valueVector.getBytesRef(positionOffset + p, scratch));
-                    maxGroupId = groupId;
                 }
             }
         }
+    }
+
+    private void fillEmptyGroups(int groupId) {
+        for (int i = maxGroupId + 1; i < groupId; i++) {
+            builder.appendNull();
+        }
+        maxGroupId = groupId;
     }
 
     @Override
