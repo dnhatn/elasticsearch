@@ -812,6 +812,7 @@ public class EsqlSession {
         }
         var plan = logicalPlanOptimizer.optimize(logicalPlan);
         LOGGER.debug("Optimized logicalPlan plan:\n{}", plan);
+        System.err.println("--> optimized plan " + plan);
         return plan;
     }
 
@@ -826,6 +827,7 @@ public class EsqlSession {
         optimizedLogicalPlanString = optimizedPlan.toString();
         var plan = mapper.map(optimizedPlan);
         LOGGER.debug("Physical plan:\n{}", plan);
+        System.err.println("--> physical plan " + plan);
         return plan;
     }
 
