@@ -156,7 +156,7 @@ public class FromAggregateMetricDouble extends EsqlScalarFunction implements Con
         public Block eval(Page page) {
             Block block = eval.eval(page);
             if (block.areAllValuesNull()) {
-                return block;
+                return blockFactory.newConstantNullBlock(page.getPositionCount());
             }
             try {
                 Block resultBlock = ((AggregateMetricDoubleBlock) block).getMetricBlock(subFieldIndex);
