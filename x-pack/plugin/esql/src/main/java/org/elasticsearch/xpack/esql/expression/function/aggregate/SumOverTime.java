@@ -91,6 +91,6 @@ public class SumOverTime extends TimeSeriesAggregateFunction {
 
     @Override
     public Sum perTimeSeriesAggregation() {
-        return new Sum(source(), field(), filter(), SummationMode.LOSSY_LITERAL);
+        return new Sum(source(), field(), filter(), SummationMode.COMPENSATED_LITERAL);
     }
 }
