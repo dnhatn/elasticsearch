@@ -192,4 +192,12 @@ public class FromAggregateMetricDouble extends EsqlScalarFunction implements Con
     public Set<DataType> supportedTypes() {
         return Set.of(AGGREGATE_METRIC_DOUBLE);
     }
+
+    @Override
+    public String toString() {
+        return "FromAggregateMetricDouble{" +
+            "field=" + field +
+            ", subfieldIndex=" + subfieldIndex +
+            '}';
+    }
 }

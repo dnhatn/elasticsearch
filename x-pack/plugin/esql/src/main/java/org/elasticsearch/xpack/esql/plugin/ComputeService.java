@@ -636,6 +636,7 @@ public class ComputeService {
             );
 
             LOGGER.debug("Received physical plan:\n{}", plan);
+            System.err.println("--> run local logical plan " + plan);
 
             var localPlan = PlannerUtils.localPlan(
                 plannerSettings,
@@ -645,6 +646,7 @@ public class ComputeService {
                 context.foldCtx(),
                 plan
             );
+            System.err.println("--> run local physical plan " + localPlan);
             // the planner will also set the driver parallelism in LocalExecutionPlanner.LocalExecutionPlan (used down below)
             // it's doing this in the planning of EsQueryExec (the source of the data)
             // see also EsPhysicalOperationProviders.sourcePhysicalOperation
