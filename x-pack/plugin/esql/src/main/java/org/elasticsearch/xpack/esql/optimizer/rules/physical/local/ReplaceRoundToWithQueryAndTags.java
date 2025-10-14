@@ -7,6 +7,7 @@
 
 package org.elasticsearch.xpack.esql.optimizer.rules.physical.local;
 
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.FuzzyQueryBuilder;
@@ -26,6 +27,7 @@ import org.elasticsearch.xpack.esql.core.expression.Attribute;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.core.expression.FieldAttribute;
 import org.elasticsearch.xpack.esql.core.expression.Literal;
+import org.elasticsearch.xpack.esql.core.expression.MetadataAttribute;
 import org.elasticsearch.xpack.esql.core.querydsl.query.Query;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 import org.elasticsearch.xpack.esql.core.type.DataType;
@@ -294,6 +296,12 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
                     queryExec.query(),
                     queryExec.indexMode()
                 );
+                if (queryExec.indexMode() == IndexMode.TIME_SERIES) {
+                    var queries = timeSeriesQueryAndTags(roundTo, roundingPointsUpperLimit, queryExec, ctx);
+                    if (queries != null) {
+                        return rewriteWithQueryAndTags(roundTo, evalExec, queryExec, queries);
+                    }
+                }
                 if (count > roundingPointsUpperLimit) {
                     logger.debug(
                         "Skipping RoundTo push down for [{}], as it has [{}] points, which is more than [{}]",
@@ -303,7 +311,8 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
                     );
                     return evalExec;
                 }
-                plan = planRoundTo(roundTo, evalExec, queryExec, ctx);
+                var queries = queryBuilderAndTags(roundTo, queryExec, ctx);
+                plan = rewriteWithQueryAndTags(roundTo, evalExec, queryExec, queries);
             }
         }
         return plan;
@@ -312,15 +321,18 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
     /**
      * Rewrite the {@code RoundTo} to a list of {@code QueryBuilderAndTags} as input to {@code EsPhysicalOperationProviders}.
      */
-    private static PhysicalPlan planRoundTo(RoundTo roundTo, EvalExec evalExec, EsQueryExec queryExec, LocalPhysicalOptimizerContext ctx) {
+    private static PhysicalPlan rewriteWithQueryAndTags(
+        RoundTo roundTo,
+        EvalExec evalExec,
+        EsQueryExec queryExec,
+        List<EsQueryExec.QueryBuilderAndTags> queryBuilderAndTags
+    ) {
         // Usually EsQueryExec has only one QueryBuilder, one Lucene query, without RoundTo push down.
         // If the RoundTo can be pushed down, a list of QueryBuilders with tags will be added into EsQueryExec, and it will be sent to
         // EsPhysicalOperationProviders.sourcePhysicalOperation to create a list of LuceneSliceQueue.QueryAndTags
-        List<EsQueryExec.QueryBuilderAndTags> queryBuilderAndTags = queryBuilderAndTags(roundTo, queryExec, ctx);
         if (queryBuilderAndTags == null || queryBuilderAndTags.isEmpty()) {
             return evalExec;
         }
-
         FieldAttribute fieldAttribute = (FieldAttribute) roundTo.field();
         String tagFieldName = Attribute.rawTemporaryName(
             // $$fieldName$round_to$dateType
@@ -402,6 +414,68 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
             queries.add(nullBucket(source, field, queryExec, pushdownPredicates, clause));
         }
         return queries;
+    }
+
+    private static List<EsQueryExec.QueryBuilderAndTags> timeSeriesQueryAndTags(
+        RoundTo roundTo,
+        int roundingPointsThreshold,
+        EsQueryExec queryExec,
+        LocalPhysicalOptimizerContext ctx
+    ) {
+        Expression field = roundTo.field();
+        if ((field instanceof FieldAttribute fa && fa.name().equals(MetadataAttribute.TIMESTAMP_FIELD)) == false) {
+            // not a timestamp field
+            return null;
+        }
+        LucenePushdownPredicates pushdownPredicates = LucenePushdownPredicates.from(ctx.searchStats(), ctx.flags());
+        if (pushdownPredicates.isPushableFieldAttribute(field) == false) {
+            return null;
+        }
+
+        int taskConcurrency = ctx.configuration().pragmas().taskConcurrency();
+        int numPoints = roundTo.points().size();
+        if (numPoints == 1) {
+            // don't know how to split a single point
+            return null;
+        }
+        int numShards = ctx.searchStats().numShards();
+        int estimatedSlices = (numPoints + 1) * numShards;
+        int minSlices = Math.max((taskConcurrency + 1) / 2, Math.min(taskConcurrency, roundingPointsThreshold * numShards));
+        if (estimatedSlices <= minSlices) {
+            DataType dataType = roundTo.dataType();
+            List<Object> points = resolveRoundingPoints(roundTo.points(), dataType);
+            if (points == null || points.size() != numPoints) {
+                return null;
+            }
+            final long oneMinute = field.dataType() == DataType.DATE_NANOS
+                ? TimeValue.timeValueMinutes(1).nanos()
+                : TimeValue.timeValueMinutes(1).millis();
+
+            int scalingFactor = Math.ceilDiv(minSlices, estimatedSlices);
+            List<EsQueryExec.QueryBuilderAndTags> queries = new ArrayList<>(minSlices);
+            Source source = roundTo.source();
+            ZoneId zoneId = ctx.configuration().zoneId();
+            Long lower = null;
+            Queries.Clause clause = Queries.Clause.FILTER;
+            for (int i = 1; i < points.size(); i++) {
+                long prev = (Long) points.get(i - 1);
+                long next = (Long) points.get(i);
+                long interval = Math.ceilDiv(Math.ceilDiv(next - prev, scalingFactor), oneMinute) * oneMinute;
+                long upper = prev;
+                while (upper < next) {
+                    queries.add(rangeBucket(source, field, dataType, lower, upper, prev, zoneId, queryExec, pushdownPredicates, clause));
+                    lower = upper;
+                    upper += interval;
+                }
+                if (i == points.size() - 1) {
+                    queries.add(rangeBucket(source, field, dataType, lower, next, prev, zoneId, queryExec, pushdownPredicates, clause));
+                    lower = next;
+                }
+            }
+            queries.add(rangeBucket(source, field, dataType, lower, null, lower, zoneId, queryExec, pushdownPredicates, clause));
+            return queries;
+        }
+        return null;
     }
 
     private static List<Object> resolveRoundingPoints(List<Expression> roundingPoints, DataType dataType) {

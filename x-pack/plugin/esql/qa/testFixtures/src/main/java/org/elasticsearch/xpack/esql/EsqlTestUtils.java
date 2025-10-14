@@ -330,6 +330,11 @@ public final class EsqlTestUtils {
         public boolean canUseEqualityOnSyntheticSourceDelegate(FieldName name, String value) {
             return false;
         }
+
+        @Override
+        public int numShards() {
+            return 1;
+        }
     }
 
     /**
