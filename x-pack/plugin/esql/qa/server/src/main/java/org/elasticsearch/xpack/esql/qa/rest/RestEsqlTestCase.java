@@ -2174,13 +2174,18 @@ public abstract class RestEsqlTestCase extends ESRestTestCase {
         assertThat(reason, answer.get("is_partial"), anyOf(nullValue(), is(false)));
     }
 
-    private static void assertWarnings(Response response, AssertWarnings assertWarnings, Object context) {
+    private static void assertWarnings(Response response, AssertWarnings assertWarnings, Object context) throws IOException {
         List<String> warnings = new ArrayList<>(response.getWarnings());
         warnings.removeAll(mutedWarnings());
         if (shouldLog()) {
             LOGGER.info("RESPONSE warnings (after muted)={}", warnings);
         }
-        assertWarnings.assertWarnings(warnings, context);
+        try {
+            assertWarnings.assertWarnings(warnings, context);
+        } catch (AssertionError e) {
+            LOGGER.error("--> failed to assert warnings - response [{}]", EntityUtils.toString(response.getEntity()));
+            throw e;
+        }
     }
 
     private static Set<String> mutedWarnings() {
