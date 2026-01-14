@@ -110,7 +110,7 @@ public class PartitionTimeSeriesSource extends PhysicalOptimizerRules.Parameteri
             long interval = TIME_SERIES_PARTITION_INTERVALS[i];
             long numSlices = Math.ceilDiv(queryInterval, interval);
             long docPerSlice = queryDocs / numSlices;
-            long requiredBytes = docPerSlice * 2 * Long.BYTES * Math.min(taskConcurrency, numSlices);
+            long requiredBytes = 0; // docPerSlice * 2 * Long.BYTES * Math.min(taskConcurrency, numSlices);
             if (requiredBytes <= maxRateBufferBytes * 1.1) {
                 if (selectedInterval == -1
                     || numSlices <= taskConcurrency * 2 / 3
