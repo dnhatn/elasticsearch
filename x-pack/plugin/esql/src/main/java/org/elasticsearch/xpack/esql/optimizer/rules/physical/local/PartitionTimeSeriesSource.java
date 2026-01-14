@@ -103,6 +103,7 @@ public class PartitionTimeSeriesSource extends PhysicalOptimizerRules.Parameteri
         long maxRateBufferBytes = ctx.plannerSettings().getRateBufferSize().getBytes();
         long taskConcurrency = ctx.configuration().pragmas().taskConcurrency();
         long queryInterval = queryEnd - queryStart - 1;
+        // count with field here?
         long queryDocs = ctx.searchStats().count() * queryInterval / dataInterval;
         long selectedInterval = -1;
         long selectedSlices = -1;
@@ -181,6 +182,7 @@ public class PartitionTimeSeriesSource extends PhysicalOptimizerRules.Parameteri
 
     static final long[] TIME_SERIES_PARTITION_INTERVALS = new long[] {
         TimeValue.timeValueSeconds(1).millis(),
+        TimeValue.timeValueSeconds(2).millis(),
         TimeValue.timeValueSeconds(5).millis(),
         TimeValue.timeValueSeconds(10).millis(),
         TimeValue.timeValueSeconds(20).millis(),
@@ -188,6 +190,7 @@ public class PartitionTimeSeriesSource extends PhysicalOptimizerRules.Parameteri
 
         TimeValue.timeValueMinutes(1).millis(),
         TimeValue.timeValueMinutes(2).millis(),
+        TimeValue.timeValueMinutes(3).millis(),
         TimeValue.timeValueMinutes(5).millis(),
         TimeValue.timeValueMinutes(10).millis(),
         TimeValue.timeValueMinutes(15).millis(),
@@ -196,6 +199,7 @@ public class PartitionTimeSeriesSource extends PhysicalOptimizerRules.Parameteri
 
         TimeValue.timeValueHours(1).millis(),
         TimeValue.timeValueHours(2).millis(),
+        TimeValue.timeValueHours(3).millis(),
         TimeValue.timeValueHours(5).millis(),
         TimeValue.timeValueHours(12).millis(),
 
