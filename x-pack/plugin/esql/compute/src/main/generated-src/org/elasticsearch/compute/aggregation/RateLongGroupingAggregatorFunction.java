@@ -16,6 +16,7 @@ import org.elasticsearch.common.util.IntArray;
 import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.common.util.LongObjectPagedHashMap;
 import org.elasticsearch.common.util.ObjectArray;
+import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.DoubleBlock;
@@ -33,9 +34,7 @@ import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 // end generated imports
 
 public final class RateLongGroupingAggregatorFunction implements GroupingAggregatorFunction {
@@ -83,7 +82,7 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
         new IntermediateStateDesc("resets", ElementType.DOUBLE)
     );
 
-    private ObjectArray<Buffer> buffers;
+    private final Buffer buffer;
     private final List<Integer> channels;
     private final DriverContext driverContext;
     private final LocalCircuitBreaker.SingletonService localCircuitBreakerService;
@@ -113,17 +112,17 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
         );
         this.bigArrays = driverContext.bigArrays().withBreakerService(localCircuitBreakerService);
         this.dateFactor = isDateNanos ? 1_000_000_000.0 : 1000.0;
-        ObjectArray<Buffer> buffers = null;
+        Buffer buffer = null;
         try {
-            buffers = bigArrays.newObjectArray(256);
+            buffer = new Buffer(bigArrays);
             this.reducedStates = bigArrays.newObjectArray(256);
 
-            this.buffers = buffers;
+            this.buffer = buffer;
             this.localCircuitBreakerService = localCircuitBreakerService;
-            buffers = null;
+            buffer = null;
             localCircuitBreakerService = null;
         } finally {
-            Releasables.close(buffers, localCircuitBreakerService);
+            Releasables.close(buffer, localCircuitBreakerService);
         }
     }
 
@@ -204,7 +203,6 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
     // Note that this path can be executed randomly in tests, not in production
     private void addRawInput(int positionOffset, IntBlock groups, LongBlock valueBlock, LongVector timestampVector) {
         int lastGroup = -1;
-        Buffer buffer = null;
         int positionCount = groups.getPositionCount();
         for (int p = 0; p < positionCount; p++) {
             if (groups.isNull(p)) {
@@ -222,7 +220,7 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
                 final int groupId = groups.getInt(g);
                 final var value = valueBlock.getLong(valueBlock.getFirstValueIndex(valuePosition));
                 if (lastGroup != groupId) {
-                    buffer = getBuffer(groupId, 1, timestamp);
+                    buffer.prepareBufferForAppend(groupId, 1, timestamp);
                     buffer.appendWithoutResize(timestamp, value);
                     lastGroup = groupId;
                 } else {
@@ -273,12 +271,12 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
     }
 
     private void addSubRange(int group, int from, int to, LongVector valueVector, LongVector timestampVector) {
-        var buffer = getBuffer(group, to - from, timestampVector.getLong(from));
+        buffer.prepareBufferForAppend(group, to - from, timestampVector.getLong(from));
         buffer.appendRange(from, to, valueVector, timestampVector);
     }
 
     private void addSubRange(int group, int from, int to, LongBlock valueBlock, LongVector timestampVector) {
-        var buffer = getBuffer(group, to - from, timestampVector.getLong(from));
+        buffer.prepareBufferForAppend(group, to - from, timestampVector.getLong(from));
         buffer.appendRange(from, to, valueBlock, timestampVector);
     }
 
@@ -368,6 +366,7 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
         BlockFactory blockFactory = driverContext.blockFactory();
         int positionCount = selected.getPositionCount();
         try (
+            var rawSlices = buffer.groupedSlices(minRawInputGroupId, maxRawInputGroupId);
             var timestamps = blockFactory.newLongBlockBuilder(positionCount * 2);
             var values = blockFactory.newLongBlockBuilder(positionCount * 2);
             var sampleCounts = blockFactory.newLongVectorFixedBuilder(positionCount);
@@ -375,7 +374,7 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
         ) {
             for (int p = 0; p < positionCount; p++) {
                 int group = selected.getInt(p);
-                var state = flushAndCombineState(group);
+                var state = flushAndCombineState(rawSlices, group);
                 // Do not combine intervals across shards because intervals from different indices may overlap.
                 if (state != null && state.samples > 0) {
                     timestamps.beginPositionEntry();
@@ -406,27 +405,7 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
 
     @Override
     public void close() {
-        for (long i = 0; i < buffers.size(); i++) {
-            Buffer buffer = buffers.get(i);
-            if (buffer != null) {
-                buffer.close();
-            }
-        }
-        Releasables.close(reducedStates, buffers, localCircuitBreakerService);
-    }
-
-    private Buffer getBuffer(int groupId, int newElements, long firstTimestamp) {
-        buffers = bigArrays.grow(buffers, groupId + 1);
-        Buffer buffer = buffers.get(groupId);
-        if (buffer == null) {
-            buffer = new Buffer(bigArrays, newElements);
-            buffers.set(groupId, buffer);
-            minRawInputGroupId = Math.min(minRawInputGroupId, groupId);
-            maxRawInputGroupId = Math.max(maxRawInputGroupId, groupId);
-        } else {
-            buffer.ensureCapacity(bigArrays, newElements, firstTimestamp);
-        }
-        return buffer;
+        Releasables.close(reducedStates, buffer, localCircuitBreakerService);
     }
 
     void flushRawBuffers() {
@@ -434,16 +413,16 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
             return;
         }
         reducedStates = bigArrays.grow(reducedStates, maxRawInputGroupId + 1);
-        for (int groupId = minRawInputGroupId; groupId <= maxRawInputGroupId; groupId++) {
-            Buffer buffer = buffers.getAndSet(groupId, null);
-            if (buffer != null) {
-                try (buffer) {
+        try (var rawSlices = buffer.groupedSlices(minRawInputGroupId, maxRawInputGroupId)) {
+            for (int groupId = minRawInputGroupId; groupId <= maxRawInputGroupId; groupId++) {
+                int[] slices = rawSlices.getSlicesForGroup(groupId);
+                if (slices != null) {
                     ReducedState state = reducedStates.get(groupId);
                     if (state == null) {
                         state = new ReducedState();
                         reducedStates.set(groupId, state);
                     }
-                    buffer.flush(state);
+                    flushGroup(state, buffer, slices);
                 }
             }
         }
@@ -459,39 +438,74 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
      * if a new slice is needed. During merging, a priority queue is used to iterate through the slices, selecting
      * the slice with the greatest timestamp.
      */
-    static final class Buffer implements Releasable {
+    class Buffer implements Releasable {
+        private final BigArrays bigArrays;
         private LongArray timestamps;
         private LongArray values;
-        private int pendingCount;
-        int[] sliceOffsets;
-        private static final int[] EMPTY_SLICES = new int[0];
+        private int valueCount;
 
-        Buffer(BigArrays bigArrays, int initialSize) {
-            this.timestamps = bigArrays.newLongArray(Math.max(initialSize, 32), false);
-            this.values = bigArrays.newLongArray(Math.max(initialSize, 32), false);
-            this.sliceOffsets = EMPTY_SLICES;
+        private IntArray sliceGroupIdsAndOffsets;
+        private int sliceCount;
+
+        Buffer(BigArrays bigArrays) {
+            this.bigArrays = bigArrays;
+            boolean success = false;
+            try {
+                this.timestamps = bigArrays.newLongArray(PageCacheRecycler.LONG_PAGE_SIZE, false);
+                this.values = bigArrays.newLongArray(PageCacheRecycler.DOUBLE_PAGE_SIZE, false);
+                this.sliceGroupIdsAndOffsets = bigArrays.newIntArray(512, false);
+                success = true;
+            } finally {
+                if (success == false) {
+                    close();
+                }
+            }
+        }
+
+        void prepareBufferForAppend(int groupId, int count, long firstTimestamp) {
+            int newSize = valueCount + count;
+            timestamps = bigArrays.grow(timestamps, newSize);
+            values = bigArrays.grow(values, newSize);
+            if (valueCount > 0 && sliceGroupIdsAndOffsets.get((sliceCount - 1) * 2L) == groupId) {
+                long prevTimestamp = timestamps.get(valueCount - 1);
+                // continue with the current slice
+                if (prevTimestamp >= firstTimestamp) {
+                    return;
+                }
+            }
+            // start a new slice
+            sliceGroupIdsAndOffsets = bigArrays.grow(sliceGroupIdsAndOffsets, 2L * (sliceCount + 1));
+            sliceGroupIdsAndOffsets.set(2L * sliceCount, groupId);
+            sliceGroupIdsAndOffsets.set(2L * sliceCount + 1, valueCount);
+            if (groupId < minRawInputGroupId) {
+                minRawInputGroupId = groupId;
+            }
+            if (groupId > maxRawInputGroupId) {
+                maxRawInputGroupId = groupId;
+            }
+            sliceCount++;
         }
 
         void appendWithoutResize(long timestamp, long value) {
-            timestamps.set(pendingCount, timestamp);
-            values.set(pendingCount, value);
-            pendingCount++;
+            timestamps.set(valueCount, timestamp);
+            values.set(valueCount, value);
+            valueCount++;
         }
 
         void maybeResizeAndAppend(BigArrays bigArrays, long timestamp, long value) {
-            timestamps = bigArrays.grow(timestamps, pendingCount + 1);
-            values = bigArrays.grow(values, pendingCount + 1);
+            timestamps = bigArrays.grow(timestamps, valueCount + 1);
+            values = bigArrays.grow(values, valueCount + 1);
 
-            timestamps.set(pendingCount, timestamp);
-            values.set(pendingCount, value);
-            pendingCount++;
+            timestamps.set(valueCount, timestamp);
+            values.set(valueCount, value);
+            valueCount++;
         }
 
         void appendRange(int fromPosition, int toPosition, LongVector valueVector, LongVector timestampVector) {
             for (int p = fromPosition; p < toPosition; p++) {
-                values.set(pendingCount, valueVector.getLong(p));
-                timestamps.set(pendingCount, timestampVector.getLong(p));
-                pendingCount++;
+                values.set(valueCount, valueVector.getLong(p));
+                timestamps.set(valueCount, timestampVector.getLong(p));
+                valueCount++;
             }
         }
 
@@ -501,117 +515,186 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
                     continue;
                 }
                 assert valueBlock.getValueCount(p) == 1 : "expected single-valued block " + valueBlock;
-                values.set(pendingCount, valueBlock.getLong(p));
-                timestamps.set(pendingCount, timestampVector.getLong(p));
-                pendingCount++;
+                values.set(valueCount, valueBlock.getLong(p));
+                timestamps.set(valueCount, timestampVector.getLong(p));
+                valueCount++;
             }
         }
 
-        void ensureCapacity(BigArrays bigArrays, int count, long firstTimestamp) {
-            int newSize = pendingCount + count;
-            timestamps = bigArrays.grow(timestamps, newSize);
-            values = bigArrays.grow(values, newSize);
-            if (pendingCount > 0 && firstTimestamp > timestamps.get(pendingCount - 1)) {
-                if (sliceOffsets.length == 0 || sliceOffsets[sliceOffsets.length - 1] != pendingCount) {
-                    sliceOffsets = ArrayUtil.growExact(sliceOffsets, sliceOffsets.length + 1);
-                    sliceOffsets[sliceOffsets.length - 1] = pendingCount;
+        GroupedSlices groupedSlices(int minGroupId, int maxGroupId) {
+            if (minGroupId > maxGroupId) {
+                return new GroupedSlices(minGroupId, maxGroupId, null);
+            }
+            final int numGroups = maxGroupId - minGroupId + 1;
+            int[] sliceCounts = new int[numGroups];
+            // count the number of slices each group
+            for (int i = 0; i < sliceCount; i++) {
+                int groupId = sliceGroupIdsAndOffsets.get(2L * i);
+                sliceCounts[groupId - minGroupId]++;
+            }
+            ObjectArray<int[]> slicesPerGroup = bigArrays.newObjectArray(numGroups);
+            for (int g = 0; g < numGroups; g++) {
+                if (sliceCounts[g] > 0) {
+                    slicesPerGroup.set(g, new int[sliceCounts[g] * 2]);
                 }
             }
-        }
-
-        void flush(ReducedState state) {
-            if (pendingCount == 0) {
-                return;
+            for (int i = 0; i < sliceCount; i++) {
+                int groupId = sliceGroupIdsAndOffsets.get(2L * i);
+                int start = sliceGroupIdsAndOffsets.get(2L * i + 1);
+                int end = (i + 1 < sliceCount) ? sliceGroupIdsAndOffsets.get(2L * (i + 1) + 1) : valueCount;
+                int groupIndex = groupId - minGroupId;
+                int offset = --sliceCounts[groupIndex];
+                int[] groupSlices = slicesPerGroup.get(groupIndex);
+                groupSlices[offset * 2] = start;
+                groupSlices[offset * 2 + 1] = end;
             }
-            if (pendingCount == 1) {
-                state.samples++;
-                long t = timestamps.get(0);
-                long v = values.get(0);
-                state.appendInterval(new Interval(t, v, t, v));
-                return;
-            }
-            PriorityQueue<Slice> pq = mergeQueue();
-            // first
-            final long lastTimestamp;
-            final long lastValue;
-            {
-                Slice top = pq.top();
-                lastTimestamp = top.timestamp;
-                int position = top.next();
-                lastValue = values.get(position);
-                if (top.exhausted()) {
-                    pq.pop();
-                } else {
-                    pq.updateTop();
-                }
-            }
-            var prevValue = lastValue;
-            int position = -1;
-            while (pq.size() > 0) {
-                Slice top = pq.top();
-                position = top.next();
-                if (top.exhausted()) {
-                    pq.pop();
-                } else {
-                    pq.updateTop();
-                }
-                var val = values.get(position);
-                if (val > prevValue) {
-                    state.resets += val;
-                }
-                prevValue = val;
-            }
-            state.samples += pendingCount;
-            state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(position), prevValue));
-        }
-
-        private PriorityQueue<Slice> mergeQueue() {
-            PriorityQueue<Slice> pq = new PriorityQueue<>(this.sliceOffsets.length + 1) {
-                @Override
-                protected boolean lessThan(Slice a, Slice b) {
-                    return a.timestamp > b.timestamp; // want the latest timestamp first
-                }
-            };
-            int startOffset = 0;
-            for (int sliceOffset : sliceOffsets) {
-                pq.add(new Slice(this, startOffset, sliceOffset));
-                startOffset = sliceOffset;
-            }
-            pq.add(new Slice(this, startOffset, pendingCount));
-            return pq;
+            valueCount = 0;
+            sliceCount = 0;
+            return new GroupedSlices(minGroupId, maxGroupId, slicesPerGroup);
         }
 
         @Override
         public void close() {
-            timestamps.close();
-            values.close();
+            Releasables.close(timestamps, values, sliceGroupIdsAndOffsets);
         }
     }
 
-    static final class Slice {
-        int start;
-        long timestamp;
-        final int end;
-        final Buffer buffer;
-
-        Slice(Buffer buffer, int start, int end) {
-            this.buffer = buffer;
-            this.start = start;
-            this.end = end;
-            this.timestamp = buffer.timestamps.get(start);
-        }
-
-        boolean exhausted() {
-            return start >= end;
-        }
-
-        int next() {
-            int index = start++;
-            if (start < end) {
-                timestamp = buffer.timestamps.get(start);
+    record GroupedSlices(int minGroupId, int maxGroupId, ObjectArray<int[]> slices) implements Releasable {
+        int[] getSlicesForGroup(int groupId) {
+            if (groupId < minGroupId || groupId > maxGroupId) {
+                return null;
             }
-            return index;
+            return slices.get(groupId - minGroupId);
         }
+
+        @Override
+        public void close() {
+            Releasables.close(slices);
+        }
+    }
+
+    static abstract class SliceQueue<T> extends PriorityQueue<T> {
+        protected SliceQueue(int maxSize) {
+            super(maxSize);
+        }
+
+        @SuppressWarnings("unchecked")
+        public T getSecond(){
+            return (T) getHeapArray()[1];
+        }
+    }
+
+    static void flushGroup(ReducedState state, Buffer buffer, int[] slices) {
+        var timestamps = buffer.timestamps;
+        final class Slice {
+            int start;
+            int end;
+            int partitionIndex;
+            long timestamp;
+            final int[] partitions;
+
+            public Slice(int[] partitions) {
+                this.partitions = partitions;
+                this.start = partitions[0];
+                this.end = partitions[1];
+                this.partitionIndex = 2;
+                this.timestamp = timestamps.get(start);
+            }
+
+            boolean exhausted() {
+                return partitionIndex >= partitions.length && start >= end;
+            }
+
+            int next() {
+                int index = start++;
+                if (index >= end) {
+                    if (partitionIndex < partitions.length) {
+                        start = partitions[partitionIndex++];
+                        end = partitions[partitionIndex++];
+                        timestamp = timestamps.get(start);
+                        return start++;
+                    }
+                } else {
+                    timestamp = timestamps.get(start);
+                }
+                return index;
+            }
+        }
+
+        int numSlices = slices.length / 2;
+        final SliceQueue<Slice> pq = new SliceQueue<>(numSlices) {
+            @Override
+            protected boolean lessThan(Slice a, Slice b) {
+                return a.timestamp > b.timestamp; // want the latest timestamp first
+            }
+        };
+        int valueCount = 0;
+        for (int i = 0; i < numSlices; i++) {
+            int start = slices[i * 2];
+            int end = slices[i * 2 + 1];
+            valueCount += (end - start);
+            pq.add(new Slice(new int[]{start, end}));
+        }
+        var values = buffer.values;
+        if (valueCount == 1) {
+            state.samples++;
+            long t = timestamps.get(pq.top().start);
+            var v = values.get(pq.top().start);
+            state.appendInterval(new Interval(t, v, t, v));
+            return;
+        }
+        // first
+        final long lastTimestamp;
+        final long lastValue;
+        {
+            Slice top = pq.top();
+            lastTimestamp = top.timestamp;
+            int position = top.next();
+            lastValue = values.get(position);
+            if (top.exhausted()) {
+                pq.pop();
+            } else {
+                pq.updateTop();
+            }
+        }
+        var prevValue = lastValue;
+        int position = -1;
+        Slice top = pq.top();
+        if (pq.size() > 1) {
+            for (; ;) {
+                long nextTs = pq.getSecond().timestamp;
+                do {
+                    position = top.next();
+                    var val = values.get(position);
+                    if (val > prevValue) {
+                        state.resets += val;
+                    }
+                    prevValue = val;
+                } while (top.timestamp > nextTs && top.exhausted() == false);
+
+                if (top.exhausted()) {
+                    top = pq.pop();
+                    if (pq.size() == 1) {
+                        break;
+                    }
+                } else {
+                    top = pq.updateTop();
+                }
+            }
+        }
+
+        top = pq.top();
+        do {
+            position = top.next();
+            var val = values.get(position);
+            if (val > prevValue) {
+                state.resets += val;
+            }
+            prevValue = val;
+        } while (top.exhausted() == false);
+
+        state.samples += valueCount;
+        state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(position), prevValue));
     }
 
     @Override
@@ -619,12 +702,13 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
         BlockFactory blockFactory = driverContext.blockFactory();
         int positionCount = selected.getPositionCount();
         try (
+            var rawSlices = buffer.groupedSlices(minRawInputGroupId, maxRawInputGroupId);
             var rates = blockFactory.newDoubleBlockBuilder(positionCount);
             var flushedStates = new LongObjectPagedHashMap<ReducedState>(positionCount, bigArrays)
         ) {
             for (int p = 0; p < positionCount; p++) {
                 int group = selected.getInt(p);
-                var state = flushAndCombineState(group);
+                var state = flushAndCombineState(rawSlices, group);
                 if (state != null) {
                     flushedStates.put(group, state);
                     // combine intervals for the final evaluation
@@ -662,16 +746,14 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
         }
     }
 
-    ReducedState flushAndCombineState(int groupId) {
+    ReducedState flushAndCombineState(GroupedSlices rawSlices, int groupId) {
         ReducedState state = groupId < reducedStates.size() ? reducedStates.getAndSet(groupId, null) : null;
-        Buffer buffer = groupId < buffers.size() ? buffers.getAndSet(groupId, null) : null;
-        if (buffer != null) {
-            try (buffer) {
-                if (state == null) {
-                    state = new ReducedState();
-                }
-                buffer.flush(state);
+        int[] slices = rawSlices.getSlicesForGroup(groupId);
+        if (slices != null) {
+            if (state == null) {
+                state = new ReducedState();
             }
+            flushGroup(state, buffer, slices);
         }
         return state;
     }
