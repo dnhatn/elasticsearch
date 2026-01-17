@@ -530,7 +530,7 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
                 state.appendInterval(new Interval(t, v, t, v));
                 return;
             }
-            PriorityQueue<Slice> pq = mergeQueue();
+            SliceQueue pq = mergeQueue();
             // first
             final long lastTimestamp;
             final $type$ lastValue;
@@ -547,31 +547,31 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
             }
             var prevValue = lastValue;
             int position = -1;
+            Slice top = pq.top();
             while (pq.size() > 0) {
-                Slice top = pq.top();
-                position = top.next();
-                if (top.exhausted()) {
-                    pq.pop();
-                } else {
-                    pq.updateTop();
+                long nextTimestamp = pq.nextTimestamp();
+                for (;;) {
+                    position = top.next();
+                    var val = values.get(position);
+                    if (val > prevValue) {
+                       state.resets += val;
+                    }
+                    prevValue = val;
+                    if (top.exhausted()) {
+                        top = pq.pop();
+                        break;
+                    } else if (top.timestamp < nextTimestamp) {
+                        top = pq.updateTop();
+                        break;
+                    }
                 }
-                var val = values.get(position);
-                if (val > prevValue) {
-                    state.resets += val;
-                }
-                prevValue = val;
             }
             state.samples += pendingCount;
             state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(position), prevValue));
         }
 
-        private PriorityQueue<Slice> mergeQueue() {
-            PriorityQueue<Slice> pq = new PriorityQueue<>(this.sliceOffsets.length + 1) {
-                @Override
-                protected boolean lessThan(Slice a, Slice b) {
-                    return a.timestamp > b.timestamp; // want the latest timestamp first
-                }
-            };
+        private SliceQueue mergeQueue() {
+            var pq = new SliceQueue(this.sliceOffsets.length + 1);
             int startOffset = 0;
             for (int sliceOffset : sliceOffsets) {
                 pq.add(new Slice(this, startOffset, sliceOffset));
@@ -611,6 +611,27 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
                 timestamp = buffer.timestamps.get(start);
             }
             return index;
+        }
+    }
+
+    static final class SliceQueue extends PriorityQueue<Slice> {
+        SliceQueue(int maxSize) {
+            super(maxSize);
+        }
+
+        @SuppressWarnings("unchecked")
+        public long nextTimestamp(){
+            if (size() <= 1) {
+                return Long.MIN_VALUE;
+            }
+            var heap = getHeapArray();
+            Slice slice = (Slice)heap[0];
+            return slice.timestamp;
+        }
+
+        @Override
+        protected boolean lessThan(Slice a, Slice b) {
+            return a.timestamp > b.timestamp; // want the latest timestamp first
         }
     }
 
