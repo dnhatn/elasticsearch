@@ -594,24 +594,9 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
             }
         }
         var prevValue = lastValue;
-        int position = -1;
-        while (pq.size() > 0) {
-            long nextTs = pq.getNextTimestamp();
-            // fast merge for slices without overlapping
-            if (top.lastTimestamp > nextTs && pq.size() == 1) {
-                for (int p = top.start; p < top.end; p++) {
-                    var val = values.get(p);
-                    if (val > prevValue) {
-                        state.resets += val;
-                    }
-                    prevValue = val;
-                }
-                position = top.end - 1;
-                top = pq.pop();
-                continue;
-            }
+        while (pq.size() > 1) {
             for (;;) {
-                position = top.next();
+                var position = top.next();
                 var val = values.get(position);
                 if (val > prevValue) {
                     state.resets += val;
@@ -620,14 +605,21 @@ public final class RateLongGroupingAggregatorFunction implements GroupingAggrega
                 if (top.exhausted()) {
                     top = pq.pop();
                     break;
-                } else if (top.timestamp <= nextTs) {
+                } else if (top.timestamp <= pq.getNextTimestamp()) {
                     top = pq.updateTop();
                     break;
                 }
             }
         }
+        for (int p = top.start; p < top.end; p++) {
+            var val = values.get(p);
+            if (val > prevValue) {
+                state.resets += val;
+            }
+            prevValue = val;
+        }
         state.samples += valueCount;
-        state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(position), prevValue));
+        state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(top.end - 1), prevValue));
     }
 
     @Override

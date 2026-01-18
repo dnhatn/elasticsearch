@@ -38,14 +38,12 @@ final class RateState {
         final LongArray timestamps;
         int start;
         int end;
-        long lastTimestamp;
         long timestamp;
 
         public Slice(LongArray timestamps, int start, int end) {
             this.timestamps = timestamps;
             this.start = start;
             this.end = end;
-            this.lastTimestamp = timestamps.get(end - 1);
             this.timestamp = timestamps.get(start);
         }
 
