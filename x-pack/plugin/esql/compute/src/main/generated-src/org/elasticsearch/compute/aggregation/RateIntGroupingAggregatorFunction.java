@@ -596,8 +596,7 @@ public final class RateIntGroupingAggregatorFunction implements GroupingAggregat
         var prevValue = lastValue;
         while (pq.size() > 1) {
             for (;;) {
-                var position = top.next();
-                var val = values.get(position);
+                var val = values.get(top.next());
                 if (val > prevValue) {
                     state.resets += val;
                 }
