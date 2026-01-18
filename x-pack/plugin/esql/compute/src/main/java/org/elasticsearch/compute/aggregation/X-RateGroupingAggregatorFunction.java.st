@@ -521,9 +521,9 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
             }
         }
 
-        GroupedSlices groupedSlices(int minGroupId, int maxGroupId) {
+        RateState.GroupedSlices groupedSlices(int minGroupId, int maxGroupId) {
             if (minGroupId > maxGroupId) {
-                return new GroupedSlices(minGroupId, maxGroupId, null);
+                return new RateState.GroupedSlices(minGroupId, maxGroupId, null);
             }
             final int numGroups = maxGroupId - minGroupId + 1;
             int[] sliceCounts = new int[numGroups];
@@ -550,7 +550,7 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
             }
             valueCount = 0;
             sliceCount = 0;
-            return new GroupedSlices(minGroupId, maxGroupId, slicesPerGroup);
+            return new RateState.GroupedSlices(minGroupId, maxGroupId, slicesPerGroup);
         }
 
         @Override
@@ -559,81 +559,17 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
         }
     }
 
-    record GroupedSlices(int minGroupId, int maxGroupId, ObjectArray<int[]> slices) implements Releasable {
-        int[] getSlicesForGroup(int groupId) {
-            if (groupId < minGroupId || groupId > maxGroupId) {
-                return null;
-            }
-            return slices.get(groupId - minGroupId);
-        }
-
-        @Override
-        public void close() {
-            Releasables.close(slices);
-        }
-    }
-
-    static abstract class SliceQueue<T> extends PriorityQueue<T> {
-        protected SliceQueue(int maxSize) {
-            super(maxSize);
-        }
-
-        @SuppressWarnings("unchecked")
-        public T getSecond(){
-            return (T) getHeapArray()[1];
-        }
-    }
-
     static void flushGroup(ReducedState state, Buffer buffer, int[] slices) {
         var timestamps = buffer.timestamps;
-        final class Slice {
-            int start;
-            int end;
-            int partitionIndex;
-            long timestamp;
-            final int[] partitions;
-
-            public Slice(int[] partitions) {
-                this.partitions = partitions;
-                this.start = partitions[0];
-                this.end = partitions[1];
-                this.partitionIndex = 2;
-                this.timestamp = timestamps.get(start);
-            }
-
-            boolean exhausted() {
-                return partitionIndex >= partitions.length && start >= end;
-            }
-
-            int next() {
-                int index = start++;
-                if (index >= end) {
-                    if (partitionIndex < partitions.length) {
-                        start = partitions[partitionIndex++];
-                        end = partitions[partitionIndex++];
-                        timestamp = timestamps.get(start);
-                        return start++;
-                    }
-                } else {
-                    timestamp = timestamps.get(start);
-                }
-                return index;
-            }
-        }
 
         int numSlices = slices.length / 2;
-        final SliceQueue<Slice> pq = new SliceQueue<>(numSlices) {
-            @Override
-            protected boolean lessThan(Slice a, Slice b) {
-                return a.timestamp > b.timestamp; // want the latest timestamp first
-            }
-        };
+        final var pq = new RateState.SliceQueue(numSlices);
         int valueCount = 0;
         for (int i = 0; i < numSlices; i++) {
             int start = slices[i * 2];
             int end = slices[i * 2 + 1];
             valueCount += (end - start);
-            pq.add(new Slice(new int[]{start, end}));
+            pq.add(new RateState.Slice(buffer.timestamps, start, end));
         }
         var values = buffer.values;
         if (valueCount == 1) {
@@ -646,53 +582,50 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
         // first
         final long lastTimestamp;
         final $type$ lastValue;
+        var top = pq.top();
         {
-            Slice top = pq.top();
             lastTimestamp = top.timestamp;
             int position = top.next();
             lastValue = values.get(position);
             if (top.exhausted()) {
-                pq.pop();
+                top = pq.pop();
             } else {
-                pq.updateTop();
+                top = pq.updateTop();
             }
         }
         var prevValue = lastValue;
         int position = -1;
-        Slice top = pq.top();
-        if (pq.size() > 1) {
-            for (; ;) {
-                long nextTs = pq.getSecond().timestamp;
-                do {
-                    position = top.next();
-                    var val = values.get(position);
+        while (pq.size() > 0) {
+            long nextTs = pq.getNextTimestamp();
+            // fast merge for slices without overlapping
+            if (top.lastTimestamp > nextTs && pq.size() == 1) {
+                for (int p = top.start; p < top.end; p++) {
+                    var val = values.get(p);
                     if (val > prevValue) {
                         state.resets += val;
                     }
                     prevValue = val;
-                } while (top.timestamp > nextTs && top.exhausted() == false);
-
+                }
+                position = top.end - 1;
+                top = pq.pop();
+                continue;
+            }
+            for (;;) {
+                position = top.next();
+                var val = values.get(position);
+                if (val > prevValue) {
+                    state.resets += val;
+                }
+                prevValue = val;
                 if (top.exhausted()) {
                     top = pq.pop();
-                    if (pq.size() == 1) {
-                        break;
-                    }
-                } else {
+                    break;
+                } else if (top.timestamp <= nextTs) {
                     top = pq.updateTop();
+                    break;
                 }
             }
         }
-
-        top = pq.top();
-        do {
-            position = top.next();
-            var val = values.get(position);
-            if (val > prevValue) {
-                state.resets += val;
-            }
-            prevValue = val;
-        } while (top.exhausted() == false);
-
         state.samples += valueCount;
         state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(position), prevValue));
     }
@@ -746,7 +679,7 @@ public final class Rate$Type$GroupingAggregatorFunction implements GroupingAggre
         }
     }
 
-    ReducedState flushAndCombineState(GroupedSlices rawSlices, int groupId) {
+    ReducedState flushAndCombineState(RateState.GroupedSlices rawSlices, int groupId) {
         ReducedState state = groupId < reducedStates.size() ? reducedStates.getAndSet(groupId, null) : null;
         int[] slices = rawSlices.getSlicesForGroup(groupId);
         if (slices != null) {
