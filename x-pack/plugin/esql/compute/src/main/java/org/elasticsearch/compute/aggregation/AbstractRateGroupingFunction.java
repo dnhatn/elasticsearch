@@ -9,6 +9,7 @@ package org.elasticsearch.compute.aggregation;
 
 import org.apache.lucene.util.PriorityQueue;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.util.DoubleArray;
 import org.elasticsearch.common.util.IntArray;
 import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.common.util.PageCacheRecycler;
@@ -207,5 +208,93 @@ class AbstractRateGroupingFunction {
         protected boolean lessThan(Slice a, Slice b) {
             return a.nextTimestamp > b.nextTimestamp; // want the latest timestamp first
         }
+    }
+
+    static abstract class ReducedBuffer implements Releasable {
+        final BigArrays bigArrays;
+        int count;
+        LongArray samples;
+        LongArray timestamps;
+        DoubleArray resets;
+        IntArray groupIds;
+        IntArray groupOffsets;
+        int[] runningOffsets;
+        boolean frozen = false;
+
+        int minGroupId = Integer.MAX_VALUE;
+        int maxGroupId = Integer.MIN_VALUE;
+
+        ReducedBuffer(BigArrays bigArrays) {
+            this.bigArrays = bigArrays;
+            boolean success = false;
+            try {
+                this.samples = bigArrays.newLongArray(512, false);
+                this.timestamps = bigArrays.newLongArray(512, false);
+                this.resets = bigArrays.newDoubleArray(512, false);
+                this.groupIds = bigArrays.newIntArray(512, false);
+                ;
+                success = true;
+            } finally {
+                if (success == false) {
+                    close();
+                }
+            }
+        }
+
+        // TODO: optimize skipping groupIds when there is only one group
+        final void prepareForNewIntervals(int groupId, int numIntervals, long sampleCount, double reset) {
+            assert frozen == false : "buffer is frozen";
+            final int newSize = count + numIntervals;
+            minGroupId = Math.min(minGroupId, groupId);
+            maxGroupId = Math.max(maxGroupId, groupId);
+            groupIds = bigArrays.grow(groupIds, newSize);
+            for (int i = count; i < newSize; i++) {
+                groupIds.set(i, groupId);
+            }
+            samples = bigArrays.grow(samples, newSize);
+            samples.set(count, sampleCount);
+            resets = bigArrays.grow(resets, newSize);
+            resets.set(count, reset);
+            for (int i = count + 1; i < newSize; i++) {
+                samples.set(i, 0);
+                resets.set(i, 0.0);
+            }
+            count += numIntervals;
+        }
+
+        void prepareForFlush() {
+            if (minGroupId > maxGroupId) {
+                return;
+            }
+            if (groupIds == null) {
+                return;
+            }
+            runningOffsets = new int[maxGroupId - minGroupId + 1];
+            for (int i = 0; i < count; i++) {
+                int groupIndex = groupIds.get(i) - minGroupId;
+                runningOffsets[groupIndex]++;
+            }
+            int runningOffset = 0;
+            for (int i = 0; i < runningOffsets.length; i++) {
+                int count = runningOffsets[i];
+                runningOffsets[i] = runningOffset;
+                runningOffset += count;
+            }
+            groupOffsets = bigArrays.newIntArray(count, false);
+            for (int i = 0; i < count; i++) {
+                int groupIndex = groupIds.get(i) - minGroupId;
+                int dstIndex = runningOffsets[groupIndex]++;
+                groupOffsets.set(dstIndex, i);
+            }
+            groupIds.close();
+            groupIds = null;
+        }
+
+        @Override
+        public void close() {
+            Releasables.close(samples, timestamps, resets, groupIds, groupOffsets);
+        }
+
+        // TODO: mergeInterval()
     }
 }

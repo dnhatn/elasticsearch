@@ -82,12 +82,12 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
         new IntermediateStateDesc("resets", ElementType.DOUBLE)
     );
 
-    private final IntRawBuffer rawBuffer;
     private final List<Integer> channels;
     private final DriverContext driverContext;
     private final LocalCircuitBreaker.SingletonService localCircuitBreakerService;
     private final BigArrays bigArrays;
-    private ObjectArray<ReducedState> reducedStates;
+    private final IntRawBuffer rawBuffer;
+    private final IntReducedBuffer reducedBuffer;
     private final boolean isRateOverTime;
     private final double dateFactor;
 
@@ -103,23 +103,21 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
         this.channels = channels;
         this.driverContext = driverContext;
         this.isRateOverTime = isRateOverTime;
-        LocalCircuitBreaker.SingletonService localCircuitBreakerService = new LocalCircuitBreaker.SingletonService(
-            driverContext.bigArrays().breakerService(),
-            driverContext.localBreakerSettings()
-        );
-        this.bigArrays = driverContext.bigArrays().withBreakerService(localCircuitBreakerService);
         this.dateFactor = isDateNanos ? 1_000_000_000.0 : 1000.0;
-        IntRawBuffer buffer = null;
+        boolean success = false;
         try {
-            buffer = new IntRawBuffer(bigArrays);
-            this.reducedStates = bigArrays.newObjectArray(256);
-
-            this.rawBuffer = buffer;
-            this.localCircuitBreakerService = localCircuitBreakerService;
-            buffer = null;
-            localCircuitBreakerService = null;
+            this.localCircuitBreakerService = new LocalCircuitBreaker.SingletonService(
+                driverContext.bigArrays().breakerService(),
+                driverContext.localBreakerSettings()
+            );
+            this.bigArrays = driverContext.bigArrays().withBreakerService(localCircuitBreakerService);
+            this.rawBuffer = new IntRawBuffer(this.bigArrays);
+            this.reducedBuffer = new IntReducedBuffer(this.bigArrays);
+            success = true;
         } finally {
-            Releasables.close(buffer, localCircuitBreakerService);
+            if (success == false) {
+                close();
+            }
         }
     }
 
@@ -310,15 +308,14 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
                 continue;
             }
             int groupId = groups.getInt(groupPosition);
-            reducedStates = bigArrays.grow(reducedStates, groupId + 1);
-            ReducedState state = reducedStates.get(groupId);
-            if (state == null) {
-                state = new ReducedState();
-                reducedStates.set(groupId, state);
-            }
-            state.appendIntervalsFromBlocks(timestamps, values, valuePosition);
-            state.samples += sampleCount;
-            state.resets += resets.getDouble(valuePosition);
+            reducedBuffer.appendIntervalsFromBlocks(
+                groupId,
+                sampleCount,
+                resets.getDouble(valuePosition),
+                valuePosition,
+                timestamps,
+                values
+            );
         }
     }
 
@@ -345,15 +342,14 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
             int lastGroup = firstGroup + groups.getValueCount(groupPosition);
             for (int g = firstGroup; g < lastGroup; g++) {
                 int groupId = groups.getInt(g);
-                reducedStates = bigArrays.grow(reducedStates, groupId + 1);
-                ReducedState state = reducedStates.get(groupId);
-                if (state == null) {
-                    state = new ReducedState();
-                    reducedStates.set(groupId, state);
-                }
-                state.appendIntervalsFromBlocks(timestamps, values, valuePosition);
-                state.samples += sampleCount;
-                state.resets += resets.getDouble(valuePosition);
+                reducedBuffer.appendIntervalsFromBlocks(
+                    groupId,
+                    sampleCount,
+                    resets.getDouble(valuePosition),
+                    valuePosition,
+                    timestamps,
+                    values
+                );
             }
         }
     }
@@ -362,6 +358,7 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
     public void evaluateIntermediate(Block[] blocks, int offset, IntVector selected) {
         BlockFactory blockFactory = driverContext.blockFactory();
         int positionCount = selected.getPositionCount();
+        reducedBuffer.prepareForFlush();
         try (
             var flushQueues = rawBuffer.prepareForFlush();
             var timestamps = blockFactory.newLongBlockBuilder(positionCount * 2);
@@ -402,24 +399,20 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
 
     @Override
     public void close() {
-        Releasables.close(reducedStates, rawBuffer, localCircuitBreakerService);
+        Releasables.close(rawBuffer, reducedBuffer, localCircuitBreakerService);
     }
 
     void flushRawBuffers() {
         if (rawBuffer.minGroupId > rawBuffer.maxGroupId) {
             return;
         }
-        reducedStates = bigArrays.grow(reducedStates, rawBuffer.maxGroupId + 1);
         try (var flushQueues = rawBuffer.prepareForFlush()) {
             for (int groupId = rawBuffer.minGroupId; groupId <= rawBuffer.maxGroupId; groupId++) {
                 var flushQueue = flushQueues.getFlushQueue(groupId);
                 if (flushQueue != null) {
-                    ReducedState state = reducedStates.get(groupId);
-                    if (state == null) {
-                        state = new ReducedState();
-                        reducedStates.set(groupId, state);
-                    }
+                    var state = new ReducedState();
                     flushGroup(state, rawBuffer, flushQueue);
+                    reducedBuffer.appendState(groupId, state);
                 }
             }
         }
@@ -560,10 +553,115 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
         state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(top.end - 1), prevValue));
     }
 
+    static final class IntReducedBuffer extends ReducedBuffer {
+        private IntArray values;
+
+        IntReducedBuffer(BigArrays bigArrays) {
+            super(bigArrays);
+            boolean success = false;
+            try {
+                this.values = bigArrays.newIntArray(512, false);
+                success = true;
+            } finally {
+                if (success == false) {
+                    close();
+                }
+            }
+        }
+
+        void appendState(int groupId, ReducedState state) {
+            int numIntervals = state.intervals.length;
+            int currentSize = this.count;
+            prepareForNewIntervals(groupId, numIntervals, state.samples, state.resets);
+            this.timestamps = bigArrays.grow(timestamps, currentSize + numIntervals * 2);
+            this.values = bigArrays.grow(values, currentSize + numIntervals * 2);
+            for (int i = 0; i < numIntervals; i += 2) {
+                long i1 = (i + currentSize) * 2;
+                long i2 = i1 + 1;
+                timestamps.set(i1, state.intervals[i].t1);
+                values.set(i1, state.intervals[i].v1);
+                timestamps.set(i2, state.intervals[i].t2);
+                values.set(i2, state.intervals[i].v2);
+            }
+        }
+
+        void appendIntervalsFromBlocks(int groupId, long sampleCount, double reset, int valuePosition, LongBlock ts, IntBlock vs) {
+            int tsFirst = ts.getFirstValueIndex(valuePosition);
+            int vsFirst = vs.getFirstValueIndex(valuePosition);
+            int numValues = ts.getValueCount(valuePosition);
+            assert numValues % 2 == 0 : "expected even number of values for intervals, got " + count + " in " + ts;
+            int currentSize = this.count;
+            int numIntervals = numValues / 2;
+            prepareForNewIntervals(groupId, numIntervals, sampleCount, reset);
+            this.timestamps = bigArrays.grow(timestamps, currentSize + numValues);
+            this.values = bigArrays.grow(values, currentSize + numValues);
+            for (int i = 0; i < numIntervals; i++) {
+                long dst = (i + currentSize) * 2;
+                int tIndex = tsFirst + i * 2;
+                int vIndex = vsFirst + i * 2;
+                timestamps.set(dst, ts.getLong(tIndex));
+                values.set(dst, vs.getInt(vIndex));
+                timestamps.set(dst + 1, ts.getLong(tIndex + 1));
+                values.set(dst + 1, vs.getInt(vIndex + 1));
+            }
+        }
+
+        private ReducedState reducedStateFromIndex(int index) {
+            ReducedState state = new ReducedState();
+            state.samples = samples.get(index);
+            state.resets = resets.get(index);
+            Interval interval = new Interval(
+                timestamps.get(index * 2),
+                values.get(index * 2),
+                timestamps.get(index * 2 + 1),
+                values.get(index * 2 + 1)
+            );
+            state.appendInterval(interval);
+            return state;
+        }
+
+        ReducedState getReducedState(int groupId) {
+            if (groupId > maxGroupId || groupId < minGroupId) {
+                return null;
+            }
+            int groupIndex = groupId - minGroupId;
+            if (groupOffsets == null) {
+                return reducedStateFromIndex(groupIndex);
+            }
+            int endOffset = runningOffsets[groupIndex];
+            int startOffset = groupIndex == 0 ? 0 : runningOffsets[groupIndex - 1];
+            int numOffsets = endOffset - startOffset;
+            if (numOffsets == 0) {
+                return null;
+            }
+            int startIndex = groupOffsets.get(startOffset);
+            var state = reducedStateFromIndex(startIndex);
+            for (int i = startOffset + 1; i < endOffset; i++) {
+                var index = groupOffsets.get(i);
+                Interval interval = new Interval(
+                    timestamps.get(index * 2),
+                    values.get(index * 2),
+                    timestamps.get(index * 2 + 1),
+                    values.get(index * 2 + 1)
+                );
+                state.appendInterval(interval);
+                state.samples += samples.get(index);
+                state.resets += resets.get(index);
+            }
+            return state;
+        }
+
+        @Override
+        public void close() {
+            Releasables.close(values, super::close);
+        }
+    }
+
     @Override
     public void evaluateFinal(Block[] blocks, int offset, IntVector selected, GroupingAggregatorEvaluationContext evalContext) {
         BlockFactory blockFactory = driverContext.blockFactory();
         int positionCount = selected.getPositionCount();
+        reducedBuffer.prepareForFlush();
         try (
             var flushQueues = rawBuffer.prepareForFlush();
             var rates = blockFactory.newDoubleBlockBuilder(positionCount);
@@ -575,6 +673,7 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
                 if (state != null) {
                     flushedStates.put(group, state);
                     // combine intervals for the final evaluation
+                    // inline compact to the first entry only
                     Interval[] intervals = state.intervals;
                     ArrayUtil.timSort(intervals);
                     for (int i = 1; i < intervals.length; i++) {
@@ -610,7 +709,7 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
     }
 
     ReducedState flushAndCombineState(FlushQueues flushQueues, int groupId) {
-        ReducedState state = groupId < reducedStates.size() ? reducedStates.getAndSet(groupId, null) : null;
+        ReducedState state = reducedBuffer.getReducedState(groupId);
         var flushQueue = flushQueues.getFlushQueue(groupId);
         if (flushQueue != null) {
             if (state == null) {
@@ -647,24 +746,6 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
             int currentSize = intervals.length;
             this.intervals = ArrayUtil.growExact(intervals, currentSize + 1);
             this.intervals[currentSize] = interval;
-        }
-
-        void appendIntervalsFromBlocks(LongBlock ts, IntBlock vs, int position) {
-            int tsFirst = ts.getFirstValueIndex(position);
-            int vsFirst = vs.getFirstValueIndex(position);
-            int count = ts.getValueCount(position);
-            assert count % 2 == 0 : "expected even number of values for intervals, got " + count + " in " + ts;
-            int currentSize = intervals.length;
-            intervals = ArrayUtil.growExact(intervals, currentSize + (count / 2));
-            for (int i = 0; i < count; i += 2) {
-                Interval interval = new Interval(
-                    ts.getLong(tsFirst + i),
-                    vs.getInt(vsFirst + i),
-                    ts.getLong(tsFirst + i + 1),
-                    vs.getInt(vsFirst + i + 1)
-                );
-                intervals[currentSize++] = interval;
-            }
         }
     }
 
