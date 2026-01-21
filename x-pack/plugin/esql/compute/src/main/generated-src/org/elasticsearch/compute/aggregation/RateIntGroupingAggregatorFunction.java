@@ -107,9 +107,9 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
         boolean success = false;
         try {
             this.localCircuitBreakerService = new LocalCircuitBreaker.SingletonService(
-                driverContext.bigArrays().breakerService(),
-                driverContext.localBreakerSettings()
-            );
+                             driverContext.bigArrays().breakerService(),
+                             driverContext.localBreakerSettings()
+                         );
             this.bigArrays = driverContext.bigArrays().withBreakerService(localCircuitBreakerService);
             this.rawBuffer = new IntRawBuffer(this.bigArrays);
             this.reducedBuffer = new IntReducedBuffer(this.bigArrays);
@@ -308,14 +308,7 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
                 continue;
             }
             int groupId = groups.getInt(groupPosition);
-            reducedBuffer.appendIntervalsFromBlocks(
-                groupId,
-                sampleCount,
-                resets.getDouble(valuePosition),
-                valuePosition,
-                timestamps,
-                values
-            );
+            reducedBuffer.appendIntervalsFromBlocks(groupId, sampleCount, resets.getDouble(valuePosition), valuePosition, timestamps, values);
         }
     }
 
@@ -342,14 +335,7 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
             int lastGroup = firstGroup + groups.getValueCount(groupPosition);
             for (int g = firstGroup; g < lastGroup; g++) {
                 int groupId = groups.getInt(g);
-                reducedBuffer.appendIntervalsFromBlocks(
-                    groupId,
-                    sampleCount,
-                    resets.getDouble(valuePosition),
-                    valuePosition,
-                    timestamps,
-                    values
-                );
+                reducedBuffer.appendIntervalsFromBlocks(groupId, sampleCount, resets.getDouble(valuePosition), valuePosition, timestamps, values);
             }
         }
     }
@@ -573,8 +559,8 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
             int numIntervals = state.intervals.length;
             int currentSize = this.count;
             prepareForNewIntervals(groupId, numIntervals, state.samples, state.resets);
-            this.timestamps = bigArrays.grow(timestamps, currentSize + numIntervals * 2);
-            this.values = bigArrays.grow(values, currentSize + numIntervals * 2);
+            this.timestamps = bigArrays.grow(timestamps, (currentSize + numIntervals) * 2);
+            this.values = bigArrays.grow(values, (currentSize + numIntervals) * 2);
             for (int i = 0; i < numIntervals; i += 2) {
                 long i1 = (i + currentSize) * 2;
                 long i2 = i1 + 1;
@@ -593,8 +579,8 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
             int currentSize = this.count;
             int numIntervals = numValues / 2;
             prepareForNewIntervals(groupId, numIntervals, sampleCount, reset);
-            this.timestamps = bigArrays.grow(timestamps, currentSize + numValues);
-            this.values = bigArrays.grow(values, currentSize + numValues);
+            this.timestamps = bigArrays.grow(timestamps, (currentSize + numIntervals) * 2);
+            this.values = bigArrays.grow(values, (currentSize + numIntervals) * 2);
             for (int i = 0; i < numIntervals; i++) {
                 long dst = (i + currentSize) * 2;
                 int tIndex = tsFirst + i * 2;
@@ -638,7 +624,7 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
             var state = reducedStateFromIndex(startIndex);
             for (int i = startOffset + 1; i < endOffset; i++) {
                 var index = groupOffsets.get(i);
-                Interval interval = new Interval(
+                    Interval interval = new Interval(
                     timestamps.get(index * 2),
                     values.get(index * 2),
                     timestamps.get(index * 2 + 1),

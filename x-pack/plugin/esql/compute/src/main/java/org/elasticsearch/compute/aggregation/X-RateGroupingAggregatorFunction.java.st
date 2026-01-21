@@ -559,8 +559,8 @@ public final class Rate$Type$GroupingAggregatorFunction extends AbstractRateGrou
             int numIntervals = state.intervals.length;
             int currentSize = this.count;
             prepareForNewIntervals(groupId, numIntervals, state.samples, state.resets);
-            this.timestamps = bigArrays.grow(timestamps, currentSize + numIntervals * 2);
-            this.values = bigArrays.grow(values, currentSize + numIntervals * 2);
+            this.timestamps = bigArrays.grow(timestamps, (currentSize + numIntervals) * 2);
+            this.values = bigArrays.grow(values, (currentSize + numIntervals) * 2);
             for (int i = 0; i < numIntervals; i += 2) {
                 long i1 = (i + currentSize) * 2;
                 long i2 = i1 + 1;
@@ -579,8 +579,8 @@ public final class Rate$Type$GroupingAggregatorFunction extends AbstractRateGrou
             int currentSize = this.count;
             int numIntervals = numValues / 2;
             prepareForNewIntervals(groupId, numIntervals, sampleCount, reset);
-            this.timestamps = bigArrays.grow(timestamps, currentSize + numValues);
-            this.values = bigArrays.grow(values, currentSize + numValues);
+            this.timestamps = bigArrays.grow(timestamps, (currentSize + numIntervals) * 2);
+            this.values = bigArrays.grow(values, (currentSize + numIntervals) * 2);
             for (int i = 0; i < numIntervals; i++) {
                 long dst = (i + currentSize) * 2;
                 int tIndex = tsFirst + i * 2;
