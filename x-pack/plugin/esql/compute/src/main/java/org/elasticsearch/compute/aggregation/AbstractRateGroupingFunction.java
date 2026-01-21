@@ -263,10 +263,8 @@ class AbstractRateGroupingFunction {
         }
 
         void prepareForFlush() {
+            frozen = true;
             if (minGroupId > maxGroupId) {
-                return;
-            }
-            if (groupIds == null) {
                 return;
             }
             runningOffsets = new int[maxGroupId - minGroupId + 1];
