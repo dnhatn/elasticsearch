@@ -41,7 +41,7 @@ public final class LongIntBlockHash extends BlockHash {
         this.intChannel = intChannel;
         this.reverseOutput = reverseOutput;
         this.emitBatchSize = emitBatchSize;
-        this.directHash = new LongLongHash(PageCacheRecycler.LONG_PAGE_SIZE, blockFactory.bigArrays());
+        this.directHash = new LongLongHash(PageCacheRecycler.PAGE_SIZE_IN_BYTES, blockFactory.bigArrays());
     }
 
     @Override
