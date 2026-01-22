@@ -69,8 +69,8 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
     }
 
     @Override
-    protected boolean shouldFlush(int allCollected, int collectedThisBatch) throws IOException {
-        return collectedThisBatch == 0 && allCollected >= CHUNK_SIZE;
+    protected boolean shouldFlushOnNotFoundRange() throws IOException {
+        return currentPagePos >= 16;
     }
 
     @Override

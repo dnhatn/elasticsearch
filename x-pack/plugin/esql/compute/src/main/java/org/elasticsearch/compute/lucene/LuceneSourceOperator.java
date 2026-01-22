@@ -50,7 +50,7 @@ import static org.elasticsearch.compute.lucene.LuceneSliceQueue.PartitioningStra
 public class LuceneSourceOperator extends LuceneOperator {
     private static final Logger log = LogManager.getLogger(LuceneSourceOperator.class);
 
-    private int currentPagePos = 0;
+    protected int currentPagePos = 0;
     private int remainingDocs;
     private final Limiter limiter;
 
@@ -305,7 +305,6 @@ public class LuceneSourceOperator extends LuceneOperator {
                 return null;
             }
             final int remainingDocsStart = remainingDocs = limiter.remaining();
-            int positionBeforeStart = scorer.position();
             try {
                 scorer.scoreNextRange(
                     leafCollector,
@@ -326,7 +325,7 @@ public class LuceneSourceOperator extends LuceneOperator {
             if (currentPagePos >= minPageSize
                 || scorer.isDone()
                 || (remainingDocs = limiter.remaining()) == 0
-                || shouldFlush(currentPagePos, collectedDocs)) {
+                || (collectedDocs == 0 && shouldFlushOnNotFoundRange())) {
                 IntVector shard = null;
                 IntVector leaf = null;
                 IntVector docs = null;
@@ -406,7 +405,10 @@ public class LuceneSourceOperator extends LuceneOperator {
         }
     }
 
-    protected boolean shouldFlush(int allCollected, int collectedThisBatch) throws IOException {
+    // we should call after several empty collections to flush the page
+    // which indicate that the current slice is far away from the next one
+    // batching them together might not help
+    protected boolean shouldFlushOnNotFoundRange() throws IOException {
         return false;
     }
 
