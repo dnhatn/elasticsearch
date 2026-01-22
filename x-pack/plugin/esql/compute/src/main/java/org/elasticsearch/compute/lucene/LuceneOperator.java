@@ -155,7 +155,7 @@ public abstract class LuceneOperator extends SourceOperator {
 
     protected void additionalClose() { /* Override this method to add any additional cleanup logic if needed */ }
 
-    LuceneScorer getCurrentOrLoadNextScorer() {
+    LuceneScorer getCurrentOrLoadNextScorer() throws IOException {
         while (currentScorer == null || currentScorer.isDone()) {
             if (currentSlice == null || sliceIndex >= currentSlice.numLeaves()) {
                 sliceIndex = 0;

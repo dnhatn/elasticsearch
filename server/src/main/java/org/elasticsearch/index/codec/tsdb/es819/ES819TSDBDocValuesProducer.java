@@ -49,6 +49,7 @@ import org.elasticsearch.core.Assertions;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.codec.tsdb.BinaryDVCompressionMode;
+import org.elasticsearch.index.codec.tsdb.SortedOrdinalReader;
 import org.elasticsearch.index.codec.tsdb.TSDBDocValuesEncoder;
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.blockloader.docvalues.BlockDocValuesReader;
@@ -902,12 +903,13 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                             while (docIndex < docCount) {
                                 int ord = Math.toIntExact(ordinalReader.readValueAndAdvance(docs.get(docIndex)));
                                 // append all docs of the last range without checking
-                                if (lastDoc < ordinalReader.rangeEndExclusive) {
+                                long rangeEndExclusive = ordinalReader.getRangeEndExclusive();
+                                if (lastDoc < rangeEndExclusive) {
                                     builder.appendOrds(ord, docCount - docIndex);
                                     break;
                                 }
                                 final int startIndex = docIndex;
-                                while (docIndex < docCount && docs.get(docIndex) < ordinalReader.rangeEndExclusive) {
+                                while (docIndex < docCount && docs.get(docIndex) < rangeEndExclusive) {
                                     ++docIndex;
                                 }
                                 builder.appendOrds(ord, docIndex - startIndex);
@@ -918,10 +920,18 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 }
                 return null;
             }
+
+            @Override
+            public SortedOrdinalReader getOrdinalReader() {
+                if (ords instanceof BaseDenseNumericValues denseOrds) {
+                    return denseOrds.sortedOrdinalReader();
+                }
+                return null;
+            }
         };
     }
 
-    abstract class BaseSortedDocValues extends SortedDocValues implements BlockLoader.OptionalColumnAtATimeReader {
+    abstract class BaseSortedDocValues extends SortedDocValues implements BlockLoader.OptionalColumnAtATimeReader, SortedOrdinalReader.Accessor {
 
         final SortedEntry entry;
         final TermsEnum termsEnum;
@@ -1758,49 +1768,6 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
     @FunctionalInterface
     private interface NumericValues {
         long advance(long index) throws IOException;
-    }
-
-    static final class SortedOrdinalReader {
-        final long maxOrd;
-        final DirectMonotonicReader startDocs;
-        private long currentIndex = -1;
-        private long rangeEndExclusive = -1;
-
-        SortedOrdinalReader(long maxOrd, DirectMonotonicReader startDocs) {
-            this.maxOrd = maxOrd;
-            this.startDocs = startDocs;
-        }
-
-        long readValueAndAdvance(int doc) {
-            if (doc < rangeEndExclusive) {
-                return currentIndex;
-            }
-            // move to the next range
-            if (doc == rangeEndExclusive) {
-                currentIndex++;
-            } else {
-                currentIndex = searchRange(doc);
-            }
-            rangeEndExclusive = startDocs.get(currentIndex + 1);
-            return currentIndex;
-        }
-
-        private long searchRange(int doc) {
-            long index = startDocs.binarySearch(currentIndex + 1, maxOrd, doc);
-            if (index < 0) {
-                index = -2 - index;
-            }
-            assert index < maxOrd : "invalid range " + index + " for doc " + doc + " in maxOrd " + maxOrd;
-            return index;
-        }
-
-        long lookAheadValue(int targetDoc) {
-            if (targetDoc < rangeEndExclusive) {
-                return currentIndex;
-            } else {
-                return searchRange(targetDoc);
-            }
-        }
     }
 
     private NumericDocValues getNumeric(NumericEntry entry, long maxOrd) throws IOException {

@@ -7,12 +7,14 @@
 
 package org.elasticsearch.compute.lucene;
 
+import org.apache.lucene.index.LeafReaderContext;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Limiter;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.RefCounted;
+import org.elasticsearch.index.codec.tsdb.SortedOrdinalReader;
 
 import java.io.IOException;
 import java.util.List;
@@ -57,6 +59,10 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
         }
     }
 
+    private SortedOrdinalReader tsid;
+    private LeafReaderContext lastLeaf;
+    private int nextDocEnd;
+
     public TimeSeriesSourceOperator(
         IndexedByShardId<? extends RefCounted> shardContextCounters,
         BlockFactory blockFactory,
@@ -69,19 +75,41 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
     }
 
     @Override
-    protected boolean shouldFlushAfterBatch(int fromDoc, int toDoc, int batchSize) throws IOException {
-        // TODO: maybe check for the ordinal?
-        boolean forced = (toDoc - fromDoc) > batchSize + CHUNK_SIZE && currentPagePos >= CHUNK_SIZE;
-        if (forced) {
-            System.err.println("--> force flush fromDoc=" + fromDoc + " toDoc=" + toDoc + " batchSize=" + batchSize + " currentPagePos=" + currentPagePos);
+    LuceneScorer getCurrentOrLoadNextScorer() throws IOException {
+        LuceneScorer scorer = super.getCurrentOrLoadNextScorer();
+        if (scorer != null) {
+            if (scorer.leafReaderContext() != lastLeaf) {
+                lastLeaf = scorer.leafReaderContext();
+                if(lastLeaf.reader().getSortedDocValues("_tsid") instanceof SortedOrdinalReader.Accessor a){
+                    tsid = a.getOrdinalReader();
+                } else {
+                    tsid = null;
+                }
+            }
         }
-        return forced;
+        return scorer;
     }
 
     @Override
     protected int numMetadataBlocks() {
         // See EsQueryExec#TIME_SERIES_SOURCE_FIELDS
         return 2;
+    }
+
+    protected int nextBatchSize(int from, int numDocs) {
+        if (tsid != null) {
+            nextDocEnd = Math.toIntExact(tsid.getRangeEndExclusive(from));
+            long nextDoc = Math.min(nextDocEnd, from + numDocs);
+            return Math.toIntExact(nextDoc - from);
+        } else {
+            nextDocEnd = Integer.MAX_VALUE;
+        }
+        return super.nextBatchSize(from, numDocs);
+    }
+
+    @Override
+    protected boolean shouldFlushAfterBatch(int positionEnd) throws IOException {
+        return positionEnd > nextDocEnd;
     }
 
     @Override
