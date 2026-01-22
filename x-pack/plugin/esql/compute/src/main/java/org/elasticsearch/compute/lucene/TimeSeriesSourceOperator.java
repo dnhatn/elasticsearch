@@ -71,8 +71,8 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
     @Override
     protected boolean shouldFlushOnNotFoundRange(int fromDoc, int toDoc) throws IOException {
         int distance = toDoc - fromDoc;
-        if(distance >= MAX_TARGET_PAGE_SIZE && currentPagePos >= 16) {
-            System.err.println("--> force flushing with page_size " + currentPagePos);
+        if(currentPagePos >= 8) {
+            System.err.println("--> force flushing with page_size " + currentPagePos + " range " + distance);
             return true;
         }
         return false;
