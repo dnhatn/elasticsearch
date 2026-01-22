@@ -11,6 +11,7 @@ import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
 import org.elasticsearch.common.util.LongLongHash;
+import org.elasticsearch.common.util.LongLongHashTable;
 import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
 import org.elasticsearch.compute.data.Block;
@@ -32,7 +33,7 @@ public final class LongIntBlockHash extends BlockHash {
     private final int intChannel;
     private final boolean reverseOutput;
     private final int emitBatchSize;
-    private LongLongHash directHash;
+    private LongLongHashTable directHash;
     private PackedValuesBlockHash packedHash;
 
     LongIntBlockHash(BlockFactory blockFactory, int longChannel, int intChannel, boolean reverseOutput, int emitBatchSize) {
@@ -41,7 +42,7 @@ public final class LongIntBlockHash extends BlockHash {
         this.intChannel = intChannel;
         this.reverseOutput = reverseOutput;
         this.emitBatchSize = emitBatchSize;
-        this.directHash = new LongLongHash(PageCacheRecycler.LONG_PAGE_SIZE, blockFactory.bigArrays());
+        this.directHash =  HashImplFactory.newLongLongHash(blockFactory);
     }
 
     @Override
@@ -64,11 +65,11 @@ public final class LongIntBlockHash extends BlockHash {
         if (packedHash == null) {
             switchToPackedHash();
         }
-        assert packedHash != null;
         packedHash.add(page, addInput);
     }
 
     private void switchToPackedHash() {
+        // TODO:
         // copy keys from direct to packed
         // allocate 1 byte for null, 8 bytes, and 4 bytes
         // then fill all values
@@ -93,11 +94,18 @@ public final class LongIntBlockHash extends BlockHash {
 
     @Override
     public ReleasableIterator<IntBlock> lookup(Page page, ByteSizeValue targetBlockSize) {
+        if (packedHash != null) {
+            return packedHash.lookup(page, targetBlockSize);
+        }
+        // TODO:
         throw new UnsupportedOperationException("TODO");
     }
 
     @Override
     public Block[] getKeys() {
+        if (packedHash != null) {
+            return packedHash.getKeys();
+        }
         LongVector k1 = null;
         IntVector k2 = null;
         int positions = (int) directHash.size();
@@ -127,22 +135,30 @@ public final class LongIntBlockHash extends BlockHash {
 
     @Override
     public BitArray seenGroupIds(BigArrays bigArrays) {
-        // TODO: pick one
+        if (packedHash != null) {
+            return packedHash.seenGroupIds(bigArrays);
+        }
         return new Range(0, Math.toIntExact(directHash.size())).seenGroupIds(bigArrays);
     }
 
     @Override
     public IntVector nonEmpty() {
+        if (packedHash != null) {
+            return packedHash.nonEmpty();
+        }
         return IntVector.range(0, Math.toIntExact(directHash.size()), blockFactory);
     }
 
     @Override
     public String toString() {
-        int size = directHash != null ? Math.toIntExact(directHash.size()) : 0;
-        int memoryUsed = 0;
-        return "BytesRefLongBlockHash{keys=[BytesRefKey[channel="
+        if (packedHash != null) {
+            return packedHash.toString();
+        }
+        long size = directHash.size();
+        long memoryUsed = directHash.size() * (3 * Long.BYTES);
+        return "LongIntBlockHash{keys=[long[channel="
             + longChannel
-            + "], LongKey[channel="
+            + "], int[channel="
             + intChannel
             + "]], entries="
             + size
