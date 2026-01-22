@@ -7,7 +7,6 @@
 
 package org.elasticsearch.compute.lucene;
 
-import org.elasticsearch.common.recycler.Recycler;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.operator.DriverContext;
@@ -70,9 +69,9 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
     }
 
     @Override
-    protected boolean shouldFlushOnNotFoundRange(int fromDoc, int toDoc) throws IOException {
-        int distance = toDoc - fromDoc;
-        return distance >= MAX_TARGET_PAGE_SIZE * 2 && currentPagePos >= CHUNK_SIZE;
+    protected boolean shouldFlushAfterBatch(int fromDoc, int toDoc) throws IOException {
+        // TODO: maybe check for the ordinal?
+        return (toDoc - fromDoc) >= CHUNK_SIZE * 2 && currentPagePos >= CHUNK_SIZE;
     }
 
     @Override
