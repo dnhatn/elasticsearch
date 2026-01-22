@@ -306,14 +306,16 @@ public class LuceneSourceOperator extends LuceneOperator {
             }
             final int remainingDocsStart = remainingDocs = limiter.remaining();
             int positionStart = scorer.position();
+            // Note: if (maxPageSize - currentPagePos) is a small "remaining" interval, this could lead to slow collection with a
+            // highly selective filter. Having a large "enough" difference between max- and minPageSize (and thus currentPagePos)
+            // alleviates this issue.
+            int batchSize = maxPageSize - currentPagePos;
             try {
+                // over
                 scorer.scoreNextRange(
                     leafCollector,
                     scorer.leafReaderContext().reader().getLiveDocs(),
-                    // Note: if (maxPageSize - currentPagePos) is a small "remaining" interval, this could lead to slow collection with a
-                    // highly selective filter. Having a large "enough" difference between max- and minPageSize (and thus currentPagePos)
-                    // alleviates this issue.
-                    maxPageSize - currentPagePos
+                    batchSize
                 );
             } catch (CollectionTerminatedException ex) {
                 // The leaf collector terminated the execution
@@ -326,7 +328,7 @@ public class LuceneSourceOperator extends LuceneOperator {
             if (currentPagePos >= minPageSize
                 || scorer.isDone()
                 || (remainingDocs = limiter.remaining()) == 0
-                || shouldFlushAfterBatch(positionStart, scorer.position())) {
+                || shouldFlushAfterBatch(positionStart, scorer.position(), batchSize)) {
                 IntVector shard = null;
                 IntVector leaf = null;
                 IntVector docs = null;
@@ -409,7 +411,7 @@ public class LuceneSourceOperator extends LuceneOperator {
     // we should call after several empty collections to flush the page
     // which indicate that the current slice is far away from the next one
     // batching them together might not help
-    protected boolean shouldFlushAfterBatch(int positionStart, int positionEnd) throws IOException {
+    protected boolean shouldFlushAfterBatch(int positionStart, int positionEnd, int denseDistance) throws IOException {
         return false;
     }
 

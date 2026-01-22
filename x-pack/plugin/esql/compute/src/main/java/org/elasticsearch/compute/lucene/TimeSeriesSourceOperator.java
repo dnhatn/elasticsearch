@@ -69,9 +69,9 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
     }
 
     @Override
-    protected boolean shouldFlushAfterBatch(int fromDoc, int toDoc) throws IOException {
+    protected boolean shouldFlushAfterBatch(int fromDoc, int toDoc, int batchSize) throws IOException {
         // TODO: maybe check for the ordinal?
-        return (toDoc - fromDoc) >= CHUNK_SIZE * 2 && currentPagePos >= CHUNK_SIZE;
+        return (toDoc - fromDoc) > batchSize + CHUNK_SIZE && currentPagePos >= CHUNK_SIZE;
     }
 
     @Override
