@@ -134,7 +134,7 @@ public final class QueryPragmas implements Writeable {
     }
 
     public int taskConcurrency() {
-        return 1; // TASK_CONCURRENCY.get(settings);
+        return TASK_CONCURRENCY.get(settings);
     }
 
     /**

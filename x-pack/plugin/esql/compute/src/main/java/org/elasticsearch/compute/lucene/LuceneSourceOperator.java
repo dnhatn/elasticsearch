@@ -89,7 +89,7 @@ public class LuceneSourceOperator extends LuceneOperator {
             this.refCounteds = shardContexts;
             this.maxPageSize = maxPageSize;
             // TODO: use a single limiter for multiple stage execution
-            this.limiter = limit == NO_LIMIT ? Limiter.NO_LIMIT : new Limiter(100_000);
+            this.limiter = limit == NO_LIMIT ? Limiter.NO_LIMIT : new Limiter(limit);
         }
 
         @Override

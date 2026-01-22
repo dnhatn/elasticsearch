@@ -101,7 +101,6 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
             nextDocEnd = Math.toIntExact(tsid.getRangeEndExclusive(from));
             long nextDoc = Math.min(nextDocEnd, from + numDocs);
             int newSize = Math.toIntExact(nextDoc - from);
-            System.err.println("--> next batch size from " + from + " numDocs " + numDocs + " nextDocEnd " + nextDocEnd + " newSize " + newSize);
             return newSize;
         } else {
             nextDocEnd = Integer.MAX_VALUE;
@@ -111,9 +110,7 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
 
     @Override
     protected boolean shouldFlushAfterBatch(int positionEnd) throws IOException {
-        boolean shouldFlush = currentPagePos >= CHUNK_SIZE && positionEnd > nextDocEnd;
-        System.err.println("--> should flush after batch posEnd " + positionEnd + " nextDocEnd " + nextDocEnd + " currentPagePos " + currentPagePos + " => " + shouldFlush);
-        return shouldFlush;
+        return currentPagePos >= CHUNK_SIZE && positionEnd >= nextDocEnd;
     }
 
     @Override
