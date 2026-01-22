@@ -42,7 +42,7 @@ public final class LongIntBlockHash extends BlockHash {
         this.reverseOutput = reverseOutput;
         this.emitBatchSize = emitBatchSize;
         // requires 8OM
-        this.directHash = new LongLongHash(10_000_000L, blockFactory.bigArrays());
+        this.directHash = new LongLongHash(1_000_000L, blockFactory.bigArrays());
     }
 
     @Override
