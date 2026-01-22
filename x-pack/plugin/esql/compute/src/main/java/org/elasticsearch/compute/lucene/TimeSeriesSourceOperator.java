@@ -7,6 +7,7 @@
 
 package org.elasticsearch.compute.lucene;
 
+import org.elasticsearch.common.recycler.Recycler;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.operator.DriverContext;
@@ -71,11 +72,7 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
     @Override
     protected boolean shouldFlushOnNotFoundRange(int fromDoc, int toDoc) throws IOException {
         int distance = toDoc - fromDoc;
-        if(currentPagePos >= 8) {
-            System.err.println("--> force flushing with page_size " + currentPagePos + " range " + distance + " min_page_size " + minPageSize);
-            return true;
-        }
-        return false;
+        return distance >= MAX_TARGET_PAGE_SIZE * 2 && currentPagePos >= CHUNK_SIZE;
     }
 
     @Override
