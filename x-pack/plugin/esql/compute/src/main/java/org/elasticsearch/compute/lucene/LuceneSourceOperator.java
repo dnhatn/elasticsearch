@@ -57,7 +57,7 @@ public class LuceneSourceOperator extends LuceneOperator {
     private IntVector.Builder docsBuilder;
     private DoubleVector.Builder scoreBuilder;
     private final LeafCollector leafCollector;
-    private final int minPageSize;
+    protected final int minPageSize;
 
     public static class Factory extends LuceneOperator.Factory {
         protected final IndexedByShardId<? extends RefCounted> refCounteds;
