@@ -9,7 +9,6 @@ package org.elasticsearch.compute.aggregation;
 
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.LongArray;
-import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongBlock;
@@ -38,7 +37,7 @@ final class LongArrayState extends AbstractArrayState implements GroupingAggrega
 
     LongArrayState(BigArrays bigArrays, long init) {
         super(bigArrays);
-        this.values = bigArrays.newLongArray(PageCacheRecycler.LONG_PAGE_SIZE, false);
+        this.values = bigArrays.newLongArray(1, false);
         this.values.set(0, init);
         this.init = init;
     }

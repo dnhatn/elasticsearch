@@ -9,7 +9,6 @@ package org.elasticsearch.compute.aggregation;
 
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
-import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BooleanBlock;
 import org.elasticsearch.compute.data.IntVector;
@@ -39,7 +38,7 @@ final class BooleanArrayState extends AbstractArrayState implements GroupingAggr
 
     BooleanArrayState(BigArrays bigArrays, boolean init) {
         super(bigArrays);
-        this.values = new BitArray(PageCacheRecycler.BYTE_PAGE_SIZE * Byte.SIZE, bigArrays);
+        this.values = new BitArray(1, bigArrays);
         this.size = 1;
         this.values.set(0, init);
         this.init = init;
