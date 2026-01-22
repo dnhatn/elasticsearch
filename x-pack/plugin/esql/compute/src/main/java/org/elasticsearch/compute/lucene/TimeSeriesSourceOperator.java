@@ -14,6 +14,7 @@ import org.elasticsearch.compute.operator.Limiter;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.RefCounted;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.function.Function;
 
@@ -65,6 +66,11 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
         Limiter limiter
     ) {
         super(shardContextCounters, blockFactory, maxPageSize, sliceQueue, limit, limiter, false);
+    }
+
+    @Override
+    protected boolean shouldFlush(int allCollected, int collectedThisBatch) throws IOException {
+        return collectedThisBatch == 0 && allCollected >= CHUNK_SIZE;
     }
 
     @Override

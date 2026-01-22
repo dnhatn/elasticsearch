@@ -305,6 +305,7 @@ public class LuceneSourceOperator extends LuceneOperator {
                 return null;
             }
             final int remainingDocsStart = remainingDocs = limiter.remaining();
+            int positionBeforeStart = scorer.position();
             try {
                 scorer.scoreNextRange(
                     leafCollector,
@@ -322,7 +323,10 @@ public class LuceneSourceOperator extends LuceneOperator {
             final int collectedDocs = remainingDocsStart - remainingDocs;
             final int discardedDocs = collectedDocs - limiter.tryAccumulateHits(collectedDocs);
             Page page = null;
-            if (currentPagePos >= minPageSize || scorer.isDone() || (remainingDocs = limiter.remaining()) == 0) {
+            if (currentPagePos >= minPageSize
+                || scorer.isDone()
+                || (remainingDocs = limiter.remaining()) == 0
+                || shouldFlush(currentPagePos, collectedDocs)) {
                 IntVector shard = null;
                 IntVector leaf = null;
                 IntVector docs = null;
@@ -400,6 +404,10 @@ public class LuceneSourceOperator extends LuceneOperator {
             blocks[offset] = buildScoresVector(currentPagePos).asBlock();
             scoreBuilder = blockFactory.newDoubleVectorBuilder(Math.min(remainingDocs, maxPageSize));
         }
+    }
+
+    protected boolean shouldFlush(int allCollected, int collectedThisBatch) throws IOException {
+        return false;
     }
 
     @Override
