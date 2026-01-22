@@ -1,0 +1,153 @@
+/*
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
+ */
+
+package org.elasticsearch.compute.aggregation.blockhash;
+
+import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.util.BitArray;
+import org.elasticsearch.common.util.LongLongHash;
+import org.elasticsearch.common.util.PageCacheRecycler;
+import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
+import org.elasticsearch.compute.data.Block;
+import org.elasticsearch.compute.data.BlockFactory;
+import org.elasticsearch.compute.data.BytesRefBlock;
+import org.elasticsearch.compute.data.IntBlock;
+import org.elasticsearch.compute.data.IntVector;
+import org.elasticsearch.compute.data.LongBlock;
+import org.elasticsearch.compute.data.LongVector;
+import org.elasticsearch.compute.data.Page;
+import org.elasticsearch.core.ReleasableIterator;
+import org.elasticsearch.core.Releasables;
+
+/**
+ * Maps a {@link LongBlock} column paired with a {@link BytesRefBlock} column to group ids.
+ */
+public final class LongIntBlockHash extends BlockHash {
+    private final int longChannel;
+    private final int intChannel;
+    private final boolean reverseOutput;
+    private final int emitBatchSize;
+    private LongLongHash directHash;
+    private PackedValuesBlockHash packedHash;
+
+    LongIntBlockHash(BlockFactory blockFactory, int longChannel, int intChannel, boolean reverseOutput, int emitBatchSize) {
+        super(blockFactory);
+        this.longChannel = longChannel;
+        this.intChannel = intChannel;
+        this.reverseOutput = reverseOutput;
+        this.emitBatchSize = emitBatchSize;
+        this.directHash = new LongLongHash(PageCacheRecycler.LONG_PAGE_SIZE, blockFactory.bigArrays());
+    }
+
+    @Override
+    public void close() {
+        Releasables.close(directHash, packedHash);
+    }
+
+    @Override
+    public void add(Page page, GroupingAggregatorFunction.AddInput addInput) {
+        if (directHash != null) {
+            LongBlock longs = page.getBlock(longChannel);
+            IntBlock ints = page.getBlock(intChannel);
+            LongVector longsVector = longs.asVector();
+            IntVector intsVector = ints.asVector();
+            if (longsVector != null && intsVector != null) {
+                addDirect(longsVector, intsVector, addInput);
+                return;
+            }
+        }
+        if (packedHash == null) {
+            switchToPackedHash();
+        }
+        assert packedHash != null;
+        packedHash.add(page, addInput);
+    }
+
+    private void switchToPackedHash() {
+        // copy keys from direct to packed
+        // allocate 1 byte for null, 8 bytes, and 4 bytes
+        // then fill all values
+        // then add to packedHash
+        throw new AssertionError();
+    }
+
+    void addDirect(LongVector longs, IntVector ints, GroupingAggregatorFunction.AddInput addInput) {
+        int positionCount = longs.getPositionCount();
+        try (var ordsBuilder = blockFactory.newIntVectorFixedBuilder(positionCount)) {
+            for (int p = 0; p < positionCount; p++) {
+                long longKey = longs.getLong(p);
+                int intKey = ints.getInt(p);
+                long ord = hashOrdToGroup(directHash.add(longKey, intKey));
+                ordsBuilder.appendInt(Math.toIntExact(ord));
+            }
+            try (IntVector ords = ordsBuilder.build()) {
+                addInput.add(0, ords);
+            }
+        }
+    }
+
+    @Override
+    public ReleasableIterator<IntBlock> lookup(Page page, ByteSizeValue targetBlockSize) {
+        throw new UnsupportedOperationException("TODO");
+    }
+
+    @Override
+    public Block[] getKeys() {
+        LongVector k1 = null;
+        IntVector k2 = null;
+        int positions = (int) directHash.size();
+        try (
+            var longKeys = blockFactory.newLongVectorFixedBuilder(positions);
+            var intKeys = blockFactory.newIntVectorFixedBuilder(positions)
+        ) {
+            for (int id = 0; id < positions; id++) {
+                longKeys.appendLong(id, directHash.getKey1(id));
+                intKeys.appendInt(id, Math.toIntExact(directHash.getKey2(id)));
+            }
+            k1 = longKeys.build();
+            k2 = intKeys.build();
+            final Block[] blocks;
+            if (reverseOutput) {
+                blocks = new Block[] { k2.asBlock(), k1.asBlock() };
+            } else {
+                blocks = new Block[] { k1.asBlock(), k2.asBlock() };
+            }
+            k1 = null;
+            k2 = null;
+            return blocks;
+        } finally {
+            Releasables.close(k1, k2);
+        }
+    }
+
+    @Override
+    public BitArray seenGroupIds(BigArrays bigArrays) {
+        // TODO: pick one
+        return new Range(0, Math.toIntExact(directHash.size())).seenGroupIds(bigArrays);
+    }
+
+    @Override
+    public IntVector nonEmpty() {
+        return IntVector.range(0, Math.toIntExact(directHash.size()), blockFactory);
+    }
+
+    @Override
+    public String toString() {
+        int size = directHash != null ? Math.toIntExact(directHash.size()) : 0;
+        int memoryUsed = 0;
+        return "BytesRefLongBlockHash{keys=[BytesRefKey[channel="
+            + longChannel
+            + "], LongKey[channel="
+            + intChannel
+            + "]], entries="
+            + size
+            + ", size="
+            + memoryUsed
+            + "b}";
+    }
+}
