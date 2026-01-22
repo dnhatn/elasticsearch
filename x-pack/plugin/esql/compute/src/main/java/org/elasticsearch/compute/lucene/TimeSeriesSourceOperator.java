@@ -109,7 +109,7 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
 
     @Override
     protected boolean shouldFlushAfterBatch(int positionEnd) throws IOException {
-        return positionEnd > nextDocEnd;
+        return currentPagePos >= CHUNK_SIZE && positionEnd > nextDocEnd;
     }
 
     @Override
