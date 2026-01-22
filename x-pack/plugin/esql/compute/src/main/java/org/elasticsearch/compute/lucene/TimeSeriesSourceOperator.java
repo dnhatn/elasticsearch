@@ -71,7 +71,11 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
     @Override
     protected boolean shouldFlushAfterBatch(int fromDoc, int toDoc, int batchSize) throws IOException {
         // TODO: maybe check for the ordinal?
-        return (toDoc - fromDoc) > batchSize + CHUNK_SIZE && currentPagePos >= CHUNK_SIZE;
+        boolean forced = (toDoc - fromDoc) > batchSize + CHUNK_SIZE && currentPagePos >= CHUNK_SIZE;
+        if (forced) {
+            System.err.println("--> force flush fromDoc=" + fromDoc + " toDoc=" + toDoc + " batchSize=" + batchSize + " currentPagePos=" + currentPagePos);
+        }
+        return forced;
     }
 
     @Override
