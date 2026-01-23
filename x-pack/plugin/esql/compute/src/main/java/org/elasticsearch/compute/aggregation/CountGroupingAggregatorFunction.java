@@ -7,13 +7,16 @@
 
 package org.elasticsearch.compute.aggregation;
 
+import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.compute.data.Block;
+import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BooleanBlock;
 import org.elasticsearch.compute.data.BooleanVector;
 import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.IntArrayBlock;
 import org.elasticsearch.compute.data.IntBigArrayBlock;
 import org.elasticsearch.compute.data.IntVector;
+import org.elasticsearch.compute.data.LongBigArrayVector;
 import org.elasticsearch.compute.data.LongBlock;
 import org.elasticsearch.compute.data.LongVector;
 import org.elasticsearch.compute.data.Page;
@@ -275,12 +278,21 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
 
     @Override
     public void evaluateFinal(Block[] blocks, int offset, IntVector selected, GroupingAggregatorEvaluationContext evaluationContext) {
-        try (LongVector.Builder builder = evaluationContext.blockFactory().newLongVectorFixedBuilder(selected.getPositionCount())) {
+        if (selected.getPositionCount() < BlockFactory.DEFAULT_MAX_BLOCK_PRIMITIVE_ARRAY_SIZE.getBytes() / Long.BYTES) {
+            try (LongVector.Builder builder = evaluationContext.blockFactory().newLongVectorFixedBuilder(selected.getPositionCount())) {
+                for (int i = 0; i < selected.getPositionCount(); i++) {
+                    int si = selected.getInt(i);
+                    builder.appendLong(state.hasValue(si) ? state.get(si) : 0);
+                }
+                blocks[offset] = builder.build().asBlock();
+            }
+        } else {
+            LongArray values = driverContext.bigArrays().newLongArray(selected.getPositionCount());
             for (int i = 0; i < selected.getPositionCount(); i++) {
                 int si = selected.getInt(i);
-                builder.appendLong(state.hasValue(si) ? state.get(si) : 0);
+                values.set(i, state.hasValue(si) ? state.get(si) : 0);
             }
-            blocks[offset] = builder.build().asBlock();
+            blocks[offset] = new LongBigArrayVector(values, selected.getPositionCount(), evaluationContext.blockFactory()).asBlock();
         }
     }
 
