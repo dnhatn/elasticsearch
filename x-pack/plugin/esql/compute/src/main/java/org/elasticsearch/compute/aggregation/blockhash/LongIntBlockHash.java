@@ -110,25 +110,7 @@ public final class LongIntBlockHash extends BlockHash {
             return packedHash.getKeys();
         }
         int positions = (int) directHash.size();
-        if (positions < PageCacheRecycler.LONG_PAGE_SIZE) {
-            return getSmallKeys(positions);
-        } else {
-            LongArray longs = blockFactory.bigArrays().newLongArray(positions);
-            IntArray ints = blockFactory.bigArrays().newIntArray(positions);
-            for (int id = 0; id < positions; id++) {
-                longs.set(id, directHash.getKey1(id));
-                ints.set(id, Math.toIntExact(directHash.getKey2(id)));
-            }
-            LongBlock longBlock = new LongBigArrayVector(longs, positions, blockFactory).asBlock();
-            IntBlock intBlock = new IntBigArrayVector(ints, positions, blockFactory).asBlock();
-            final Block[] blocks;
-            if (reverseOutput) {
-                blocks = new Block[] { intBlock, longBlock };
-            } else {
-                blocks = new Block[] { longBlock, intBlock };
-            }
-            return blocks;
-        }
+        return getSmallKeys(positions);
     }
 
     private Block[] getSmallKeys(int positions) {
@@ -156,6 +138,24 @@ public final class LongIntBlockHash extends BlockHash {
         } finally {
             Releasables.close(k1, k2);
         }
+    }
+
+    private Block[] getBigKeys(int positions) {
+        LongArray longs = blockFactory.bigArrays().newLongArray(positions);
+        IntArray ints = blockFactory.bigArrays().newIntArray(positions);
+        for (int id = 0; id < positions; id++) {
+            longs.set(id, directHash.getKey1(id));
+            ints.set(id, Math.toIntExact(directHash.getKey2(id)));
+        }
+        LongBlock longBlock = new LongBigArrayVector(longs, positions, blockFactory).asBlock();
+        IntBlock intBlock = new IntBigArrayVector(ints, positions, blockFactory).asBlock();
+        final Block[] blocks;
+        if (reverseOutput) {
+            blocks = new Block[] { intBlock, longBlock };
+        } else {
+            blocks = new Block[] { longBlock, intBlock };
+        }
+        return blocks;
     }
 
     @Override
