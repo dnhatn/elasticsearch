@@ -110,7 +110,11 @@ public final class LongIntBlockHash extends BlockHash {
             return packedHash.getKeys();
         }
         int positions = (int) directHash.size();
-        return getSmallKeys(positions);
+        if (positions < BlockFactory.DEFAULT_MAX_BLOCK_PRIMITIVE_ARRAY_SIZE.getBytes() / Long.BYTES) {
+            return getSmallKeys(positions);
+        } else {
+            return getBigKeys(positions);
+        }
     }
 
     private Block[] getSmallKeys(int positions) {
