@@ -34,6 +34,8 @@ public abstract class SwissHashFactory {
 
     public abstract LongLongSwissHash newLongLongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker);
 
+    public abstract LongIntSwissHash newLongIntSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker);
+
     public abstract BytesRefSwissHash newBytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BigArrays bigArrays);
 
     private static final class SwissHashFactoryImpl extends SwissHashFactory {
@@ -45,6 +47,11 @@ public abstract class SwissHashFactory {
         @Override
         public LongLongSwissHash newLongLongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
             return new LongLongSwissHash(recycler, breaker);
+        }
+
+        @Override
+        public LongIntSwissHash newLongIntSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
+            return new LongIntSwissHash(recycler, breaker);
         }
 
         @Override

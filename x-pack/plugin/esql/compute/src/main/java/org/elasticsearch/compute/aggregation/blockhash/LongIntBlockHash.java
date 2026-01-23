@@ -10,6 +10,7 @@ package org.elasticsearch.compute.aggregation.blockhash;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
+import org.elasticsearch.common.util.LongIntHashTable;
 import org.elasticsearch.common.util.LongLongHash;
 import org.elasticsearch.common.util.LongLongHashTable;
 import org.elasticsearch.common.util.PageCacheRecycler;
@@ -33,7 +34,7 @@ public final class LongIntBlockHash extends BlockHash {
     private final int intChannel;
     private final boolean reverseOutput;
     private final int emitBatchSize;
-    private LongLongHashTable directHash;
+    private LongIntHashTable directHash;
     private PackedValuesBlockHash packedHash;
 
     LongIntBlockHash(BlockFactory blockFactory, int longChannel, int intChannel, boolean reverseOutput, int emitBatchSize) {
@@ -42,7 +43,7 @@ public final class LongIntBlockHash extends BlockHash {
         this.intChannel = intChannel;
         this.reverseOutput = reverseOutput;
         this.emitBatchSize = emitBatchSize;
-        this.directHash =  HashImplFactory.newLongLongHash(blockFactory);
+        this.directHash =  HashImplFactory.newLongIntHash(blockFactory);
     }
 
     @Override
@@ -115,7 +116,7 @@ public final class LongIntBlockHash extends BlockHash {
         ) {
             for (int id = 0; id < positions; id++) {
                 longKeys.appendLong(id, directHash.getKey1(id));
-                intKeys.appendInt(id, Math.toIntExact(directHash.getKey2(id)));
+                intKeys.appendInt(id, directHash.getKey2(id));
             }
             k1 = longKeys.build();
             k2 = intKeys.build();
