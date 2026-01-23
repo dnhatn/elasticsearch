@@ -145,14 +145,14 @@ public final class LongIntBlockHash extends BlockHash {
     }
 
     private Block[] getBigKeys(int positions) {
-        LongArray longs = blockFactory.bigArrays().newLongArray(positions);
-        IntArray ints = blockFactory.bigArrays().newIntArray(positions);
+        LongArray longKeys = blockFactory.bigArrays().newLongArray(positions);
+        IntArray intKeys = blockFactory.bigArrays().newIntArray(positions);
         for (int id = 0; id < positions; id++) {
-            longs.set(id, directHash.getKey1(id));
-            ints.set(id, Math.toIntExact(directHash.getKey2(id)));
+            longKeys.set(id, directHash.getKey1(id));
+            intKeys.set(id, Math.toIntExact(directHash.getKey2(id)));
         }
-        LongBlock longBlock = new LongBigArrayVector(longs, positions, blockFactory).asBlock();
-        IntBlock intBlock = new IntBigArrayVector(ints, positions, blockFactory).asBlock();
+        LongBlock longBlock = new LongBigArrayVector(longKeys, positions, blockFactory).asBlock();
+        IntBlock intBlock = new IntBigArrayVector(intKeys, positions, blockFactory).asBlock();
         final Block[] blocks;
         if (reverseOutput) {
             blocks = new Block[] { intBlock, longBlock };
