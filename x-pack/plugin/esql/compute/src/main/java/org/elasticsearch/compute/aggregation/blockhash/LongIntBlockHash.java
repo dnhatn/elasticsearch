@@ -161,6 +161,10 @@ public final class LongIntBlockHash extends BlockHash {
         return blocks;
     }
 
+    public long size() {
+        return directHash.size();
+    }
+
     @Override
     public BitArray seenGroupIds(BigArrays bigArrays) {
         if (packedHash != null) {

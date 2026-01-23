@@ -18,6 +18,7 @@ import org.elasticsearch.compute.aggregation.GroupingAggregator;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorEvaluationContext;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.blockhash.BlockHash;
+import org.elasticsearch.compute.aggregation.blockhash.LongIntBlockHash;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.IntArrayBlock;
 import org.elasticsearch.compute.data.IntBigArrayBlock;
@@ -82,9 +83,11 @@ public class HashAggregationOperator implements Operator {
     private boolean finished;
     private Page output;
 
-    final BlockHash blockHash;
+    BlockHash blockHash;
 
     protected final List<GroupingAggregator> aggregators;
+    final List<GroupingAggregator.Factory> aggregatorsFactories;
+    final Supplier<BlockHash> blockHashSupplier;
 
     protected final DriverContext driverContext;
 
@@ -122,6 +125,8 @@ public class HashAggregationOperator implements Operator {
     ) {
         this.aggregators = new ArrayList<>(aggregators.size());
         this.driverContext = driverContext;
+        this.blockHashSupplier = blockHash;
+        this.aggregatorsFactories = aggregators;
         boolean success = false;
         try {
             this.blockHash = blockHash.get();
@@ -143,6 +148,12 @@ public class HashAggregationOperator implements Operator {
 
     @Override
     public void addInput(Page page) {
+        if (blockHash == null) {
+            this.blockHash = blockHashSupplier.get();
+            for (GroupingAggregator.Factory a : aggregatorsFactories) {
+                this.aggregators.add(a.apply(driverContext));
+            }
+        }
         try {
             GroupingAggregatorFunction.AddInput[] prepared = new GroupingAggregatorFunction.AddInput[aggregators.size()];
             class AddInput implements GroupingAggregatorFunction.AddInput {
@@ -207,6 +218,10 @@ public class HashAggregationOperator implements Operator {
             pagesProcessed++;
             rowsReceived += page.getPositionCount();
         }
+
+        if (shouldEmit()) {
+            emitOutput();
+        }
     }
 
     @Override
@@ -219,12 +234,68 @@ public class HashAggregationOperator implements Operator {
         return p;
     }
 
+    boolean shouldEmit() {
+        // final - need to wait
+        if (aggregators.stream().anyMatch(a -> a.mode().isOutputPartial() == false)) {
+            return false;
+        }
+        LongIntBlockHash liBlockHash = (LongIntBlockHash) blockHash;
+        long uniqueKeys = liBlockHash.size();
+        // 80% unique keys
+        if(uniqueKeys > 1_000_000 && uniqueKeys >  rowsReceived * 0.8) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+
+    void emitOutput() {
+        Block[] blocks = null;
+        IntVector selected = null;
+        long startInNanos = System.nanoTime();
+        boolean success = false;
+        try {
+            selected = blockHash.nonEmpty();
+            Block[] keys = blockHash.getKeys();
+            int[] aggBlockCounts = aggregators.stream().mapToInt(GroupingAggregator::evaluateBlockCount).toArray();
+            blocks = new Block[keys.length + Arrays.stream(aggBlockCounts).sum()];
+            System.arraycopy(keys, 0, blocks, 0, keys.length);
+            int offset = keys.length;
+            var evaluationContext = evaluationContext(blockHash, keys);
+            for (int i = 0; i < aggregators.size(); i++) {
+                var aggregator = aggregators.get(i);
+                evaluateAggregator(aggregator, blocks, offset, selected, evaluationContext);
+                offset += aggBlockCounts[i];
+            }
+            output = new Page(blocks);
+            success = true;
+        } finally {
+            // selected should always be closed
+            if (selected != null) {
+                selected.close();
+            }
+            if (success == false && blocks != null) {
+                Releasables.closeExpectNoException(blocks);
+            }
+            emitNanos += System.nanoTime() - startInNanos;
+            Releasables.close(aggregators);
+            aggregators.clear();
+            blockHash.close();
+            blockHash = null;
+        }
+
+    }
+
     @Override
     public void finish() {
         if (finished) {
             return;
         }
         finished = true;
+        if (blockHash == null) {
+            return;
+        }
         Block[] blocks = null;
         IntVector selected = null;
         long startInNanos = System.nanoTime();
