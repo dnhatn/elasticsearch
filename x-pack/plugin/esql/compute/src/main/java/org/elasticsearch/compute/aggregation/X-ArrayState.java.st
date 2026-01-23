@@ -27,6 +27,18 @@ $endif$
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.core.Releasables;
 
+import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.util.BitArray;
+import org.elasticsearch.common.util.LongArray;
+import org.elasticsearch.compute.data.Block;
+import org.elasticsearch.compute.data.BlockFactory;
+import org.elasticsearch.compute.data.BooleanBigArrayVector;
+import org.elasticsearch.compute.data.IntVector;
+import org.elasticsearch.compute.data.LongBigArrayVector;
+import org.elasticsearch.compute.data.LongBlock;
+import org.elasticsearch.compute.operator.DriverContext;
+import org.elasticsearch.core.Releasables;
+
 /**
  * Aggregator state for an array of $type$s. It is created in a mode where it
  * won't track the {@code groupId}s that are sent to it and it is the
@@ -137,6 +149,40 @@ $endif$
         org.elasticsearch.compute.operator.DriverContext driverContext
     ) {
         assert blocks.length >= offset + 2;
+$if(long)$
+        if (selected.getPositionCount() < BlockFactory.DEFAULT_MAX_BLOCK_PRIMITIVE_ARRAY_SIZE.getBytes() / Long.BYTES) {
+            try (
+                var valuesBuilder = driverContext.blockFactory().newLongBlockBuilder(selected.getPositionCount());
+                var hasValueBuilder = driverContext.blockFactory().newBooleanVectorFixedBuilder(selected.getPositionCount())
+            ) {
+                for (int i = 0; i < selected.getPositionCount(); i++) {
+                    int group = selected.getInt(i);
+                    if (group < values.size()) {
+                        valuesBuilder.appendLong(values.get(group));
+                    } else {
+                        valuesBuilder.appendLong(0); // TODO can we just use null?
+                    }
+                    hasValueBuilder.appendBoolean(i, hasValue(group));
+                }
+                blocks[offset + 0] = valuesBuilder.build();
+                blocks[offset + 1] = hasValueBuilder.build().asBlock();
+            }
+        } else {
+            LongArray longValues = bigArrays.newLongArray(selected.getPositionCount());
+            BitArray bits = new BitArray(selected.getPositionCount(), bigArrays);
+            for (int i = 0; i < selected.getPositionCount(); i++) {
+                int group = selected.getInt(i);
+                if (group < values.size()) {
+                    longValues.set(i, values.get(group));
+                }
+                if (hasValue(group)) {
+                    bits.set(i);
+                }
+            }
+            blocks[offset] = new LongBigArrayVector(longValues, selected.getPositionCount(), driverContext.blockFactory()).asBlock();
+            blocks[offset + 1] = new BooleanBigArrayVector(bits, selected.getPositionCount(), driverContext.blockFactory()).asBlock();
+        }
+$else$
         try (
             var valuesBuilder = driverContext.blockFactory().new$Type$BlockBuilder(selected.getPositionCount());
             var hasValueBuilder = driverContext.blockFactory().newBooleanVectorFixedBuilder(selected.getPositionCount())
@@ -153,6 +199,7 @@ $endif$
             blocks[offset + 0] = valuesBuilder.build();
             blocks[offset + 1] = hasValueBuilder.build().asBlock();
         }
+$endif$
     }
 
     @Override

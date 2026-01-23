@@ -20,8 +20,7 @@ import java.io.IOException;
  * Vector that stores int values.
  * This class is generated. Edit {@code X-Vector.java.st} instead.
  */
-public sealed interface IntVector extends Vector permits ConstantIntVector, IntArrayVector, IntBigArrayVector, ConstantNullVector,
-    IntRangeVector {
+    public sealed interface IntVector extends Vector permits ConstantIntVector, IntArrayVector, IntBigArrayVector, ConstantNullVector, IntRangeVector {
     int getInt(int position);
 
     @Override
