@@ -373,8 +373,18 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
+        long totalNanos = 0;
+
+        @Override
+        public void close() {
+            super.close();
+            System.err.println("--> total grow time " + totalNanos);
+        }
+
         private int add(final long key1, final long key2, final int hash) {
+            long start = System.nanoTime();
             maybeGrow();
+            totalNanos += (System.nanoTime() - start);
             return bigCore.addImpl(key1, key2, hash);
         }
 
