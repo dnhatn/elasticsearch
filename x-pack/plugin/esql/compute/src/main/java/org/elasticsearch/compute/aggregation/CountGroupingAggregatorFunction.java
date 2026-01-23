@@ -294,6 +294,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
             }
             blocks[offset] = new LongBigArrayVector(values, selected.getPositionCount(), evaluationContext.blockFactory()).asBlock();
         }
+        state.release();
     }
 
     @Override

@@ -200,6 +200,12 @@ $else$
             blocks[offset + 1] = hasValueBuilder.build().asBlock();
         }
 $endif$
+        release();
+    }
+
+    void release(){
+        values.close();
+        values = null;
     }
 
     @Override

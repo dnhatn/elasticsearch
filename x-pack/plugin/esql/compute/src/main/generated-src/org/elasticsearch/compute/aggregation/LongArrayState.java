@@ -145,6 +145,12 @@ final class LongArrayState extends AbstractArrayState implements GroupingAggrega
             blocks[offset] = new LongBigArrayVector(longValues, selected.getPositionCount(), driverContext.blockFactory()).asBlock();
             blocks[offset + 1] = new BooleanBigArrayVector(bits, selected.getPositionCount(), driverContext.blockFactory()).asBlock();
         }
+        release();
+    }
+
+    void release(){
+        values.close();
+        values = null;
     }
 
     @Override

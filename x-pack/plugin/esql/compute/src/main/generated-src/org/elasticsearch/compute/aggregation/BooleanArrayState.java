@@ -124,6 +124,12 @@ final class BooleanArrayState extends AbstractArrayState implements GroupingAggr
             blocks[offset + 0] = valuesBuilder.build();
             blocks[offset + 1] = hasValueBuilder.build().asBlock();
         }
+        release();
+    }
+
+    void release(){
+        values.close();
+        values = null;
     }
 
     @Override
