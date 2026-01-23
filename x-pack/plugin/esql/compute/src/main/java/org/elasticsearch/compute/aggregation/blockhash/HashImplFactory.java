@@ -12,7 +12,6 @@ import org.elasticsearch.common.util.BytesRefHashTable;
 import org.elasticsearch.common.util.FeatureFlag;
 import org.elasticsearch.common.util.LongHash;
 import org.elasticsearch.common.util.LongHashTable;
-import org.elasticsearch.common.util.LongIntHashTable;
 import org.elasticsearch.common.util.LongLongHash;
 import org.elasticsearch.common.util.LongLongHashTable;
 import org.elasticsearch.compute.data.BlockFactory;
