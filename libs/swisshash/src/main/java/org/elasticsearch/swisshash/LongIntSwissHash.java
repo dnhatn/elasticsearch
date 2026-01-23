@@ -39,7 +39,7 @@ public class LongIntSwissHash extends SwissHash implements LongIntHashTable {
 
     private static final int PAGE_MASK = PageCacheRecycler.PAGE_SIZE_IN_BYTES - 1;
 
-    private static final int KEY_SIZE = Long.BYTES + Integer.BYTES;
+    private static final int KEY_SIZE = Long.BYTES + Long.BYTES;
 
     private static final int ID_SIZE = Integer.BYTES;
 
