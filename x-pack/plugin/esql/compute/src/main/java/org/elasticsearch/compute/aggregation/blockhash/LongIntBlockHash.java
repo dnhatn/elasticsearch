@@ -10,16 +10,18 @@ package org.elasticsearch.compute.aggregation.blockhash;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
-import org.elasticsearch.common.util.LongIntHashTable;
-import org.elasticsearch.common.util.LongLongHash;
+import org.elasticsearch.common.util.IntArray;
+import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.common.util.LongLongHashTable;
 import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefBlock;
+import org.elasticsearch.compute.data.IntBigArrayVector;
 import org.elasticsearch.compute.data.IntBlock;
 import org.elasticsearch.compute.data.IntVector;
+import org.elasticsearch.compute.data.LongBigArrayVector;
 import org.elasticsearch.compute.data.LongBlock;
 import org.elasticsearch.compute.data.LongVector;
 import org.elasticsearch.compute.data.Page;
@@ -43,7 +45,7 @@ public final class LongIntBlockHash extends BlockHash {
         this.intChannel = intChannel;
         this.reverseOutput = reverseOutput;
         this.emitBatchSize = emitBatchSize;
-        this.directHash =  HashImplFactory.newLongLongHash(blockFactory);
+        this.directHash = HashImplFactory.newLongLongHash(blockFactory);
     }
 
     @Override
@@ -107,9 +109,31 @@ public final class LongIntBlockHash extends BlockHash {
         if (packedHash != null) {
             return packedHash.getKeys();
         }
+        int positions = (int) directHash.size();
+        if (positions < PageCacheRecycler.LONG_PAGE_SIZE) {
+            return getSmallKeys(positions);
+        } else {
+            LongArray longs = blockFactory.bigArrays().newLongArray(positions);
+            IntArray ints = blockFactory.bigArrays().newIntArray(positions);
+            for (int id = 0; id < positions; id++) {
+                longs.set(id, directHash.getKey1(id));
+                ints.set(id, Math.toIntExact(directHash.getKey2(id)));
+            }
+            LongBlock longBlock = new LongBigArrayVector(longs, positions, blockFactory).asBlock();
+            IntBlock intBlock = new IntBigArrayVector(ints, positions, blockFactory).asBlock();
+            final Block[] blocks;
+            if (reverseOutput) {
+                blocks = new Block[] { intBlock, longBlock };
+            } else {
+                blocks = new Block[] { longBlock, intBlock };
+            }
+            return blocks;
+        }
+    }
+
+    private Block[] getSmallKeys(int positions) {
         LongVector k1 = null;
         IntVector k2 = null;
-        int positions = (int) directHash.size();
         try (
             var longKeys = blockFactory.newLongVectorFixedBuilder(positions);
             var intKeys = blockFactory.newIntVectorFixedBuilder(positions)
