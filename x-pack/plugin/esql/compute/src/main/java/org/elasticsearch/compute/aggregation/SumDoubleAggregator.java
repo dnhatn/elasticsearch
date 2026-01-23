@@ -7,13 +7,18 @@
 
 package org.elasticsearch.compute.aggregation;
 
+import org.elasticsearch.common.util.BigArray;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.util.BitArray;
 import org.elasticsearch.common.util.DoubleArray;
 import org.elasticsearch.compute.ann.Aggregator;
 import org.elasticsearch.compute.ann.GroupingAggregator;
 import org.elasticsearch.compute.ann.IntermediateState;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
+import org.elasticsearch.compute.data.BooleanBigArrayVector;
+import org.elasticsearch.compute.data.DoubleArrayBlock;
+import org.elasticsearch.compute.data.DoubleBigArrayVector;
 import org.elasticsearch.compute.data.DoubleBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.operator.DriverContext;
@@ -83,40 +88,35 @@ class SumDoubleAggregator {
         DriverContext driverContext
     ) {
         assert blocks.length >= offset + 3;
-        try (
-            var valuesBuilder = driverContext.blockFactory().newDoubleBlockBuilder(selected.getPositionCount());
-            var deltaBuilder = driverContext.blockFactory().newDoubleBlockBuilder(selected.getPositionCount());
-            var seenBuilder = driverContext.blockFactory().newBooleanBlockBuilder(selected.getPositionCount())
-        ) {
-            for (int i = 0; i < selected.getPositionCount(); i++) {
-                int group = selected.getInt(i);
-                if (group < state.values.size()) {
-                    valuesBuilder.appendDouble(state.values.get(group));
-                    deltaBuilder.appendDouble(state.deltas.get(group));
-                } else {
-                    valuesBuilder.appendDouble(0);
-                    deltaBuilder.appendDouble(0);
-                }
-                seenBuilder.appendBoolean(state.hasValue(group));
+        DoubleArray values = driverContext.bigArrays().newDoubleArray(selected.getPositionCount());
+        DoubleArray deltas = driverContext.bigArrays().newDoubleArray(selected.getPositionCount());
+        BitArray seens = new BitArray(selected.getPositionCount(), driverContext.bigArrays());
+
+
+        for (int i = 0; i < selected.getPositionCount(); i++) {
+            int group = selected.getInt(i);
+            if (group < state.values.size()) {
+                values.set(i, state.values.get(group));
+                values.set(i, state.deltas.get(group));
             }
-            blocks[offset + 0] = valuesBuilder.build();
-            blocks[offset + 1] = deltaBuilder.build();
-            blocks[offset + 2] = seenBuilder.build();
+            seens.set(i, state.hasValue(group));
         }
+        blocks[offset + 0] = new DoubleBigArrayVector(values, selected.getPositionCount(), driverContext.blockFactory()).asBlock();
+        blocks[offset + 1] = new DoubleBigArrayVector(deltas, selected.getPositionCount(), driverContext.blockFactory()).asBlock();
+        blocks[offset + 2] = new BooleanBigArrayVector(seens, selected.getPositionCount(), driverContext.blockFactory()).asBlock();
     }
 
     public static Block evaluateFinal(GroupingSumState state, IntVector selected, GroupingAggregatorEvaluationContext ctx) {
-        try (DoubleBlock.Builder builder = ctx.blockFactory().newDoubleBlockBuilder(selected.getPositionCount())) {
-            for (int i = 0; i < selected.getPositionCount(); i++) {
-                int si = selected.getInt(i);
-                if (state.hasValue(si) && si < state.values.size()) {
-                    builder.appendDouble(state.values.get(si));
-                } else {
-                    builder.appendNull();
-                }
+        DoubleArray values = ctx.driverContext().bigArrays().newDoubleArray(selected.getPositionCount());
+        for (int i = 0; i < selected.getPositionCount(); i++) {
+            int si = selected.getInt(i);
+            if (state.hasValue(si) && si < state.values.size()) {
+                values.set(i, state.values.get(si));
+            } else {
+                values.set(i, Double.NaN);
             }
-            return builder.build();
         }
+        return new DoubleBigArrayVector(values, selected.getPositionCount(), ctx.blockFactory()).asBlock();
     }
 
     static class SumState extends CompensatedSum implements AggregatorState {
