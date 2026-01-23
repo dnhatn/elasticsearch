@@ -15,6 +15,18 @@ import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.core.Releasables;
 
+import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.util.BitArray;
+import org.elasticsearch.common.util.LongArray;
+import org.elasticsearch.compute.data.Block;
+import org.elasticsearch.compute.data.BlockFactory;
+import org.elasticsearch.compute.data.BooleanBigArrayVector;
+import org.elasticsearch.compute.data.IntVector;
+import org.elasticsearch.compute.data.LongBigArrayVector;
+import org.elasticsearch.compute.data.LongBlock;
+import org.elasticsearch.compute.operator.DriverContext;
+import org.elasticsearch.core.Releasables;
+
 /**
  * Aggregator state for an array of ints. It is created in a mode where it
  * won't track the {@code groupId}s that are sent to it and it is the
