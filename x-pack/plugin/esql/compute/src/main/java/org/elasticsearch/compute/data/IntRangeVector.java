@@ -22,7 +22,7 @@ public final class IntRangeVector extends AbstractVector implements IntVector {
 
     @Override
     public int getInt(int position) {
-        return position - fromInclusive;
+        return fromInclusive + position;
     }
 
     @Override
