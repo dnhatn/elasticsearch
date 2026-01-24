@@ -20,6 +20,7 @@ import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BytesRefBlock;
 import org.elasticsearch.compute.data.IntBigArrayVector;
 import org.elasticsearch.compute.data.IntBlock;
+import org.elasticsearch.compute.data.IntRangeVector;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongBigArrayVector;
 import org.elasticsearch.compute.data.LongBlock;
@@ -206,9 +207,9 @@ public final class LongIntBlockHash extends BlockHash {
             return packedHash.nonEmpty();
         }
         if (multipleHash != null) {
-            return IntVector.range(0, Math.toIntExact(multipleHash.tableIds.size()), blockFactory);
+            return new IntRangeVector(blockFactory, 0, Math.toIntExact(multipleHash.tableIds.size()));
         } else {
-            return IntVector.range(0, Math.toIntExact(directHash.size()), blockFactory);
+            return new IntRangeVector(blockFactory, 0, Math.toIntExact(directHash.size()));
         }
     }
 
