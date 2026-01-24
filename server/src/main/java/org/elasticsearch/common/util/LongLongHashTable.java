@@ -37,6 +37,8 @@ public interface LongLongHashTable extends Releasable {
      */
     long add(long key1, long key2);
 
+    // add append method
+
     /** Returns the size (number of key/value pairs) in the table.*/
     long size();
 }
