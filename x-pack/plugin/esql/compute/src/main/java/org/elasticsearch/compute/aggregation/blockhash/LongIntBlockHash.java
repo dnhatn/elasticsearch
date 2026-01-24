@@ -264,18 +264,18 @@ public final class LongIntBlockHash extends BlockHash {
         private Block[] getKeys(boolean reverseOutput) {
             LongVector k1 = null;
             IntVector k2 = null;
-            int[] next = new int[hashes.length];
-            int positions = Math.toIntExact(tableIds.size());
+            int[] nextLocalids = new int[hashes.length];
+            int positions = entries;
             try (
                 var longKeys = blockFactory.newLongVectorFixedBuilder(positions);
                 var intKeys = blockFactory.newIntVectorFixedBuilder(positions)
             ) {
-                for (int id = 0; id < positions; id++) {
-                    int tableIndex = tableIds.get(id) & 0xFF;
+                for (int globalId = 0; globalId < positions; globalId++) {
+                    int tableIndex = tableIds.get(globalId) & 0xFF;
                     LongLongHashTable directHash = hashes[tableIndex] ;
-                    int localId = next[tableIndex]++;
-                    longKeys.appendLong(id, directHash.getKey1(localId));
-                    intKeys.appendInt(id, Math.toIntExact(directHash.getKey2(localId)));
+                    int localId = nextLocalids[tableIndex]++;
+                    longKeys.appendLong(globalId, directHash.getKey1(localId));
+                    intKeys.appendInt(globalId, Math.toIntExact(directHash.getKey2(localId)));
                 }
                 k1 = longKeys.build();
                 k2 = intKeys.build();
