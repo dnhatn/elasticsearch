@@ -85,7 +85,7 @@ public final class LongIntBlockHash extends BlockHash {
     }
 
     void addDirect(LongVector longs, IntVector ints, GroupingAggregatorFunction.AddInput addInput) {
-        if (directHash != null && directHash.size() + longs.getPositionCount() > 100_000) {
+        if (directHash != null && directHash.size() + longs.getPositionCount() > 2_000_000) {
             multipleHash = new MultipleHash(blockFactory, directHash);
             directHash.close();
             directHash = null;
