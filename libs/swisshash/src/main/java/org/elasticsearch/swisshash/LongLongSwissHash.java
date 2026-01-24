@@ -160,7 +160,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         Releasables.close(smallCore, bigCore);
         Releasables.close(toClose);
         toClose.clear();
-        System.err.println("--> total grow time " + totalNanos);
     }
 
     private int growTracking() {
@@ -306,7 +305,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
     }
 
-    long totalNanos = 0;
 
     final class BigCore extends Core {
         static final float FILL_FACTOR = 0.875F;
@@ -377,9 +375,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private int add(final long key1, final long key2, final int hash) {
-            long start = System.nanoTime();
             maybeGrow();
-            totalNanos += (System.nanoTime() - start);
             return bigCore.addImpl(key1, key2, hash);
         }
 
