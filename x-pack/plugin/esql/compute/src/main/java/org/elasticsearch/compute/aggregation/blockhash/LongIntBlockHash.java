@@ -85,6 +85,7 @@ public final class LongIntBlockHash extends BlockHash {
     void addDirect(LongVector longs, IntVector ints, GroupingAggregatorFunction.AddInput addInput) {
         if (directHash != null && directHash.size() + longs.getPositionCount() > 100_000) {
             multipleHash = new MultipleHash(blockFactory, directHash);
+            directHash.close();
             directHash = null;
         }
         int positionCount = longs.getPositionCount();
@@ -291,8 +292,8 @@ public final class LongIntBlockHash extends BlockHash {
         if (packedHash != null) {
             return packedHash.toString();
         }
-        long size = directHash.size();
-        long memoryUsed = directHash.size() * (3 * Long.BYTES);
+        long size = size();
+        long memoryUsed = 100;
         return "LongIntBlockHash{keys=[long[channel="
             + longChannel
             + "], int[channel="
