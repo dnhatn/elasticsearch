@@ -228,6 +228,7 @@ public final class LongIntBlockHash extends BlockHash {
         MultipleHash(BlockFactory blockFactory, LongLongHashTable current) {
             this.hashes = new LongLongHashTable[256];
             for (int i = 0; i < hashes.length; i++) {
+                // We should allocate these 1/128 the current size of the hash to avoid too many collisions
                 this.hashes[i] = HashImplFactory.newLongLongHash(blockFactory);
             }
             this.blockFactory = blockFactory;
