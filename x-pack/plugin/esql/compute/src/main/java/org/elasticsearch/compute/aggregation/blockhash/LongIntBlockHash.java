@@ -29,6 +29,8 @@ import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.ReleasableIterator;
 import org.elasticsearch.core.Releasables;
 
+import java.util.Arrays;
+
 /**
  * Maps a {@link LongBlock} column paired with a {@link BytesRefBlock} column to group ids.
  */
@@ -102,17 +104,7 @@ public final class LongIntBlockHash extends BlockHash {
                 }
             }
         } else {
-            try (var ordsBuilder = blockFactory.newIntVectorFixedBuilder(positionCount)) {
-                for (int p = 0; p < positionCount; p++) {
-                    long longKey = longs.getLong(p);
-                    int intKey = ints.getInt(p);
-                    long ord = hashOrdToGroup(multipleHash.addKey(longKey, intKey));
-                    ordsBuilder.appendInt(Math.toIntExact(ord));
-                }
-                try (IntVector ords = ordsBuilder.build()) {
-                    addInput.add(0, ords);
-                }
-            }
+            multipleHash.addDirect(longs, ints, addInput);
         }
     }
 
@@ -223,7 +215,8 @@ public final class LongIntBlockHash extends BlockHash {
     static class MultipleHash implements Releasable {
         final LongLongHashTable[] hashes;
         final BlockFactory blockFactory;
-        final ByteArray tableIds;
+        int entries = 0;
+        private ByteArray tableIds;
 
         MultipleHash(BlockFactory blockFactory, LongLongHashTable current) {
             this.hashes = new LongLongHashTable[256];
@@ -241,16 +234,32 @@ public final class LongIntBlockHash extends BlockHash {
             }
         }
 
+
+        void addDirect(LongVector longs, IntVector ints, GroupingAggregatorFunction.AddInput addInput) {
+            int positionCount = longs.getPositionCount();
+            tableIds = blockFactory.bigArrays().grow(tableIds, entries + positionCount);
+            try (var ordsBuilder = blockFactory.newIntVectorFixedBuilder(positionCount)) {
+                for (int p = 0; p < positionCount; p++) {
+                    long longKey = longs.getLong(p);
+                    int intKey = ints.getInt(p);
+                    long ord = hashOrdToGroup(addKey(longKey, intKey));
+                    ordsBuilder.appendInt(Math.toIntExact(ord));
+                }
+                try (IntVector ords = ordsBuilder.build()) {
+                    addInput.add(0, ords);
+                }
+            }
+        }
+
         long addKey(long longKey, int intKey) {
             int tableIndex = (int)(longKey & 0xFF);
             final LongLongHashTable hash = hashes[tableIndex];
             long key = hash.add(longKey, intKey);
             if (key >= 0) {
-                tableIds.set(key, (byte) tableIndex);
+                tableIds.set(entries++, (byte) tableIndex);
             }
             return key;
         }
-
 
         private Block[] getKeys(boolean reverseOutput) {
             LongVector k1 = null;
