@@ -260,8 +260,8 @@ public final class LongIntBlockHash extends BlockHash {
                 var intKeys = blockFactory.newIntVectorFixedBuilder(positions)
             ) {
                 for (int id = 0; id < positions; id++) {
-                    int tableIndex = tableIds.get(id);
-                    LongLongHashTable directHash = hashes[tableIndex];
+                    int tableIndex = tableIds.get(id) & 0xFF;
+                    LongLongHashTable directHash = hashes[tableIndex] ;
                     longKeys.appendLong(id, directHash.getKey1(id));
                     intKeys.appendInt(id, Math.toIntExact(directHash.getKey2(id)));
                 }
