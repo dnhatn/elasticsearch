@@ -296,6 +296,7 @@ public final class LongIntBlockHash extends BlockHash {
         @Override
         public void close() {
             Releasables.close(hashes);
+            Releasables.close(tableIds);
         }
     }
 
