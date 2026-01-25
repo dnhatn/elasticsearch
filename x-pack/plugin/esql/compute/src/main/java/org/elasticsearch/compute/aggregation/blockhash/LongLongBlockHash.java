@@ -11,6 +11,7 @@ import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
 import org.elasticsearch.common.util.LongLongHash;
+import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.SeenGroupIds;
 import org.elasticsearch.compute.data.Block;
@@ -38,7 +39,7 @@ final class LongLongBlockHash extends BlockHash {
         this.channel1 = channel1;
         this.channel2 = channel2;
         this.emitBatchSize = emitBatchSize;
-        this.hash = new LongLongHash(1, blockFactory.bigArrays());
+        this.hash = new LongLongHash(PageCacheRecycler.LONG_PAGE_SIZE, blockFactory.bigArrays());
     }
 
     @Override
