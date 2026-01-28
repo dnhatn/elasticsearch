@@ -482,10 +482,27 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(BigCore newBigCore) {
-            for (int i = 0; i < size; i++) {
-                final long keyOffset = keyOffset(i);
-                final int hash = hash(key1(keyOffset), key2(keyOffset));
-                newBigCore.insert(hash, control(hash), i);
+            final int numPages = (size * KEY_SIZE + PageCacheRecycler.PAGE_SIZE_IN_BYTES - 1) >> PAGE_SHIFT;
+            int id = 0;
+            int[] hashes = new int[PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE];
+            for (int p = 0; p < numPages; p++) {
+                byte[] keyPage = keyPages[p];
+                int keysInPage;
+                if (p == numPages - 1) {
+                    keysInPage = size - (p * (PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE));
+                } else {
+                    keysInPage = PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE;
+                }
+                for (int k = 0; k < keysInPage; k++) {
+                    long key1 = (long) LONG_HANDLE.get(keyPage, k * KEY_SIZE);
+                    long key2 = (long) LONG_HANDLE.get(keyPage, k * KEY_SIZE + Long.BYTES);
+                    hashes[k] = hash(key1, key2);
+                }
+                for (int k = 0; k < keysInPage; k++) {
+                    int hash = hashes[k];
+                    newBigCore.insert(hash, control(hash), id);
+                    id++;
+                }
             }
         }
 
@@ -496,13 +513,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void insert(final int hash, final byte control, final int id) {
             int group = hash & mask;
             for (;;) {
-                for (int j = 0; j < BYTE_VECTOR_LANES; j++) {
-                    int idx = group + j;
-                    if (controlData[idx] == EMPTY) {
-                        int insertSlot = slot(group + j);
-                        insertAtSlot(insertSlot, control, id);
-                        return;
-                    }
+                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                    insertAtSlot(insertSlot, control, id);
+                    return;
                 }
                 group = (group + BYTE_VECTOR_LANES) & mask;
                 insertProbes++;
