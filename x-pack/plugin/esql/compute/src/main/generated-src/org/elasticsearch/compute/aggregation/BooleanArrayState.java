@@ -96,20 +96,55 @@ final class BooleanArrayState extends AbstractArrayState implements GroupingAggr
         org.elasticsearch.compute.operator.DriverContext driverContext
     ) {
         assert blocks.length >= offset + 2;
+        if (seen == null) {
+            toIntermediateDense(blocks, offset, selected, driverContext);
+        } else {
+            toIntermediateSparse(blocks, offset, selected, driverContext);
+        }
+    }
+
+    private void toIntermediateDense(
+        Block[] blocks,
+        int offset,
+        IntVector selected,
+        org.elasticsearch.compute.operator.DriverContext driverContext
+    ) {
         try (
-            var valuesBuilder = driverContext.blockFactory().newBooleanBlockBuilder(selected.getPositionCount());
+            var valuesBuilder = driverContext.blockFactory().newBooleanVectorFixedBuilder(selected.getPositionCount());
+        ) {
+            for (int i = 0; i < selected.getPositionCount(); i++) {
+                int group = selected.getInt(i);
+                if (group < size) {
+                    valuesBuilder.appendBoolean(i, values.get(group));
+                } else {
+                    valuesBuilder.appendBoolean(i, false);
+                }
+            }
+            blocks[offset + 0] = valuesBuilder.build().asBlock();
+            blocks[offset + 1] = driverContext.blockFactory().newConstantBooleanBlockWith(true, selected.getPositionCount());
+        }
+    }
+
+    private void toIntermediateSparse(
+        Block[] blocks,
+        int offset,
+        IntVector selected,
+        org.elasticsearch.compute.operator.DriverContext driverContext
+    ) {
+        try (
+            var valuesBuilder = driverContext.blockFactory().newBooleanVectorFixedBuilder(selected.getPositionCount());
             var hasValueBuilder = driverContext.blockFactory().newBooleanVectorFixedBuilder(selected.getPositionCount())
         ) {
             for (int i = 0; i < selected.getPositionCount(); i++) {
                 int group = selected.getInt(i);
                 if (group < size) {
-                    valuesBuilder.appendBoolean(values.get(group));
+                    valuesBuilder.appendBoolean(i, values.get(group));
                 } else {
-                    valuesBuilder.appendBoolean(false); // TODO can we just use null?
+                    valuesBuilder.appendBoolean(i, false);
                 }
                 hasValueBuilder.appendBoolean(i, hasValue(group));
             }
-            blocks[offset + 0] = valuesBuilder.build();
+            blocks[offset + 0] = valuesBuilder.build().asBlock();
             blocks[offset + 1] = hasValueBuilder.build().asBlock();
         }
     }

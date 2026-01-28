@@ -151,18 +151,22 @@ public final class MinBytesRefGroupingAggregatorFunction implements GroupingAggr
 
   @Override
   public void addIntermediateInput(int positionOffset, IntArrayBlock groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(1));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block minUncast = page.getBlock(channels.get(0));
     if (minUncast.areAllValuesNull()) {
       return;
     }
     BytesRefVector min = ((BytesRefBlock) minUncast).asVector();
-    Block seenUncast = page.getBlock(channels.get(1));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert min.getPositionCount() == seen.getPositionCount();
     BytesRef minScratch = new BytesRef();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
@@ -223,18 +227,22 @@ public final class MinBytesRefGroupingAggregatorFunction implements GroupingAggr
 
   @Override
   public void addIntermediateInput(int positionOffset, IntBigArrayBlock groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(1));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block minUncast = page.getBlock(channels.get(0));
     if (minUncast.areAllValuesNull()) {
       return;
     }
     BytesRefVector min = ((BytesRefBlock) minUncast).asVector();
-    Block seenUncast = page.getBlock(channels.get(1));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert min.getPositionCount() == seen.getPositionCount();
     BytesRef minScratch = new BytesRef();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
@@ -280,18 +288,22 @@ public final class MinBytesRefGroupingAggregatorFunction implements GroupingAggr
 
   @Override
   public void addIntermediateInput(int positionOffset, IntVector groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(1));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block minUncast = page.getBlock(channels.get(0));
     if (minUncast.areAllValuesNull()) {
       return;
     }
     BytesRefVector min = ((BytesRefBlock) minUncast).asVector();
-    Block seenUncast = page.getBlock(channels.get(1));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert min.getPositionCount() == seen.getPositionCount();
     BytesRef minScratch = new BytesRef();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {

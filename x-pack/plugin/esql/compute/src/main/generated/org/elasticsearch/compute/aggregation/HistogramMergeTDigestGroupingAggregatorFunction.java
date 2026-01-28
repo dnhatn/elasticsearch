@@ -109,18 +109,22 @@ public final class HistogramMergeTDigestGroupingAggregatorFunction implements Gr
 
   @Override
   public void addIntermediateInput(int positionOffset, IntArrayBlock groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(1));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block valueUncast = page.getBlock(channels.get(0));
     if (valueUncast.areAllValuesNull()) {
       return;
     }
     TDigestBlock value = (TDigestBlock) valueUncast;
-    Block seenUncast = page.getBlock(channels.get(1));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert value.getPositionCount() == seen.getPositionCount();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
       if (groups.isNull(groupPosition)) {
@@ -161,18 +165,22 @@ public final class HistogramMergeTDigestGroupingAggregatorFunction implements Gr
 
   @Override
   public void addIntermediateInput(int positionOffset, IntBigArrayBlock groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(1));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block valueUncast = page.getBlock(channels.get(0));
     if (valueUncast.areAllValuesNull()) {
       return;
     }
     TDigestBlock value = (TDigestBlock) valueUncast;
-    Block seenUncast = page.getBlock(channels.get(1));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert value.getPositionCount() == seen.getPositionCount();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
       if (groups.isNull(groupPosition)) {
@@ -206,18 +214,22 @@ public final class HistogramMergeTDigestGroupingAggregatorFunction implements Gr
 
   @Override
   public void addIntermediateInput(int positionOffset, IntVector groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(1));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block valueUncast = page.getBlock(channels.get(0));
     if (valueUncast.areAllValuesNull()) {
       return;
     }
     TDigestBlock value = (TDigestBlock) valueUncast;
-    Block seenUncast = page.getBlock(channels.get(1));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert value.getPositionCount() == seen.getPositionCount();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
       int groupId = groups.getInt(groupPosition);

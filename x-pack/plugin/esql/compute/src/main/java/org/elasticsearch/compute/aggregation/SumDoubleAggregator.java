@@ -75,36 +75,6 @@ class SumDoubleAggregator {
         }
     }
 
-    public static void evaluateIntermediate(
-        GroupingSumState state,
-        Block[] blocks,
-        int offset,
-        IntVector selected,
-        DriverContext driverContext
-    ) {
-        assert blocks.length >= offset + 3;
-        try (
-            var valuesBuilder = driverContext.blockFactory().newDoubleBlockBuilder(selected.getPositionCount());
-            var deltaBuilder = driverContext.blockFactory().newDoubleBlockBuilder(selected.getPositionCount());
-            var seenBuilder = driverContext.blockFactory().newBooleanBlockBuilder(selected.getPositionCount())
-        ) {
-            for (int i = 0; i < selected.getPositionCount(); i++) {
-                int group = selected.getInt(i);
-                if (group < state.values.size()) {
-                    valuesBuilder.appendDouble(state.values.get(group));
-                    deltaBuilder.appendDouble(state.deltas.get(group));
-                } else {
-                    valuesBuilder.appendDouble(0);
-                    deltaBuilder.appendDouble(0);
-                }
-                seenBuilder.appendBoolean(state.hasValue(group));
-            }
-            blocks[offset + 0] = valuesBuilder.build();
-            blocks[offset + 1] = deltaBuilder.build();
-            blocks[offset + 2] = seenBuilder.build();
-        }
-    }
-
     public static Block evaluateFinal(GroupingSumState state, IntVector selected, GroupingAggregatorEvaluationContext ctx) {
         try (DoubleBlock.Builder builder = ctx.blockFactory().newDoubleBlockBuilder(selected.getPositionCount())) {
             for (int i = 0; i < selected.getPositionCount(); i++) {
@@ -202,7 +172,55 @@ class SumDoubleAggregator {
 
         @Override
         public void toIntermediate(Block[] blocks, int offset, IntVector selected, DriverContext driverContext) {
-            SumDoubleAggregator.evaluateIntermediate(this, blocks, offset, selected, driverContext);
+            if (seen == null) {
+                toIntermediateBlocksDense(blocks, offset, selected, driverContext);
+            } else {
+                toIntermediateBlocksSparse(blocks, offset, selected, driverContext);
+            }
+        }
+
+        private void toIntermediateBlocksDense(Block[] blocks, int offset, IntVector selected, DriverContext driverContext) {
+            try (
+                var valuesBuilder = driverContext.blockFactory().newDoubleVectorFixedBuilder(selected.getPositionCount());
+                var deltaBuilder = driverContext.blockFactory().newDoubleVectorFixedBuilder(selected.getPositionCount())
+            ) {
+                for (int i = 0; i < selected.getPositionCount(); i++) {
+                    int group = selected.getInt(i);
+                    if (group < values.size()) {
+                        valuesBuilder.appendDouble(i, values.get(group));
+                        deltaBuilder.appendDouble(i, deltas.get(group));
+                    } else {
+                        valuesBuilder.appendDouble(i, 0);
+                        deltaBuilder.appendDouble(i,0);
+                    }
+                }
+                blocks[offset + 0] = valuesBuilder.build().asBlock();
+                blocks[offset + 1] = deltaBuilder.build().asBlock();
+                blocks[offset + 2] = driverContext.blockFactory().newConstantBooleanBlockWith(true, selected.getPositionCount());
+            }
+        }
+
+        private void toIntermediateBlocksSparse(Block[] blocks, int offset, IntVector selected, DriverContext driverContext) {
+            try (
+                var valuesBuilder = driverContext.blockFactory().newDoubleVectorFixedBuilder(selected.getPositionCount());
+                var deltaBuilder = driverContext.blockFactory().newDoubleVectorFixedBuilder(selected.getPositionCount());
+                var seenBuilder = driverContext.blockFactory().newBooleanVectorFixedBuilder(selected.getPositionCount())
+            ) {
+                for (int i = 0; i < selected.getPositionCount(); i++) {
+                    int group = selected.getInt(i);
+                    if (group < values.size()) {
+                        valuesBuilder.appendDouble(values.get(group));
+                        deltaBuilder.appendDouble(deltas.get(group));
+                    } else {
+                        valuesBuilder.appendDouble(0);
+                        deltaBuilder.appendDouble(0);
+                    }
+                    seenBuilder.appendBoolean(hasValue(group));
+                }
+                blocks[offset + 0] = valuesBuilder.build().asBlock();
+                blocks[offset + 1] = deltaBuilder.build().asBlock();
+                blocks[offset + 2] = seenBuilder.build().asBlock();
+            }
         }
 
         @Override

@@ -22,7 +22,7 @@ import org.elasticsearch.core.Releasables;
 public abstract class AbstractArrayState implements Releasable, GroupingAggregatorState {
     protected final BigArrays bigArrays;
 
-    private BitArray seen;
+    protected BitArray seen;
 
     public AbstractArrayState(BigArrays bigArrays) {
         this.bigArrays = bigArrays;

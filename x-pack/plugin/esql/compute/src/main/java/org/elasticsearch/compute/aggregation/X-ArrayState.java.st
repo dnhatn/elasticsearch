@@ -137,20 +137,55 @@ $endif$
         org.elasticsearch.compute.operator.DriverContext driverContext
     ) {
         assert blocks.length >= offset + 2;
+        if (seen == null) {
+            toIntermediateDense(blocks, offset, selected, driverContext);
+        } else {
+            toIntermediateSparse(blocks, offset, selected, driverContext);
+        }
+    }
+
+    private void toIntermediateDense(
+        Block[] blocks,
+        int offset,
+        IntVector selected,
+        org.elasticsearch.compute.operator.DriverContext driverContext
+    ) {
         try (
-            var valuesBuilder = driverContext.blockFactory().new$Type$BlockBuilder(selected.getPositionCount());
+            var valuesBuilder = driverContext.blockFactory().new$Type$VectorFixedBuilder(selected.getPositionCount());
+        ) {
+            for (int i = 0; i < selected.getPositionCount(); i++) {
+                int group = selected.getInt(i);
+                if (group < $if(boolean)$size$else$values.size()$endif$) {
+                    valuesBuilder.append$Type$(i, values.get(group));
+                } else {
+                    valuesBuilder.append$Type$(i, $if(boolean)$false$else$0$endif$);
+                }
+            }
+            blocks[offset + 0] = valuesBuilder.build().asBlock();
+            blocks[offset + 1] = driverContext.blockFactory().newConstantBooleanBlockWith(true, selected.getPositionCount());
+        }
+    }
+
+    private void toIntermediateSparse(
+        Block[] blocks,
+        int offset,
+        IntVector selected,
+        org.elasticsearch.compute.operator.DriverContext driverContext
+    ) {
+        try (
+            var valuesBuilder = driverContext.blockFactory().new$Type$VectorFixedBuilder(selected.getPositionCount());
             var hasValueBuilder = driverContext.blockFactory().newBooleanVectorFixedBuilder(selected.getPositionCount())
         ) {
             for (int i = 0; i < selected.getPositionCount(); i++) {
                 int group = selected.getInt(i);
                 if (group < $if(boolean)$size$else$values.size()$endif$) {
-                    valuesBuilder.append$Type$(values.get(group));
+                    valuesBuilder.append$Type$(i, values.get(group));
                 } else {
-                    valuesBuilder.append$Type$($if(boolean)$false$else$0$endif$); // TODO can we just use null?
+                    valuesBuilder.append$Type$(i, $if(boolean)$false$else$0$endif$);
                 }
                 hasValueBuilder.appendBoolean(i, hasValue(group));
             }
-            blocks[offset + 0] = valuesBuilder.build();
+            blocks[offset + 0] = valuesBuilder.build().asBlock();
             blocks[offset + 1] = hasValueBuilder.build().asBlock();
         }
     }

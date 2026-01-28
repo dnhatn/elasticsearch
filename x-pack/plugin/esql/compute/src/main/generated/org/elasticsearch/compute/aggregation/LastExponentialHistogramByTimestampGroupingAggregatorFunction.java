@@ -124,8 +124,17 @@ public final class LastExponentialHistogramByTimestampGroupingAggregatorFunction
 
   @Override
   public void addIntermediateInput(int positionOffset, IntArrayBlock groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(2));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block timestampsUncast = page.getBlock(channels.get(0));
     if (timestampsUncast.areAllValuesNull()) {
       return;
@@ -136,11 +145,6 @@ public final class LastExponentialHistogramByTimestampGroupingAggregatorFunction
       return;
     }
     ExponentialHistogramBlock values = (ExponentialHistogramBlock) valuesUncast;
-    Block seenUncast = page.getBlock(channels.get(2));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert timestamps.getPositionCount() == values.getPositionCount() && timestamps.getPositionCount() == seen.getPositionCount();
     ExponentialHistogramScratch valuesScratch = new ExponentialHistogramScratch();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
@@ -192,8 +196,17 @@ public final class LastExponentialHistogramByTimestampGroupingAggregatorFunction
 
   @Override
   public void addIntermediateInput(int positionOffset, IntBigArrayBlock groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(2));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block timestampsUncast = page.getBlock(channels.get(0));
     if (timestampsUncast.areAllValuesNull()) {
       return;
@@ -204,11 +217,6 @@ public final class LastExponentialHistogramByTimestampGroupingAggregatorFunction
       return;
     }
     ExponentialHistogramBlock values = (ExponentialHistogramBlock) valuesUncast;
-    Block seenUncast = page.getBlock(channels.get(2));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert timestamps.getPositionCount() == values.getPositionCount() && timestamps.getPositionCount() == seen.getPositionCount();
     ExponentialHistogramScratch valuesScratch = new ExponentialHistogramScratch();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
@@ -253,8 +261,17 @@ public final class LastExponentialHistogramByTimestampGroupingAggregatorFunction
 
   @Override
   public void addIntermediateInput(int positionOffset, IntVector groups, Page page) {
-    state.enableGroupIdTracking(new SeenGroupIds.Empty());
     assert channels.size() == intermediateBlockCount();
+    Block seenUncast = page.getBlock(channels.get(2));
+    if (seenUncast.areAllValuesNull()) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+      return;
+    }
+    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
+    // avoid tracking group ids if all groups have values
+    if (seen.isConstant() == false || seen.allTrue() == false) {
+      state.enableGroupIdTracking(new SeenGroupIds.Empty());
+    }
     Block timestampsUncast = page.getBlock(channels.get(0));
     if (timestampsUncast.areAllValuesNull()) {
       return;
@@ -265,11 +282,6 @@ public final class LastExponentialHistogramByTimestampGroupingAggregatorFunction
       return;
     }
     ExponentialHistogramBlock values = (ExponentialHistogramBlock) valuesUncast;
-    Block seenUncast = page.getBlock(channels.get(2));
-    if (seenUncast.areAllValuesNull()) {
-      return;
-    }
-    BooleanVector seen = ((BooleanBlock) seenUncast).asVector();
     assert timestamps.getPositionCount() == values.getPositionCount() && timestamps.getPositionCount() == seen.getPositionCount();
     ExponentialHistogramScratch valuesScratch = new ExponentialHistogramScratch();
     for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {

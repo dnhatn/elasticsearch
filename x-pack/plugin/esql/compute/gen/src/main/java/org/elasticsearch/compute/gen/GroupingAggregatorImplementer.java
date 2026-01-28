@@ -610,9 +610,6 @@ public class GroupingAggregatorImplementer {
         builder.addParameter(groupsType, "groups");
         builder.addParameter(PAGE, "page");
 
-        builder.addStatement("state.enableGroupIdTracking(new $T.Empty())", SEEN_GROUP_IDS);
-        builder.addStatement("assert channels.size() == intermediateBlockCount()");
-
         // NOTE:
         // In ALL_FIRST & ALL_LAST only, this forces the aggregator function's "addIntermediateInput" methods to call the
         // aggregator's "combineIntermediate" method, and let it handle null blocks however it wants. This will be removed once
@@ -621,11 +618,26 @@ public class GroupingAggregatorImplementer {
         String aggregatorName = this.declarationType.getSimpleName().toString();
         boolean isAllFirstAllLast = aggregatorName.startsWith("AllFirst") || aggregatorName.startsWith("AllLast");
 
-        int count = 0;
-        for (var interState : intermediateState) {
-            interState.assignToVariable(builder, count, isAllFirstAllLast);
-            count++;
+        boolean trackGroupIdsWithSeen = intermediateState.size() >= 2 && intermediateState.getLast().name().equals("seen");
+        if (trackGroupIdsWithSeen) {
+            builder.addStatement("assert channels.size() == intermediateBlockCount()");
+            int lastIndex = intermediateState.size() - 1;
+            intermediateState.get(lastIndex).assignToVariable(builder, lastIndex, isAllFirstAllLast, true);
+            builder.addComment("avoid tracking group ids if all groups have values");
+            builder.beginControlFlow("if (seen.isConstant() == false || seen.allTrue() == false)");
+            builder.addStatement("state.enableGroupIdTracking(new $T.Empty())", SEEN_GROUP_IDS);
+            builder.endControlFlow();
+            for (int i = 0; i < lastIndex; i++) {
+                intermediateState.get(i).assignToVariable(builder, i, isAllFirstAllLast, false);
+            }
+        } else {
+            builder.addStatement("state.enableGroupIdTracking(new $T.Empty())", SEEN_GROUP_IDS);
+            builder.addStatement("assert channels.size() == intermediateBlockCount()");
+            for (int i = 0; i < intermediateState.size(); i++) {
+                intermediateState.get(i).assignToVariable(builder, i, isAllFirstAllLast, false);
+            }
         }
+
         final String first = intermediateState.get(0).name();
         if (intermediateState.size() > 1) {
             builder.addStatement(
@@ -728,6 +740,17 @@ public class GroupingAggregatorImplementer {
             }
         }
         return builder.build();
+    }
+
+    private void trackGroupIdsOnSeenVector(MethodSpec.Builder builder) {
+        if (intermediateState.size() >= 2 && intermediateState.getLast().name().equals("seen")) {
+            builder.addStatement("boolean skipTrackingGroupIds = seen.isConstant() && seen.allTrue()");
+            builder.beginControlFlow("if (skipTrackingGroupIds == false)");
+            builder.addStatement("state.enableGroupIdTracking(new $T.Empty())", SEEN_GROUP_IDS);
+            builder.endControlFlow();
+        } else {
+            builder.addStatement("state.enableGroupIdTracking(new $T.Empty())", SEEN_GROUP_IDS);
+        }
     }
 
     private MethodSpec evaluateIntermediate() {
