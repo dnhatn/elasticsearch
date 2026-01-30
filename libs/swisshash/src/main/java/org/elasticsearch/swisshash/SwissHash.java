@@ -33,20 +33,12 @@ public abstract class SwissHash {
 
     protected final PageCacheRecycler recycler;
     protected final CircuitBreaker breaker;
-
-    protected int capacity;
-    protected int mask;
-    protected int nextGrowSize;
     protected int size;
     protected int growCount;
 
-    protected SwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, int initialCapacity, float smallCoreFillFactor) {
+    protected SwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, int initialCapacity) {
         this.breaker = Objects.requireNonNull(breaker);
         this.recycler = recycler == null ? PageCacheRecycler.NON_RECYCLING_INSTANCE : recycler;
-
-        this.capacity = initialCapacity;
-        this.mask = capacity - 1;
-        this.nextGrowSize = (int) (capacity * smallCoreFillFactor);
 
         assert initialCapacity == Integer.highestOneBit(initialCapacity) : "intial capacity is a power of two";
     }

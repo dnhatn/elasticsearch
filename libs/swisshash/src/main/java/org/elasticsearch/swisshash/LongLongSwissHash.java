@@ -69,6 +69,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private static final VarHandle LONG_HANDLE = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
     private static final VarHandle INT_HANDLE = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.nativeOrder());
 
+    private int capacity;
+    private int mask;
+    private int nextGrowSize;
+
     /**
      * Pages of {@code keys}, vended by the {@link PageCacheRecycler}. It's
      * important that the size of keys be a power of two, so we can quickly
@@ -80,7 +84,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private final List<Releasable> toClose = new ArrayList<>();
 
     LongLongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
-        super(recycler, breaker, INITIAL_CAPACITY, LongSwissHash.SmallCore.FILL_FACTOR);
+        super(recycler, breaker, INITIAL_CAPACITY);
+        this.capacity = INITIAL_CAPACITY;
+        this.mask = capacity - 1;
+        this.nextGrowSize = (int) (capacity * LongSwissHash.SmallCore.FILL_FACTOR);
         boolean success = false;
         try {
             smallCore = new SmallCore();

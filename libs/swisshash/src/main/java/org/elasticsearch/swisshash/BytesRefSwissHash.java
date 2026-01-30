@@ -80,6 +80,8 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
     // PAGE_SIZE / ID_AND_HASH_SIZE = 16384 / 8 = 2048.
     static final int INITIAL_CAPACITY = PageCacheRecycler.PAGE_SIZE_IN_BYTES / ID_AND_HASH_SIZE;
 
+    static final int MULTI_CORE_THRESHOLD = INITIAL_CAPACITY * 128;
+
     static {
         if (PageCacheRecycler.PAGE_SIZE_IN_BYTES >> PAGE_SHIFT != 1) {
             throw new AssertionError("bad constants");
@@ -100,6 +102,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
     private SmallCore smallCore;
     private BigCore bigCore;
+    private MultiCores multiCores;
 
     /**
      * Creates a new {@link BytesRefSwissHash} that manages its own {@link BytesRefArray}.
@@ -117,15 +120,12 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
     }
 
     private BytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BytesRefArray bytesRefs, boolean ownsBytesRefs) {
-        super(recycler, breaker, INITIAL_CAPACITY, SmallCore.FILL_FACTOR);
+        super(recycler, breaker, INITIAL_CAPACITY);
         this.bytesRefs = bytesRefs;
         this.ownsBytesRefs = ownsBytesRefs;
         boolean success = false;
         try {
-            // If bytesRefs is pre-populated (shared), we don't assume those entries are in this hash.
-            // size starts at 0.
-            this.size = 0;
-            this.smallCore = new SmallCore();
+            this.smallCore = new SmallCore(0);
             success = true;
         } finally {
             if (false == success) {
@@ -144,8 +144,10 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         final int hash = hash(key);
         if (smallCore != null) {
             return smallCore.find(key, hash);
-        } else {
+        } else if (bigCore != null) {
             return bigCore.find(key, hash, control(hash));
+        } else {
+            return multiCores.find(key, hash, control(hash));
         }
     }
 
@@ -162,17 +164,33 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
     private long add(BytesRef key, int hash) {
         if (smallCore != null) {
-            if (size < nextGrowSize) {
-                return smallCore.add(key, hash);
+            return smallCore.add(key, hash);
+        } else if (bigCore != null) {
+            if (bigCore.remainingSlots == 0) {
+                if (bigCore.capacity >= MULTI_CORE_THRESHOLD) {
+                    multiCores = new MultiCores(bigCore);
+                    bigCore.close();
+                    bigCore = null;
+                    return multiCores.add(key, hash);
+                } else {
+                    BigCore newCore = bigCore.grow();
+                    bigCore.close();
+                    bigCore = newCore;
+                }
             }
-            smallCore.transitionToBigCore();
+            return bigCore.add(key, hash);
+        } else {
+            return multiCores.add(key, hash);
         }
-        return bigCore.add(key, hash);
     }
 
     @Override
     public Status status() {
-        return smallCore != null ? smallCore.status() : bigCore.status();
+        if (smallCore != null) {
+            return smallCore.status();
+        } else {
+            return multiCores.status();
+        }
     }
 
     public abstract class Itr extends SwissHash.Itr {
@@ -184,11 +202,27 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
     @Override
     public Itr iterator() {
-        return smallCore != null ? smallCore.iterator() : bigCore.iterator();
+        if (smallCore != null) {
+            return smallCore.iterator();
+        } else if (bigCore != null) {
+            return bigCore.iterator();
+        } else {
+            return multiCores.iterator();
+        }
+    }
+
+    /**
+     * Build the select byte to access a specific core in multi-core.
+     * The top byte is used for the control byte; see {@link #control(int)}.
+     */
+    private static int select(int hash) {
+        return (byte) ((hash >>> (Integer.SIZE - 14)) & 0x7F);
     }
 
     /**
      * Build the control byte for a populated entry out of the hash.
+     * The top byte is used for the multi-level sub cores, so for simplicity,
+     * we always use the top 7 bits of the second highest byte of the hash.
      * The control bytes for a populated entry has the high bit clear
      * and the remaining 7 bits contain the top 7 bits of the hash.
      * So it looks like {@code 0b0xxx_xxxx}.
@@ -199,23 +233,20 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
     @Override
     public void close() {
-        Releasables.close(smallCore, bigCore);
+        Releasables.close(smallCore, bigCore, multiCores);
         if (ownsBytesRefs) {
             Releasables.close(bytesRefs);
         }
     }
 
-    private int growTracking() {
+    private int growTracking(int oldCapacity) {
         // Juggle constants for the new page size
         growCount++;
-        int oldCapacity = capacity;
-        capacity <<= 1;
-        if (capacity < 0) {
-            throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
+        int newCapacity = oldCapacity <<= 1;
+        if (newCapacity < 0) {
+            throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + newCapacity);
         }
-        mask = capacity - 1;
-        nextGrowSize = (int) (capacity * BigCore.FILL_FACTOR);
-        return oldCapacity;
+        return newCapacity;
     }
 
     /**
@@ -230,8 +261,16 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         static final float FILL_FACTOR = 0.6F;
 
         private final byte[] idAndHashPage;
+        final int coreIndex;
+        private final int capacity;
+        private final int mask;
+        private int remainingSlots;
 
-        private SmallCore() {
+        private SmallCore(int coreIndex) {
+            this.capacity = INITIAL_CAPACITY;
+            this.mask = capacity - 1;
+            this.remainingSlots = (int) (capacity * SmallCore.FILL_FACTOR);
+            this.coreIndex = coreIndex;
             boolean success = false;
             try {
                 idAndHashPage = grabPage();
@@ -245,8 +284,8 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         }
 
         int find(final BytesRef key, final int hash) {
-            int slot = slot(hash);
-            for (;; slot = slot(slot + 1)) {
+            int slot = slot(hash, mask);
+            for (;; slot = slot(slot + 1, mask)) {
                 long value = (long) LONG_HANDLE.get(idAndHashPage, idAndHashOffset(slot));
                 int id = id(value);
                 if (id == -1 || (hash(value) == hash && matches(key, id))) {
@@ -256,8 +295,12 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         }
 
         int add(final BytesRef key, final int hash) {
-            int slot = slot(hash);
-            for (;; slot = slot(slot + 1)) {
+            if (remainingSlots == 0) {
+                transitionToBigCore();
+                return bigCore.add(key, hash);
+            }
+            int slot = slot(hash, mask);
+            for (;; slot = slot(slot + 1, mask)) {
                 final int offset = idAndHashOffset(slot);
                 final long value = (long) LONG_HANDLE.get(idAndHashPage, offset);
                 final int id = id(value);
@@ -267,6 +310,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
                     final long newValue = ((long) nextId << 32) | Integer.toUnsignedLong(hash);
                     LONG_HANDLE.set(idAndHashPage, offset, newValue);
                     size++;
+                    --remainingSlots;
                     return nextId;
                 } else if (hash(value) == hash && matches(key, id)) {
                     return -1 - id;
@@ -275,10 +319,9 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         }
 
         void transitionToBigCore() {
-            int oldCapacity = growTracking();
             try {
-                bigCore = new BigCore();
-                rehash(oldCapacity);
+                bigCore = new BigCore(growTracking(capacity));
+                rehash(bigCore, capacity);
             } finally {
                 close();
                 smallCore = null;
@@ -287,7 +330,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
         @Override
         protected Status status() {
-            return new SmallCoreStatus(growCount, capacity, size, nextGrowSize);
+            return new SmallCoreStatus(growCount, capacity, size, (int)(capacity * SmallCore.FILL_FACTOR));
         }
 
         @Override
@@ -310,7 +353,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
             };
         }
 
-        private void rehash(int oldCapacity) {
+        private void rehash(BigCore next, int oldCapacity) {
             for (int slot = 0; slot < oldCapacity; slot++) {
                 final long value = idAndHash(slot);
                 final int id = id(value);
@@ -318,7 +361,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
                     continue;
                 }
                 final int hash = hash(value);
-                bigCore.insert(hash, control(hash), id);
+                next.insert(hash, control(hash), id);
             }
         }
 
@@ -352,7 +395,14 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
         private int insertProbes;
 
-        BigCore() {
+        private final int capacity;
+        private final int mask;
+        private int remainingSlots;
+
+        BigCore(int capacity) {
+            this.capacity = capacity;
+            this.mask = capacity - 1;
+            this.remainingSlots = (int) (capacity * BigCore.FILL_FACTOR);
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "BytesRefSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
@@ -383,7 +433,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
                     final int first = Long.numberOfTrailingZeros(matches);
-                    final int checkSlot = slot(group + first);
+                    final int checkSlot = slot(group + first, mask);
                     final long value = idAndHash(checkSlot);
                     final int id = id(value);
                     if (hash(value) == hash && matches(key, id)) {
@@ -395,23 +445,36 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
                 if (empty != 0) {
                     return -1;
                 }
-                group = slot(group + BYTE_VECTOR_LANES);
+                group = slot(group + BYTE_VECTOR_LANES, mask);
             }
         }
 
-        private int add(final BytesRef key, final int hash) {
-            maybeGrow();
-            return bigCore.addImpl(key, hash);
+        private BigCore grow() {
+            int newCapacity = growTracking(capacity);
+            if (newCapacity < 0) {
+                throw new IllegalArgumentException("overflow: oldCapacity=" + capacity + ", new capacity=" + newCapacity);
+            }
+            BigCore newBigCore = new BigCore(newCapacity);
+            for (int i = 0; i < capacity; i++) {
+                if (controlData[i] == EMPTY) {
+                    continue;
+                }
+                final long value = idAndHash(i);
+                final int hash = hash(value);
+                final int id = id(value);
+                newBigCore.insert(hash, control(hash), id);
+            }
+            return newBigCore;
         }
 
-        private int addImpl(final BytesRef key, final int hash) {
+        private int add(final BytesRef key, final int hash) {
             final byte control = control(hash);
             int group = hash & mask;
             for (;;) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
+                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches), mask);
                     final long value = idAndHash(checkSlot);
                     final int id = id(value);
                     if (hash(value) == hash && matches(key, id)) {
@@ -421,15 +484,16 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
                 }
                 long empty = vec.eq(EMPTY).toLong();
                 if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty), mask);
                     final int id = (int) bytesRefs.size();
                     bytesRefs.append(key);
-                    bigCore.insertAtSlot(insertSlot, hash, control, id);
+                    insertAtSlot(insertSlot, hash, control, id);
                     size++;
                     return id;
                 }
                 group = (group + BYTE_VECTOR_LANES) & mask;
             }
+
         }
 
         private void insertAtSlot(final int insertSlot, final int hash, final byte control, final int id) {
@@ -441,10 +505,12 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
             if (insertSlot < BYTE_VECTOR_LANES) {
                 controlData[insertSlot + capacity] = control;
             }
+            --remainingSlots;
         }
 
         @Override
         protected Status status() {
+            int nextGrowSize = (int) (capacity * BigCore.FILL_FACTOR);
             return new BigCoreStatus(growCount, capacity, size, nextGrowSize, insertProbes, 0, idAndHashPages.length);
         }
 
@@ -468,39 +534,9 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
             };
         }
 
-        private void maybeGrow() {
-            if (size >= nextGrowSize) {
-                assert size == nextGrowSize;
-                grow();
-            }
-        }
-
-        private void grow() {
-            int oldCapacity = growTracking();
-            try {
-                BigCore newBigCore = new BigCore();
-                rehash(oldCapacity, newBigCore);
-                bigCore = newBigCore;
-            } finally {
-                close();
-            }
-        }
-
-        private void rehash(int oldCapacity, BigCore newBigCore) {
-            for (int i = 0; i < oldCapacity; i++) {
-                if (controlData[i] == EMPTY) {
-                    continue;
-                }
-                final long value = idAndHash(i);
-                final int hash = hash(value);
-                final int id = id(value);
-                newBigCore.insert(hash, control(hash), id);
-            }
-        }
-
         /**
          * Inserts the key into the first empty slot that allows it. Used
-         * by {@link #rehash} because we know all keys are unique.
+         * by {@link #grow()}} because we know all keys are unique.
          */
         private void insert(final int hash, final byte control, final int id) {
             int group = hash & mask;
@@ -508,7 +544,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
                 for (int j = 0; j < BYTE_VECTOR_LANES; j++) {
                     int idx = group + j;
                     if (controlData[idx] == EMPTY) {
-                        int insertSlot = slot(group + j);
+                        int insertSlot = slot(group + j, mask);
                         insertAtSlot(insertSlot, hash, control, id);
                         return;
                     }
@@ -521,6 +557,94 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         private long idAndHash(final int slot) {
             final int offset = idAndHashOffset(slot);
             return (long) LONG_HANDLE.get(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK);
+        }
+    }
+
+    final class MultiCores extends Core {
+        private final BigCore[] cores;
+
+        MultiCores(BigCore current) {
+            this.cores = new BigCore[128];
+            boolean success = false;
+            try {
+                for (int i = 0; i < cores.length; i++) {
+                    cores[i] = new BigCore(INITIAL_CAPACITY << 1);
+                }
+                for (int slot = 0; slot < current.capacity; slot++) {
+                    final long value = current.idAndHash(slot);
+                    final int id = id(value);
+                    if (id < 0) {
+                        continue;
+                    }
+                    final int hash = hash(value);
+                    BigCore select = cores[select(hash)];
+                    select.insert(hash, control(hash), id);
+                    if (select.remainingSlots == 0) {
+                        cores[select(hash)] = select.grow();
+                    }
+                }
+                success = true;
+            } finally {
+                if (success == false) {
+                    Releasables.close(cores);
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            Releasables.close(cores);
+        }
+
+        int add(final BytesRef key, final int hash) {
+            int select = select(hash);
+            BigCore core = cores[select];
+            if (core.remainingSlots == 0) {
+                BigCore newCore = core.grow();
+                cores[select] = newCore;
+                core.close();
+                return newCore.add(key, hash);
+            } else {
+                return core.add(key, hash);
+            }
+        }
+
+        int find(final BytesRef key, final int hash, final byte control) {
+            return cores[select(hash)].find(key, hash, control);
+        }
+
+        @Override
+        protected Status status() {
+            // TODO: too slow
+            return new BigCoreStatus(
+                growCount,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            );
+        }
+
+        @Override
+        protected BytesRefSwissHash.Itr iterator() {
+            return new Itr() {
+                @Override
+                public boolean next() {
+                    return ++keyId < size;
+                }
+
+                @Override
+                public int id() {
+                    return keyId;
+                }
+
+                @Override
+                public BytesRef key(BytesRef dest) {
+                    return bytesRefs.get(keyId, dest);
+                }
+            };
         }
     }
 
@@ -558,7 +682,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         return BitMixer.mix32(v.hashCode());
     }
 
-    int slot(int hash) {
+    int slot(int hash, int mask) {
         return hash & mask;
     }
 
@@ -568,9 +692,6 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
     @Override
     public long ramBytesUsed() {
-        long keys = smallCore != null
-            ? smallCore.idAndHashPage.length
-            : Arrays.stream(bigCore.idAndHashPages).mapToLong(b -> b.length).sum();
-        return BASE_RAM_BYTES_USED + bytesRefs.ramBytesUsed() + keys;
+        return BASE_RAM_BYTES_USED + bytesRefs.ramBytesUsed() + 1;
     }
 }

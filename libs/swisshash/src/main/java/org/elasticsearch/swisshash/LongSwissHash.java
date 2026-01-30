@@ -104,9 +104,17 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
     private BigCore bigCore;
     private final List<Releasable> toClose = new ArrayList<>();
 
+    private int capacity;
+    private int mask;
+    private int nextGrowSize;
+
     LongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
-        super(recycler, breaker, INITIAL_CAPACITY, LongSwissHash.SmallCore.FILL_FACTOR);
+        super(recycler, breaker, INITIAL_CAPACITY);
+        this.capacity = INITIAL_CAPACITY;
+        this.mask = capacity - 1;
+        this.nextGrowSize = (int) (capacity * LongSwissHash.SmallCore.FILL_FACTOR);
         boolean success = false;
+
         try {
             smallCore = new SmallCore();
             keyPages = new byte[][] { grabKeyPage() };
