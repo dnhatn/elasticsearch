@@ -79,6 +79,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private BigCore bigCore;
     private final List<Releasable> toClose = new ArrayList<>();
 
+    private long probes = 0L;
+
     LongLongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
         super(recycler, breaker, INITIAL_CAPACITY, LongSwissHash.SmallCore.FILL_FACTOR);
         boolean success = false;
@@ -331,6 +333,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idPages;
 
         private int insertProbes;
+        private int added;
+        private int probed;
 
         BigCore() {
             int controlLength = capacity + BYTE_VECTOR_LANES;
@@ -397,13 +401,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int addImpl(final long key1, final long key2, final int hash) {
             final byte control = control(hash);
             int group = hash & mask;
+            added++;
             for (;;) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
+                    probes++;
                     final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
                     final int id = id(checkSlot);
                     final long keyOffset = keyOffset(id);
+                    probed++;
                     if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
                         return -1 - id;
                     }
@@ -537,6 +544,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         public long ramBytesUsed() {
             return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(controlData) + (long) idPages.length
                 * PageCacheRecycler.PAGE_SIZE_IN_BYTES;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            System.err.println("--> BigCore capacity=" + capacity + " added: " + added + "probed=" + probed);
         }
     }
 
