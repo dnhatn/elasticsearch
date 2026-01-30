@@ -28,11 +28,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Specialization for LongSwissHash, for LongLong. */
 public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     static final VectorSpecies<Byte> BS = ByteVector.SPECIES_128;
+    static final AtomicLong NEXT_ID = new AtomicLong(0L);
 
     private static final int BYTE_VECTOR_LANES = BS.vectorByteSize();
 
@@ -248,7 +250,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         void transitionToBigCore() {
             growTracking();
             try {
-                bigCore = new BigCore();
+                bigCore = new BigCore(NEXT_ID.get());
                 rehash();
             } finally {
                 close();
@@ -335,8 +337,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int insertProbes;
         private int added;
         private int probed;
+        private long coreId;
 
-        BigCore() {
+        BigCore(long coreId) {
+            this.coreId = coreId;
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
@@ -480,7 +484,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void grow() {
             growTracking();
             try {
-                var newBigCore = new BigCore();
+                var newBigCore = new BigCore(coreId);
                 rehash(newBigCore);
                 bigCore = newBigCore;
             } finally {
@@ -549,7 +553,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public void close() {
             super.close();
-            System.err.println("--> BigCore capacity=" + capacity + " added: " + added + "probed=" + probed);
+            System.err.println("--> " + coreId + " capacity=" + capacity + " added: " + added + "probed=" + probed);
         }
     }
 
