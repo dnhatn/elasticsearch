@@ -58,10 +58,10 @@ import java.util.Objects;
  * uses a {@link BytesRefArray} to store the actual bytes, and the hash table
  * slots store the {@code id} which indexes into the {@link BytesRefArray}.
  */
-public final class BytesRefSwissHash extends SwissHash implements Accountable, BytesRefHashTable {
+public final class AbstractBytesRefSwissHash extends SwissHash implements Accountable, BytesRefHashTable {
 
     // base size of the bytes ref hash
-    private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BytesRefSwissHash.class)
+    private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(AbstractBytesRefSwissHash.class)
         // spare BytesRef
         + RamUsageEstimator.shallowSizeOfInstance(BytesRef.class);
 
@@ -102,21 +102,21 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
     private BigCore bigCore;
 
     /**
-     * Creates a new {@link BytesRefSwissHash} that manages its own {@link BytesRefArray}.
+     * Creates a new {@link AbstractBytesRefSwissHash} that manages its own {@link BytesRefArray}.
      */
-    BytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BigArrays bigArrays) {
+    AbstractBytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BigArrays bigArrays) {
         this(recycler, breaker, new BytesRefArray(PageCacheRecycler.PAGE_SIZE_IN_BYTES, bigArrays), true);
     }
 
     /**
-     * Creates a new {@link BytesRefSwissHash} that uses the provided {@link BytesRefArray}.
-     * This allows multiple {@link BytesRefSwissHash} to share the same key storage and ID space.
+     * Creates a new {@link AbstractBytesRefSwissHash} that uses the provided {@link BytesRefArray}.
+     * This allows multiple {@link AbstractBytesRefSwissHash} to share the same key storage and ID space.
      */
-    BytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BytesRefArray bytesRefs) {
+    AbstractBytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BytesRefArray bytesRefs) {
         this(recycler, breaker, bytesRefs, false);
     }
 
-    private BytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BytesRefArray bytesRefs, boolean ownsBytesRefs) {
+    private AbstractBytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BytesRefArray bytesRefs, boolean ownsBytesRefs) {
         super(recycler, breaker, INITIAL_CAPACITY, SmallCore.FILL_FACTOR);
         this.bytesRefs = bytesRefs;
         this.ownsBytesRefs = ownsBytesRefs;
