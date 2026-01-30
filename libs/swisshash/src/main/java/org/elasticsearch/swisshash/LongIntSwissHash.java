@@ -23,7 +23,9 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 
 public final class LongIntSwissHash extends AbstractBytesRefSwissHash implements LongIntHashTable {
-    private final BytesRef fixed = new BytesRef(new byte[Long.BYTES + Integer.BYTES]);
+    private final BytesRef EMPTY = new BytesRef();
+    private long currentKey1;
+    private int currentKey2;
     private static final VarHandle LONG_HANDLE = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
     private static final VarHandle INT_HANDLE = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.nativeOrder());
     private static final int KEY_SIZE = Long.BYTES + Integer.BYTES;
@@ -58,16 +60,16 @@ public final class LongIntSwissHash extends AbstractBytesRefSwissHash implements
 
     @Override
     public long find(long key1, int key2) {
-        LONG_HANDLE.set(fixed.bytes, 0, key1);
-        INT_HANDLE.set(fixed.bytes, Long.BYTES, key2);
-        return findKey(fixed, hash(key1, key2));
+        currentKey1 = key1;
+        currentKey2 = key2;
+        return findKey(EMPTY, hash(key1, key2));
     }
 
     @Override
     public long add(long key1, int key2) {
-        LONG_HANDLE.set(fixed.bytes, 0, key1);
-        INT_HANDLE.set(fixed.bytes, Long.BYTES, key2);
-        return addKey(fixed, hash(key1, key2));
+        currentKey1 = key1;
+        currentKey2 = key2;
+        return addKey(EMPTY, hash(key1, key2));
     }
 
     static int hash(long key1, int key2) {
@@ -98,21 +100,14 @@ public final class LongIntSwissHash extends AbstractBytesRefSwissHash implements
 
     @Override
     protected boolean matches(BytesRef key, int id) {
-        assert key == fixed;
-        byte[] page = keyPages[pageIndex(id)];
+        assert key == EMPTY;
+        byte[] keyPage = keyPages[pageIndex(id)];
         int offset = keyOffset(id);
-        return Arrays.mismatch(
-            page,
-            offset,
-            offset + KEY_SIZE,
-            key.bytes,
-            key.offset,
-            key.offset + KEY_SIZE) < 0;
+        return (long)LONG_HANDLE.get(keyPage, offset) == currentKey1 && (int)INT_HANDLE.get(keyPage, offset + Long.BYTES) == currentKey2;
     }
 
     @Override
     protected int storeKey(BytesRef key) {
-        assert key.length == KEY_SIZE;
         final int id = size;
         final int pageIndex = pageIndex(id);
         // grab more pages
@@ -123,7 +118,10 @@ public final class LongIntSwissHash extends AbstractBytesRefSwissHash implements
                 keyPages[i] = grabKeyPage();
             }
         }
-        System.arraycopy(key.bytes, key.offset, keyPages[pageIndex], keyOffset(id), KEY_SIZE);
+        final byte[] keyPage = keyPages[pageIndex];
+        final int offset = keyOffset(id);
+        LONG_HANDLE.set(keyPage, offset, currentKey1);
+        INT_HANDLE.set(keyPage, offset + Long.BYTES, currentKey2);
         return id;
     }
 
