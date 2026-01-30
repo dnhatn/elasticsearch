@@ -12,6 +12,7 @@ import org.elasticsearch.common.util.BytesRefHashTable;
 import org.elasticsearch.common.util.FeatureFlag;
 import org.elasticsearch.common.util.LongHash;
 import org.elasticsearch.common.util.LongHashTable;
+import org.elasticsearch.common.util.LongIntHashTable;
 import org.elasticsearch.common.util.LongLongHash;
 import org.elasticsearch.common.util.LongLongHashTable;
 import org.elasticsearch.compute.data.BlockFactory;
@@ -48,6 +49,15 @@ public class HashImplFactory {
             return SWISS_HASH_FACTORY.newLongLongSwissHash(bf.bigArrays().recycler(), bf.breaker());
         } else {
             return new LongLongHash(1, bf.bigArrays());
+        }
+    }
+
+    /** Creates a new LongIntHashTable. */
+    public static LongIntHashTable newLongIntHash(BlockFactory bf) {
+        if (SWISS_HASH_FACTORY != null) {
+            return SWISS_HASH_FACTORY.newLongIntSwissHash(bf.bigArrays().recycler(), bf.breaker());
+        } else {
+            throw new UnsupportedOperationException();
         }
     }
 

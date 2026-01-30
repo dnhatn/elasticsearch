@@ -16,17 +16,15 @@ import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.breaker.CircuitBreaker;
-import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BytesRefArray;
-import org.elasticsearch.common.util.BytesRefHashTable;
 import org.elasticsearch.common.util.PageCacheRecycler;
+import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
 import java.util.Arrays;
-import java.util.Objects;
 
 /**
  * Assigns {@code int} ids to {@code BytesRef}s, vending the ids in order they are added.
@@ -58,7 +56,7 @@ import java.util.Objects;
  * uses a {@link BytesRefArray} to store the actual bytes, and the hash table
  * slots store the {@code id} which indexes into the {@link BytesRefArray}.
  */
-public final class AbstractBytesRefSwissHash extends SwissHash implements Accountable, BytesRefHashTable {
+abstract class AbstractBytesRefSwissHash extends SwissHash implements Accountable, Releasable {
 
     // base size of the bytes ref hash
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(AbstractBytesRefSwissHash.class)
@@ -94,54 +92,29 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
 
     private static final VarHandle LONG_HANDLE = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
 
-    private final BytesRefArray bytesRefs;
-    private final boolean ownsBytesRefs;
-    private final BytesRef scratch = new BytesRef();
-
     private SmallCore smallCore;
     private BigCore bigCore;
 
-    /**
-     * Creates a new {@link AbstractBytesRefSwissHash} that manages its own {@link BytesRefArray}.
-     */
-    AbstractBytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BigArrays bigArrays) {
-        this(recycler, breaker, new BytesRefArray(PageCacheRecycler.PAGE_SIZE_IN_BYTES, bigArrays), true);
-    }
-
-    /**
-     * Creates a new {@link AbstractBytesRefSwissHash} that uses the provided {@link BytesRefArray}.
-     * This allows multiple {@link AbstractBytesRefSwissHash} to share the same key storage and ID space.
-     */
-    AbstractBytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BytesRefArray bytesRefs) {
-        this(recycler, breaker, bytesRefs, false);
-    }
-
-    private AbstractBytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BytesRefArray bytesRefs, boolean ownsBytesRefs) {
+    AbstractBytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
         super(recycler, breaker, INITIAL_CAPACITY, SmallCore.FILL_FACTOR);
-        this.bytesRefs = bytesRefs;
-        this.ownsBytesRefs = ownsBytesRefs;
-        boolean success = false;
-        try {
-            // If bytesRefs is pre-populated (shared), we don't assume those entries are in this hash.
-            // size starts at 0.
-            this.size = 0;
-            this.smallCore = new SmallCore();
-            success = true;
-        } finally {
-            if (false == success) {
-                if (ownsBytesRefs) {
-                    Releasables.close(bytesRefs);
-                }
-            }
-        }
+        this.size = 0;
+        this.smallCore = new SmallCore();
     }
+
+    /**
+     * Checks whether the {@code key} matches the key stored at {@code id}.
+     */
+    protected abstract boolean matches(BytesRef key, int id);
+
+    /**
+     * Stores the {@code key} and returns its {@code id}.
+     */
+    protected abstract int storeKey(BytesRef key);
 
     /**
      * Finds an {@code id} by a {@code key}.
      */
-    @Override
-    public long find(BytesRef key) {
-        final int hash = hash(key);
+    final long findKey(BytesRef key, int hash) {
         if (smallCore != null) {
             return smallCore.find(key, hash);
         } else {
@@ -154,13 +127,7 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
      * it's previous assigned {@code id} will be returned. If it wasn't present
      * it'll be assigned a new {@code id}.
      */
-    @Override
-    public long add(BytesRef key) {
-        final int hash = hash(key);
-        return add(key, hash);
-    }
-
-    private long add(BytesRef key, int hash) {
+    final long addKey(BytesRef key, int hash) {
         if (smallCore != null) {
             if (size < nextGrowSize) {
                 return smallCore.add(key, hash);
@@ -173,13 +140,6 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
     @Override
     public Status status() {
         return smallCore != null ? smallCore.status() : bigCore.status();
-    }
-
-    public abstract class Itr extends SwissHash.Itr {
-        /**
-         * The key the iterator current points to.
-         */
-        public abstract BytesRef key(BytesRef dest);
     }
 
     @Override
@@ -200,9 +160,6 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
     @Override
     public void close() {
         Releasables.close(smallCore, bigCore);
-        if (ownsBytesRefs) {
-            Releasables.close(bytesRefs);
-        }
     }
 
     private int growTracking() {
@@ -262,8 +219,7 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
                 final long value = (long) LONG_HANDLE.get(idAndHashPage, offset);
                 final int id = id(value);
                 if (id == -1) { // means unset
-                    final int nextId = (int) bytesRefs.size();
-                    bytesRefs.append(key);
+                    final int nextId = storeKey(key);
                     final long newValue = ((long) nextId << 32) | Integer.toUnsignedLong(hash);
                     LONG_HANDLE.set(idAndHashPage, offset, newValue);
                     size++;
@@ -301,11 +257,6 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
                 @Override
                 public int id() {
                     return keyId;
-                }
-
-                @Override
-                public BytesRef key(BytesRef dest) {
-                    return bytesRefs.get(keyId, dest);
                 }
             };
         }
@@ -422,8 +373,7 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
                 long empty = vec.eq(EMPTY).toLong();
                 if (empty != 0) {
                     final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    final int id = (int) bytesRefs.size();
-                    bytesRefs.append(key);
+                    final int id = storeKey(key);
                     bigCore.insertAtSlot(insertSlot, hash, control, id);
                     size++;
                     return id;
@@ -459,11 +409,6 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
                 @Override
                 public int id() {
                     return keyId;
-                }
-
-                @Override
-                public BytesRef key(BytesRef dest) {
-                    return bytesRefs.get(keyId, dest);
                 }
             };
         }
@@ -524,24 +469,6 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
         }
     }
 
-    /**
-     * Returns the key at <code>0 &lt;= id &lt;= size()</code>.
-     * The result is undefined if the id is unused.
-     * @param id the id returned when the key was added
-     * @return the key
-     */
-    @Override
-    public BytesRef get(long id, BytesRef dest) {
-        Objects.checkIndex(id, size());
-        return bytesRefs.get(id, dest);
-    }
-
-    /** Returns the key array. */
-    @Override
-    public BytesRefArray getBytesRefs() {
-        return bytesRefs;
-    }
-
     int idAndHashOffset(int slot) {
         return slot * ID_AND_HASH_SIZE;
     }
@@ -554,16 +481,8 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
         return (int) value;
     }
 
-    int hash(BytesRef v) {
-        return BitMixer.mix32(v.hashCode());
-    }
-
     int slot(int hash) {
         return hash & mask;
-    }
-
-    private boolean matches(BytesRef key, int id) {
-        return key.bytesEquals(bytesRefs.get(id, scratch));
     }
 
     @Override
@@ -571,6 +490,6 @@ public final class AbstractBytesRefSwissHash extends SwissHash implements Accoun
         long keys = smallCore != null
             ? smallCore.idAndHashPage.length
             : Arrays.stream(bigCore.idAndHashPages).mapToLong(b -> b.length).sum();
-        return BASE_RAM_BYTES_USED + bytesRefs.ramBytesUsed() + keys;
+        return BASE_RAM_BYTES_USED + keys;
     }
 }

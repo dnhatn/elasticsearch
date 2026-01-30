@@ -12,8 +12,8 @@ import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
 import org.elasticsearch.common.util.BytesRefHashTable;
+import org.elasticsearch.common.util.LongIntHashTable;
 import org.elasticsearch.common.util.LongLongHash;
-import org.elasticsearch.common.util.LongLongHashTable;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.SeenGroupIds;
 import org.elasticsearch.compute.data.Block;
@@ -77,11 +77,11 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
     }
 
     final class LongIntVectorOnlyBlockHash extends BlockHash {
-        private final LongLongHashTable longLongHash;
+        private final LongIntHashTable longIntHash;
 
         LongIntVectorOnlyBlockHash(BlockFactory blockFactory) {
             super(blockFactory);
-            this.longLongHash = HashImplFactory.newLongLongHash(blockFactory);
+            this.longIntHash = HashImplFactory.newLongIntHash(blockFactory);
         }
 
         @Override
@@ -97,7 +97,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
                     for (int i = 0; i < batchSize; i++) {
                         long longKey = longVector.getLong(offset + i);
                         int intValue = intVector.getInt(offset + i);
-                        long ord = hashOrdToGroup(longLongHash.add(longKey, intValue));
+                        long ord = hashOrdToGroup(longIntHash.add(longKey, intValue));
                         groupIdsBuilder.appendInt(i, Math.toIntExact(ord));
                     }
                     try (var groupIds = groupIdsBuilder.build()) {
@@ -110,7 +110,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
 
         @Override
         public int numKeys() {
-            return Math.toIntExact(longLongHash.size());
+            return Math.toIntExact(longIntHash.size());
         }
 
         @Override
@@ -136,7 +136,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
                         for (int i = 0; i < batchSize; i++) {
                             long longKey = longVector.getLong(offset + i);
                             int intKey = intVector.getInt(offset + i);
-                            long ord = longLongHash.find(longKey, intKey);
+                            long ord = longIntHash.find(longKey, intKey);
                             if (ord < 0) {
                                 groupIdsBuilder.appendNull();
                             } else {
@@ -170,8 +170,8 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
             try {
                 BytesRef packedKey = new BytesRef(new byte[1 + Long.BYTES + Integer.BYTES]);
                 for (int i = 0; i < entries; i++) {
-                    long longKey = longLongHash.getKey1(i);
-                    int intKey = (int) longLongHash.getKey2(i);
+                    long longKey = longIntHash.getKey1(i);
+                    int intKey = longIntHash.getKey2(i);
                     LONG_HANDLE.set(packedKey.bytes, longPosition, longKey);
                     INT_HANDLE.set(packedKey.bytes, intPosition, intKey);
                     long ord = packedHash.add(packedKey);
@@ -197,8 +197,8 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
                 var intsBuilder = blockFactory.newIntVectorFixedBuilder(positionCount)
             ) {
                 for (int i = 0; i < positionCount; i++) {
-                    long longKey = longLongHash.getKey1(i);
-                    int intKey = (int) longLongHash.getKey2(i);
+                    long longKey = longIntHash.getKey1(i);
+                    int intKey = longIntHash.getKey2(i);
                     longsBuilder.appendLong(longKey);
                     intsBuilder.appendInt(intKey);
                 }
@@ -229,7 +229,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
 
         @Override
         public void close() {
-            Releasables.close(longLongHash);
+            Releasables.close(longIntHash);
         }
 
         @Override
@@ -239,9 +239,9 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
                 + "], IntKey[channel="
                 + intChannel
                 + "]], entries="
-                + longLongHash.size()
+                + longIntHash.size()
                 + ", size="
-                + longLongHash.ramBytesUsed()
+                + longIntHash.ramBytesUsed()
                 + "b}";
         }
     }
