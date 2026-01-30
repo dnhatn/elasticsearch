@@ -578,7 +578,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     }
 
     private static int hash(long key1, long key2) {
-        return 31 * BitMixer.mix(key1) + BitMixer.mix(key2);
+        return BitMixer.mix(key1) ^ BitMixer.mix(key2);
     }
 
     private int slot(final int hash) {
