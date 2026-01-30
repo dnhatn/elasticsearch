@@ -45,6 +45,7 @@ public class BytesRefSwissHashTests extends ESTestCase {
             params.add(new Object[] { addType, "two idAndHash pages", PageCacheRecycler.PAGE_SIZE_IN_BYTES / Long.BYTES, 1, 2 });
             params.add(new Object[] { addType, "many", PageCacheRecycler.PAGE_SIZE_IN_BYTES, 4, 16 });
             params.add(new Object[] { addType, "huge", 100_000, 6, 64 });
+            params.add(new Object[] { addType, "multi-core", 1000_000, 6, 64 });
         }
         return params;
     }
