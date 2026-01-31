@@ -341,8 +341,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idAndHashPages;
 
         private int insertProbes;
-        private int added;
-        private int probed;
 
         BigCore() {
             super(
@@ -431,7 +429,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     if (hash(idAndHash) == hash) {
                         final int id = id(idAndHash);
                         final long keyOffset = keyOffset(id);
-                        probed++;
                         if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
                             return -1 - id;
                         }
@@ -446,7 +443,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     setKeys(keyOffset, key1, key2);
                     bigCore.insertAtSlot(insertSlot, hash, control, id);
                     size++;
-                    added++;
                     return id;
                 }
                 group = (group + BYTE_VECTOR_LANES) & mask;
@@ -530,7 +526,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(int oldCapacity, BigCore newBigCore) {
-            long startNanos = System.nanoTime();
             for (int i = 0; i < oldCapacity; i++) {
                 byte control = controlData[i];
                 if (control == EMPTY) {
@@ -540,10 +535,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final int hash = hash(value);
                 final int id = id(value);
                 newBigCore.insert(hash, control, id);
-            }
-            long endTime = System.nanoTime();
-            if (capacity > 100_000) {
-                System.err.println("--> resize " + capacity + " took " + (endTime - startNanos));
             }
         }
 
@@ -597,9 +588,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public void close() {
             super.close();
-            if (capacity > 100_000) {
-                System.err.println("capacity " + capacity + " added=" + added + " probed=" + probed);
-            }
         }
     }
 
