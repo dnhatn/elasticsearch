@@ -335,11 +335,14 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private static final byte EMPTY = (byte) 0x80; // empty slot
 
+        // multiple core here using top bytes from hash64?
         private final byte[] controlData;
 
         private final byte[][] idAndHashPages;
 
         private int insertProbes;
+        private int added;
+        private int probed;
 
         BigCore() {
             int controlLength = capacity + BYTE_VECTOR_LANES;
@@ -423,6 +426,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     if (hash(idAndHash) == hash) {
                         final int id = id(idAndHash);
                         final long keyOffset = keyOffset(id);
+                        probed++;
                         if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
                             return -1 - id;
                         }
@@ -437,6 +441,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     setKeys(keyOffset, key1, key2);
                     bigCore.insertAtSlot(insertSlot, hash, control, id);
                     size++;
+                    added++;
                     return id;
                 }
                 group = (group + BYTE_VECTOR_LANES) & mask;
@@ -580,6 +585,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         public long ramBytesUsed() {
             return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(controlData) + (long) idAndHashPages.length
                 * PageCacheRecycler.PAGE_SIZE_IN_BYTES;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            System.err.println("capacity " + capacity + " added=" + added + " probed=" + probed);
         }
     }
 
