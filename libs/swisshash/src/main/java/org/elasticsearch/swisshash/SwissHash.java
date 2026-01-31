@@ -232,11 +232,12 @@ public abstract class SwissHash {
      * and {@link Releasable}.
      */
     abstract class Core implements Releasable {
+        private int acquiredPages = 0;
         final List<Releasable> toClose = new ArrayList<>();
 
         byte[] grabPage() {
             breaker.addEstimateBytesAndMaybeBreak(PageCacheRecycler.PAGE_SIZE_IN_BYTES, "SwissHash.Core");
-            toClose.add(() -> breaker.addWithoutBreaking(-PageCacheRecycler.PAGE_SIZE_IN_BYTES));
+            acquiredPages++;
             Recycler.V<byte[]> page = recycler.bytePage(false);
             toClose.add(page);
             return page.v();
@@ -254,6 +255,7 @@ public abstract class SwissHash {
 
         @Override
         public void close() {
+            breaker.addEstimateBytesAndMaybeBreak(-PageCacheRecycler.PAGE_SIZE_IN_BYTES * (long) acquiredPages, "SwissHash.Core");
             Releasables.close(toClose);
             toClose.clear();
         }
