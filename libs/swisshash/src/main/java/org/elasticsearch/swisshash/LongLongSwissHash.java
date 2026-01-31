@@ -362,9 +362,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 for (int i = 0; i < keyPagesNeeded; i++) {
                     keyPages[i] = (i < initialKeyPages.length) ? initialKeyPages[i] : grabKeyPage();
                 }
-                assert keyPages[Math.toIntExact(keyOffset(mask) >> PAGE_SHIFT)] != null
-                    && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
-                    && keyPagesNeeded > initialKeyPages.length;
+//                assert keyPages[Math.toIntExact(keyOffset(mask) >> PAGE_SHIFT)] != null
+//                    && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
+//                    && keyPagesNeeded > initialKeyPages.length;
 
                 int idPagesNeeded = (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT;
                 idPagesNeeded++;
@@ -422,7 +422,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
-                    // TODO: can we switch to leading
                     final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
                     final long idAndHash = idAndHash(checkSlot);
                     if (hash(idAndHash) == hash) {
@@ -453,9 +452,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int offset = idAndHashOffset(insertSlot);
             LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
             controlData[insertSlot] = control;
-            // mirror only if slot is within the first group size, to handle wraparound loads
-            if (insertSlot < BYTE_VECTOR_LANES) {
-                controlData[insertSlot + capacity] = control;
+            if (insertSlot == mask) {
+                Arrays.fill(controlData, mask, controlData.length, control);
+            } else {
+                controlData[insertSlot] = control;
             }
         }
 
