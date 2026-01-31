@@ -70,7 +70,13 @@ public class HashAggregationOperator implements Operator {
             return new HashAggregationOperator(
                 aggregatorMode,
                 aggregators,
-                () -> BlockHash.build(groups, driverContext.blockFactory(), maxPageSize, false),
+                () -> {
+                    if (aggregatorMode.isOutputPartial()) {
+                        return BlockHash.buildPackedValuesBlockHash(groups, driverContext.blockFactory(), maxPageSize);
+                    } else {
+                        return BlockHash.build(groups, driverContext.blockFactory(), maxPageSize, false);
+                    }
+                },
                 partialEmitKeysThreshold,
                 partialEmitUniquenessThreshold,
                 driverContext
