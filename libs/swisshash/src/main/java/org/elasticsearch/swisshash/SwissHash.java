@@ -13,6 +13,7 @@ import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.io.stream.NamedWriteable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.recycler.Recycler;
 import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
@@ -231,13 +232,14 @@ public abstract class SwissHash {
      * and {@link Releasable}.
      */
     abstract class Core implements Releasable {
-        private int totalPages;
         final List<Releasable> toClose = new ArrayList<>();
 
         byte[] grabPage() {
             breaker.addEstimateBytesAndMaybeBreak(PageCacheRecycler.PAGE_SIZE_IN_BYTES, "SwissHash.Core");
-            totalPages++;
-            return new byte[PageCacheRecycler.PAGE_SIZE_IN_BYTES];
+            toClose.add(() -> breaker.addWithoutBreaking(-PageCacheRecycler.PAGE_SIZE_IN_BYTES));
+            Recycler.V<byte[]> page = recycler.bytePage(false);
+            toClose.add(page);
+            return page.v();
         }
 
         /**
@@ -252,7 +254,6 @@ public abstract class SwissHash {
 
         @Override
         public void close() {
-            breaker.addWithoutBreaking(-totalPages);
             Releasables.close(toClose);
             toClose.clear();
         }
