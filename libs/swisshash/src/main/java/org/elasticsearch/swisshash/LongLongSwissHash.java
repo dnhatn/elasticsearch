@@ -113,7 +113,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         if (smallCore != null) {
             return smallCore.find(key1, key2, hash);
         } else {
-            return bigCore.find(key1, key2, hash, control(hash));
+            return bigCore.find(key1, key2);
         }
     }
 
@@ -124,14 +124,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
      */
     @Override
     public long add(final long key1, final long key2) {
-        final int hash = hash(key1, key2);
         if (smallCore != null) {
             if (size < nextGrowSize) {
-                return smallCore.add(key1, key2, hash);
+                return smallCore.add(key1, key2);
             }
             smallCore.transitionToBigCore();
         }
-        return bigCore.add(key1, key2, hash);
+        return bigCore.add(key1, key2);
     }
 
     @Override
@@ -158,8 +157,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
      * and the remaining 7 bits contain the top 7 bits of the hash.
      * So it looks like {@code 0b0xxx_xxxx}.
      */
-    private static byte control(int hash) {
-        return (byte) (hash >>> (Integer.SIZE - 7));
+    private static byte control(long hash) {
+        return (byte) (hash >>> (Long.SIZE - 7));
     }
 
     @Override
@@ -228,7 +227,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             return slot * ID_SIZE;
         }
 
-        int add(final long key1, final long key2, final int hash) {
+        int add(final long key1, final long key2) {
+            final int hash = hash(key1, key2);
             int slot = slot(hash);
             for (;;) {
                 final int idOffset = idOffset(slot);
@@ -294,8 +294,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void rehash() {
             for (int i = 0; i < size; i++) {
                 final int keyOffset = keyOffset(i);
-                final int hash = hash(key1(keyOffset), key2(keyOffset));
-                bigCore.insert(hash, control(hash), i);
+                final long hash64 = hash64(key1(keyOffset), key2(keyOffset));
+                final int hash = (int) hash64;
+                final byte control = control(hash64);
+                bigCore.insert(hash, control, i);
             }
         }
 
@@ -373,7 +375,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private int find(final long key1, final long key2, final int hash, final byte control) {
+        private int find(final long key1, final long key2) {
+            final long hash64 = hash64(key1, key2);
+            final int hash = (int) hash64;
+            final byte control = control(hash64);
             int group = hash & mask;
             for (;;) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
@@ -398,13 +403,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private int add(final long key1, final long key2, final int hash) {
+        private int add(final long key1, final long key2) {
             maybeGrow();
-            return bigCore.addImpl(key1, key2, hash);
+            return bigCore.addImpl(key1, key2);
         }
 
-        private int addImpl(final long key1, final long key2, final int hash) {
-            final byte control = control(hash);
+        private int addImpl(final long key1, final long key2) {
+            final long hash64 = hash64(key1, key2);
+            final int hash = (int) hash64;
+            final byte control = control(hash64);
             int group = hash & mask;
             for (;;) {
                 // does this goes backward?
@@ -595,6 +602,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     private static int hash(long key1, long key2) {
         return 31 * BitMixer.mix(key1) + BitMixer.mix(key2);
+    }
+
+    private static long hash64(long key1, long key2) {
+        return 31L * BitMixer.mix64(key1) + BitMixer.mix64(key2);
     }
 
     private int slot(final int hash) {
