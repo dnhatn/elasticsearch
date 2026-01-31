@@ -41,9 +41,9 @@ public class LongLongSwissHashTests extends ESTestCase {
             params.add(new Object[] { addType, "tiny", 5, 0, 1, 1 });
             params.add(new Object[] { addType, "small", LongLongSwissHash.INITIAL_CAPACITY / 2, 0, 1, 1 });
             params.add(new Object[] { addType, "two key pages", PageCacheRecycler.PAGE_SIZE_IN_BYTES / (Long.BYTES * 2), 1, 2, 1 });
-            params.add(new Object[] { addType, "two id pages", PageCacheRecycler.PAGE_SIZE_IN_BYTES / Integer.BYTES, 3, 8, 2 });
-            params.add(new Object[] { addType, "many", PageCacheRecycler.PAGE_SIZE_IN_BYTES, 5, 32, 8 });
-            params.add(new Object[] { addType, "huge", 100_000, 7, 128, 32 });
+            params.add(new Object[] { addType, "two id pages", PageCacheRecycler.PAGE_SIZE_IN_BYTES / Integer.BYTES, 3, 8, 4 });
+            params.add(new Object[] { addType, "many", PageCacheRecycler.PAGE_SIZE_IN_BYTES, 5, 32, 16 });
+            params.add(new Object[] { addType, "huge", 100_000, 7, 128, 64 });
         }
         return params;
     }

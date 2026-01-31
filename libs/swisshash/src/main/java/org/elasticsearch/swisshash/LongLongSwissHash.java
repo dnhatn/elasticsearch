@@ -13,6 +13,7 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.recycler.Recycler;
@@ -43,6 +44,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private static final int KEY_SIZE = Long.BYTES + Long.BYTES;
 
     private static final int ID_SIZE = Integer.BYTES;
+    private static final int ID_AND_HASH_SIZE = Long.BYTES;
+
 
     static final int INITIAL_CAPACITY = PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE;
 
@@ -221,6 +224,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
+        private int idOffset(final int slot) {
+            return slot * ID_SIZE;
+        }
+
         int add(final long key1, final long key2, final int hash) {
             int slot = slot(hash);
             for (;;) {
@@ -328,7 +335,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private final byte[] controlData;
 
-        private final byte[][] idPages;
+        private final byte[][] idAndHashPages;
 
         private int insertProbes;
 
@@ -352,13 +359,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
                     && keyPagesNeeded > initialKeyPages.length;
 
-                int idPagesNeeded = (capacity * ID_SIZE - 1) >> PAGE_SHIFT;
+                int idPagesNeeded = (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT;
                 idPagesNeeded++;
-                idPages = new byte[idPagesNeeded][];
+                idAndHashPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
-                    idPages[i] = grabPage();
+                    idAndHashPages[i] = grabPage();
                 }
-                assert idPages[idOffset(mask) >> PAGE_SHIFT] != null;
                 success = true;
             } finally {
                 if (false == success) {
@@ -374,10 +380,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
                     final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final int id = id(checkSlot);
-                    final long keyOffset = keyOffset(id);
-                    if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
-                        return id;
+                    final long idAndHash = idAndHash(checkSlot);
+                    if (hash(idAndHash) == hash) {
+                        final int id = id(idAndHash);
+                        final long keyOffset = keyOffset(id);
+                        if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                            return id;
+                        }
                     }
                     matches &= matches - 1; // clear the first set bit and try again
                 }
@@ -398,14 +407,19 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final byte control = control(hash);
             int group = hash & mask;
             for (;;) {
+                // does this goes backward?
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
+                    // TODO: can we switch to leading
                     final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final int id = id(checkSlot);
-                    final long keyOffset = keyOffset(id);
-                    if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
-                        return -1 - id;
+                    final long idAndHash = idAndHash(checkSlot);
+                    if (hash(idAndHash) == hash) {
+                        final int id = id(idAndHash);
+                        final long keyOffset = keyOffset(id);
+                        if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                            return -1 - id;
+                        }
                     }
                     matches &= matches - 1; // clear the first set bit and try again
                 }
@@ -415,7 +429,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final int id = size;
                     final long keyOffset = keyOffset(id);
                     setKeys(keyOffset, key1, key2);
-                    bigCore.insertAtSlot(insertSlot, control, id);
+                    bigCore.insertAtSlot(insertSlot, hash, control, id);
                     size++;
                     return id;
                 }
@@ -423,9 +437,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private void insertAtSlot(final int insertSlot, final byte control, final int id) {
-            final int idOffset = idOffset(insertSlot);
-            INT_HANDLE.set(idPages[idOffset >> PAGE_SHIFT], idOffset & PAGE_MASK, id);
+        private void insertAtSlot(final int insertSlot, final int hash, final byte control, final int id) {
+            final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
+            final int offset = idAndHashOffset(insertSlot);
+            LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
             controlData[insertSlot] = control;
             // mirror only if slot is within the first group size, to handle wraparound loads
             if (insertSlot < BYTE_VECTOR_LANES) {
@@ -433,9 +448,26 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
+        private long idAndHash(final int slot) {
+            final int offset = idAndHashOffset(slot);
+            return (long) LONG_HANDLE.get(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK);
+        }
+
+        private int hash(long value) {
+            return (int) value;
+        }
+
+        private int id(long value) {
+            return (int) (value >>> 32);
+        }
+
+        int idAndHashOffset(int slot) {
+            return slot * ID_AND_HASH_SIZE;
+        }
+
         @Override
         protected Status status() {
-            return new BigCoreStatus(growCount, capacity, size, nextGrowSize, insertProbes, keyPages.length, idPages.length);
+            return new BigCoreStatus(growCount, capacity, size, nextGrowSize, insertProbes, keyPages.length, idAndHashPages.length);
         }
 
         @Override
@@ -471,21 +503,26 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void grow() {
-            growTracking();
+            final int oldCapacity = growTracking();
             try {
                 var newBigCore = new BigCore();
-                rehash(newBigCore);
+                rehash(oldCapacity, newBigCore);
                 bigCore = newBigCore;
             } finally {
                 close();
             }
         }
 
-        private void rehash(BigCore newBigCore) {
-            for (int i = 0; i < size; i++) {
-                final long keyOffset = keyOffset(i);
-                final int hash = hash(key1(keyOffset), key2(keyOffset));
-                newBigCore.insert(hash, control(hash), i);
+        private void rehash(int oldCapacity, BigCore newBigCore) {
+            for (int i = 0; i < oldCapacity; i++) {
+                byte control = controlData[i];
+                if (control == EMPTY) {
+                    continue;
+                }
+                final long value = idAndHash(i);
+                final int hash = hash(value);
+                final int id = id(value);
+                newBigCore.insert(hash, control, id);
             }
         }
 
@@ -500,7 +537,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     int idx = group + j;
                     if (controlData[idx] == EMPTY) {
                         int insertSlot = slot(group + j);
-                        insertAtSlot(insertSlot, control, id);
+                        insertAtSlot(insertSlot, hash, control, id);
                         return;
                     }
                 }
@@ -522,20 +559,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void setKeys(final long keyOffset, final long value1, final long value2) {
+            // TODO: ask the page later and grow and 1/8th instead of double every time
             final int keyPageOffset = Math.toIntExact(keyOffset >> PAGE_SHIFT);
             final int keyPageMask = Math.toIntExact(keyOffset & PAGE_MASK);
             LONG_HANDLE.set(keyPages[keyPageOffset], keyPageMask, value1);
             LONG_HANDLE.set(keyPages[keyPageOffset], (keyPageMask + Long.BYTES) & PAGE_MASK, value2);
         }
 
-        private int id(final int slot) {
-            final int idOffset = idOffset(slot);
-            return (int) INT_HANDLE.get(idPages[idOffset >> PAGE_SHIFT], idOffset & PAGE_MASK);
-        }
-
         @Override
         public long ramBytesUsed() {
-            return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(controlData) + (long) idPages.length
+            return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(controlData) + (long) idAndHashPages.length
                 * PageCacheRecycler.PAGE_SIZE_IN_BYTES;
         }
     }
@@ -558,10 +591,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     private long keyOffset(final int id) {
         return (long) id * KEY_SIZE;
-    }
-
-    private int idOffset(final int slot) {
-        return slot * ID_SIZE;
     }
 
     private static int hash(long key1, long key2) {
