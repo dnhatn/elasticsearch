@@ -345,6 +345,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int probed;
 
         BigCore() {
+            super(
+                ((capacity * KEY_SIZE - 1) >> PAGE_SHIFT) - keyPages.length
+                + (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT
+                + 10
+            );
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));

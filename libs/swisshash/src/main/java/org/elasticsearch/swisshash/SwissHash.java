@@ -233,7 +233,15 @@ public abstract class SwissHash {
      */
     abstract class Core implements Releasable {
         private int acquiredPages = 0;
-        final List<Releasable> toClose = new ArrayList<>();
+        final List<Releasable> toClose;
+
+        protected Core() {
+            this(10);
+        }
+
+        protected Core(int estimatePages) {
+            toClose = new ArrayList<>(estimatePages);
+        }
 
         byte[] grabPage() {
             breaker.addEstimateBytesAndMaybeBreak(PageCacheRecycler.PAGE_SIZE_IN_BYTES, "SwissHash.Core");
