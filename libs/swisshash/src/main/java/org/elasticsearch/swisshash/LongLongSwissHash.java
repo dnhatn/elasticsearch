@@ -355,7 +355,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
             boolean success = false;
             try {
-                int keyPagesNeeded = ((int) (capacity * FILL_FACTOR) * KEY_SIZE - 1) >> PAGE_SHIFT;
+                int keyPagesNeeded = (nextGrowSize * KEY_SIZE - 1) >> PAGE_SHIFT;
                 keyPagesNeeded++;
                 var initialKeyPages = keyPages;
                 keyPages = new byte[keyPagesNeeded][];
