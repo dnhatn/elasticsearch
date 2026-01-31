@@ -331,7 +331,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     final class BigCore extends Core implements Accountable {
         static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BigCore.class);
 
-        static final float FILL_FACTOR = 0.7F;
+        static final float FILL_FACTOR = 0.6F;
 
         private static final byte EMPTY = (byte) 0x80; // empty slot
 
