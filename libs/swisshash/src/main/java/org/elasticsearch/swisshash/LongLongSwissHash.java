@@ -250,7 +250,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         void transitionToBigCore() {
             growTracking();
             try {
-                bigCore = new BigCore(NEXT_ID.get());
+                bigCore = new BigCore(NEXT_ID.incrementAndGet());
                 rehash();
             } finally {
                 close();
@@ -337,7 +337,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int insertProbes;
         private int added;
         private int probed;
-        private long coreId;
+        private int collided;
+        private final long coreId;
 
         BigCore(long coreId) {
             this.coreId = coreId;
@@ -415,8 +416,14 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final int id = id(checkSlot);
                     final long keyOffset = keyOffset(id);
                     probed++;
-                    if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                    long k1 = key1(keyOffset);
+                    long k2 = key2(keyOffset);
+                    if (k1 == key1 && k2 == key2) {
                         return -1 - id;
+                    } else {
+                        if (hash(k1, k2) == hash) {
+                            collided++;
+                        }
                     }
                     matches &= matches - 1; // clear the first set bit and try again
                 }
@@ -553,7 +560,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public void close() {
             super.close();
-            System.err.println("--> " + coreId + " capacity=" + capacity + " added: " + added + "probed=" + probed);
+            System.err.println("--> " + coreId + " capacity=" + capacity + " added: " + added + "probed=" + probed + " collided=" + collided + " insertProbes=" + insertProbes);
         }
     }
 
