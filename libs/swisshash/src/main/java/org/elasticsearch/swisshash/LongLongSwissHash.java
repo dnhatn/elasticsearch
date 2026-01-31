@@ -414,7 +414,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final byte control = control(hash64);
             int group = hash & mask;
             for (;;) {
-                // does this goes backward?
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
@@ -521,6 +520,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(int oldCapacity, BigCore newBigCore) {
+            long startNanos = System.nanoTime();
             for (int i = 0; i < oldCapacity; i++) {
                 byte control = controlData[i];
                 if (control == EMPTY) {
@@ -531,6 +531,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final int id = id(value);
                 newBigCore.insert(hash, control, id);
             }
+            long endTime = System.nanoTime();
+            System.err.println("--> resize " + capacity + " took " + (endTime - startNanos));
         }
 
         /**
@@ -539,6 +541,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          */
         private void insert(final int hash, final byte control, final int id) {
             int group = hash & mask;
+            // TODO: depend on the size?
             for (;;) {
                 for (int j = 0; j < BYTE_VECTOR_LANES; j++) {
                     int idx = group + j;
