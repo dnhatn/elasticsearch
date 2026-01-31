@@ -537,7 +537,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 newBigCore.insert(hash, control, id);
             }
             long endTime = System.nanoTime();
-            System.err.println("--> resize " + capacity + " took " + (endTime - startNanos));
+            if (capacity > 100_000) {
+                System.err.println("--> resize " + capacity + " took " + (endTime - startNanos));
+            }
         }
 
         /**
@@ -590,7 +592,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public void close() {
             super.close();
-            System.err.println("capacity " + capacity + " added=" + added + " probed=" + probed);
+            if (capacity > 100_000) {
+                System.err.println("capacity " + capacity + " added=" + added + " probed=" + probed);
+            }
         }
     }
 
