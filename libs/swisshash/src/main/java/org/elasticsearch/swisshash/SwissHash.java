@@ -244,7 +244,7 @@ public abstract class SwissHash {
         }
 
         byte[] grabPage() {
-            breaker.addEstimateBytesAndMaybeBreak(PageCacheRecycler.PAGE_SIZE_IN_BYTES, "SwissHash.Core");
+            // breaker.addEstimateBytesAndMaybeBreak(PageCacheRecycler.PAGE_SIZE_IN_BYTES, "SwissHash.Core");
             acquiredPages++;
             Recycler.V<byte[]> page = recycler.bytePage(false);
             toClose.add(page);
@@ -263,7 +263,7 @@ public abstract class SwissHash {
 
         @Override
         public void close() {
-            breaker.addEstimateBytesAndMaybeBreak(-PageCacheRecycler.PAGE_SIZE_IN_BYTES * (long) acquiredPages, "SwissHash.Core");
+            // breaker.addEstimateBytesAndMaybeBreak(-PageCacheRecycler.PAGE_SIZE_IN_BYTES * (long) acquiredPages, "SwissHash.Core");
             Releasables.close(toClose);
             toClose.clear();
         }
