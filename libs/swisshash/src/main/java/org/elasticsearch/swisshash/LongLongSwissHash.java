@@ -350,16 +350,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
-            if (capacity > 1000_000) {
-                long startTime = System.nanoTime();
-                controlData = new byte[controlLength];
-                Arrays.fill(controlData, EMPTY);
-                long endTime = System.nanoTime();
-                System.err.println("--> allocating and filling " + controlLength + " control bytes took " + (endTime - startTime));
-            } else {
-                controlData = new byte[controlLength];
-                Arrays.fill(controlData, EMPTY);
-            }
+            controlData = new byte[controlLength];
+            Arrays.fill(controlData, EMPTY);
 
             boolean success = false;
             try {
@@ -522,6 +514,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void grow() {
+            long startTime = System.nanoTime();
             final int oldCapacity = growTracking();
             try {
                 var newBigCore = new BigCore();
@@ -530,6 +523,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             } finally {
                 close();
             }
+            long endTime = System.nanoTime();
+            System.err.println("--> resizing to " + capacity + " took " + (endTime - startTime));
         }
 
         private void rehash(int oldCapacity, BigCore newBigCore) {
