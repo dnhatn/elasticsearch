@@ -147,6 +147,11 @@ public final class LongLongHash extends AbstractHash implements LongLongHashTabl
     }
 
     @Override
+    public LongLongHashTable maybeResize(long expectedEntries) {
+        return this;
+    }
+
+    @Override
     public void close() {
         Releasables.close(keys, () -> super.close());
     }

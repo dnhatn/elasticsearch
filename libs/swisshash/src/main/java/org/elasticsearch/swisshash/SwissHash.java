@@ -34,21 +34,12 @@ public abstract class SwissHash {
     protected final PageCacheRecycler recycler;
     protected final CircuitBreaker breaker;
 
-    protected int capacity;
-    protected int mask;
-    protected int nextGrowSize;
     protected int size;
     protected int growCount;
 
-    protected SwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, int initialCapacity, float smallCoreFillFactor) {
+    protected SwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
         this.breaker = Objects.requireNonNull(breaker);
         this.recycler = recycler == null ? PageCacheRecycler.NON_RECYCLING_INSTANCE : recycler;
-
-        this.capacity = initialCapacity;
-        this.mask = capacity - 1;
-        this.nextGrowSize = (int) (capacity * smallCoreFillFactor);
-
-        assert initialCapacity == Integer.highestOneBit(initialCapacity) : "intial capacity is a power of two";
     }
 
     /**
@@ -233,13 +224,38 @@ public abstract class SwissHash {
      */
     abstract class Core implements Releasable {
         final List<Releasable> toClose = new ArrayList<>();
+        protected final int capacity;
+        protected final int mask;
+        protected final int nextGrowSize;
 
-        byte[] grabPage() {
+        protected Core(int initialCapacity, float fillFactor) {
+            this.capacity = initialCapacity;
+            this.mask = capacity - 1;
+            this.nextGrowSize = (int) (capacity * fillFactor);
+
+            assert initialCapacity == Integer.highestOneBit(initialCapacity) : "initial capacity is a power of two";
+        }
+
+        final byte[] grabPage() {
             breaker.addEstimateBytesAndMaybeBreak(PageCacheRecycler.PAGE_SIZE_IN_BYTES, "SwissHash.Core");
             toClose.add(() -> breaker.addWithoutBreaking(-PageCacheRecycler.PAGE_SIZE_IN_BYTES));
             Recycler.V<byte[]> page = recycler.bytePage(false);
             toClose.add(page);
             return page.v();
+        }
+
+        final int growTracking() {
+            // Juggle constants for the new page size
+            growCount++;
+            int newCapacity = capacity << 1;
+            if (newCapacity < 0) {
+                throw new IllegalArgumentException("overflow: oldCapacity=" + capacity + ", new capacity=" + newCapacity);
+            }
+            return newCapacity;
+        }
+
+        final int slot(final int hash) {
+            return hash & mask;
         }
 
         /**

@@ -40,4 +40,9 @@ public interface LongLongHashTable extends Releasable, Accountable {
 
     /** Returns the size (number of key/value pairs) in the table.*/
     long size();
+
+    /**
+     * Maybe prepare the table to hold the new number of entries.
+     */
+    LongLongHashTable maybeResize(long expectedEntries);
 }

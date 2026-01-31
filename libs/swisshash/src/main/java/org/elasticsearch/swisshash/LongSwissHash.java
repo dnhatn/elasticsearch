@@ -105,7 +105,7 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
     private final List<Releasable> toClose = new ArrayList<>();
 
     LongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
-        super(recycler, breaker, INITIAL_CAPACITY, LongSwissHash.SmallCore.FILL_FACTOR);
+        super(recycler, breaker);
         boolean success = false;
         try {
             smallCore = new SmallCore();
@@ -171,7 +171,7 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
     public long add(final long key) {
         final int hash = hash(key);
         if (smallCore != null) {
-            if (size < nextGrowSize) {
+            if (size < smallCore.nextGrowSize) {
                 return smallCore.add(key, hash);
             }
             smallCore.transitionToBigCore();
@@ -213,19 +213,6 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
         toClose.clear();
     }
 
-    private int growTracking() {
-        // Juggle constants for the new page size
-        growCount++;
-        int oldCapacity = capacity;
-        capacity <<= 1;
-        if (capacity < 0) {
-            throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
-        }
-        mask = capacity - 1;
-        nextGrowSize = (int) (capacity * BigCore.FILL_FACTOR);
-        return oldCapacity;
-    }
-
     /**
      * Open addressed hash table with linear probing. Empty {@code id}s are
      * encoded as {@code -1}. This hash table can't grow, and is instead
@@ -240,6 +227,7 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
         private final byte[] idPage;
 
         private SmallCore() {
+            super(INITIAL_CAPACITY, FILL_FACTOR);
             boolean success = false;
             try {
                 idPage = grabPage();
@@ -288,9 +276,8 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
         }
 
         void transitionToBigCore() {
-            growTracking();
             try {
-                bigCore = new BigCore();
+                bigCore = new BigCore(growTracking());
                 rehash();
             } finally {
                 close();
@@ -391,7 +378,8 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
          */
         private int insertProbes;
 
-        BigCore() {
+        BigCore(int capacity) {
+            super(capacity, FILL_FACTOR);
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
@@ -540,9 +528,8 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
         }
 
         private void grow() {
-            growTracking();
             try {
-                var newBigCore = new BigCore();
+                var newBigCore = new BigCore(growTracking());
                 rehash(newBigCore);
                 bigCore = newBigCore;
             } finally {
@@ -615,9 +602,5 @@ public final class LongSwissHash extends SwissHash implements LongHashTable {
 
     private int hash(final long v) {
         return BitMixer.mix(v);
-    }
-
-    private int slot(final int hash) {
-        return hash & mask;
     }
 }
