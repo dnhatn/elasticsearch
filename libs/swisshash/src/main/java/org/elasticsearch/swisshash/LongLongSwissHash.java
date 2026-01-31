@@ -419,34 +419,58 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int hash = (int) hash64;
             final byte control = control(hash64);
             int group = hash & mask;
-            for (;;) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    // TODO: can we switch to leading
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final long idAndHash = idAndHash(checkSlot);
-                    if (hash(idAndHash) == hash) {
-                        final int id = id(idAndHash);
+            for (; ; ) {
+                while (group < mask) {
+                    final byte c = controlData[group];
+                    if (c == EMPTY) {
+                        final int id = size;
                         final long keyOffset = keyOffset(id);
-                        if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
-                            return -1 - id;
+                        setKeys(keyOffset, key1, key2);
+                        bigCore.insertAtSlot(group, hash, control, id);
+                        size++;
+                        return id;
+                    } else {
+                        final long idAndHash = idAndHash(group);
+                        if (hash(idAndHash) == hash) {
+                            final int id = id(idAndHash);
+                            final long keyOffset = keyOffset(id);
+                            if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                                return -1 - id;
+                            }
                         }
                     }
-                    matches &= matches - 1; // clear the first set bit and try again
+                    group++;
                 }
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    final int id = size;
-                    final long keyOffset = keyOffset(id);
-                    setKeys(keyOffset, key1, key2);
-                    bigCore.insertAtSlot(insertSlot, hash, control, id);
-                    size++;
-                    return id;
-                }
-                group = (group + BYTE_VECTOR_LANES) & mask;
+                group = 0;
             }
+//            for (;;) {
+//                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+//                long matches = vec.eq(control).toLong();
+//                while (matches != 0) {
+//                    // TODO: can we switch to leading
+//                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
+//                    final long idAndHash = idAndHash(checkSlot);
+//                    if (hash(idAndHash) == hash) {
+//                        final int id = id(idAndHash);
+//                        final long keyOffset = keyOffset(id);
+//                        if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+//                            return -1 - id;
+//                        }
+//                    }
+//                    matches &= matches - 1; // clear the first set bit and try again
+//                }
+//                long empty = vec.eq(EMPTY).toLong();
+//                if (empty != 0) {
+//                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+//                    final int id = size;
+//                    final long keyOffset = keyOffset(id);
+//                    setKeys(keyOffset, key1, key2);
+//                    bigCore.insertAtSlot(insertSlot, hash, control, id);
+//                    size++;
+//                    return id;
+//                }
+//                group = (group + BYTE_VECTOR_LANES) & mask;
+//            }
         }
 
         private void insertAtSlot(final int insertSlot, final int hash, final byte control, final int id) {
