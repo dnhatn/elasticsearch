@@ -429,7 +429,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                         bigCore.insertAtSlot(group, hash, control, id);
                         size++;
                         return id;
-                    } else {
+                    } else if (c == control) {
                         final long idAndHash = idAndHash(group);
                         if (hash(idAndHash) == hash) {
                             final int id = id(idAndHash);
