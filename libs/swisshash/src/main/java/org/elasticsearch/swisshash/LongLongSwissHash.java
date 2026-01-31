@@ -335,7 +335,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private static final byte EMPTY = (byte) 0x80; // empty slot
 
-        // multiple core here using top bytes from hash64?
         private final byte[] controlData;
 
         private final byte[][] idAndHashPages;
@@ -544,7 +543,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          */
         private void insert(final int hash, final byte control, final int id) {
             int group = hash & mask;
-            // TODO: depend on the size?
             for (;;) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long empty = vec.eq(EMPTY).toLong();
