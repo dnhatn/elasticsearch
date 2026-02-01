@@ -180,7 +180,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     @Override
     public void close() {
-        Releasables.close(smallCore, bigCore);
+        Releasables.close(smallCore, bigCore, multiCore);
         Releasables.close(toClose);
         toClose.clear();
     }
@@ -632,6 +632,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int hash = hash(hash64);
             final byte control = control(hash64);
             int group = hash & mask;
+            if (controlData[group] == EMPTY) {
+                final int insertSlot = slot(group);
+                final int id = size;
+                final long keyOffset = keyOffset(id);
+                writeKeys(keyOffset, key1, key2);
+                insertAtSlot(insertSlot, hash, control, id);
+                size++;
+                return id;
+            }
             for (;;) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
