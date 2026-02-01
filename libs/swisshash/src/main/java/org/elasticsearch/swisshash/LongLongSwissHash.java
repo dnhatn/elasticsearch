@@ -344,7 +344,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
             boolean success = false;
             try {
-                int keyPagesNeeded = (capacity * KEY_SIZE - 1) >> PAGE_SHIFT;
+                int keyPagesNeeded = Math.toIntExact(((long) capacity * KEY_SIZE - 1L) >> PAGE_SHIFT);
                 keyPagesNeeded++;
                 var initialKeyPages = keyPages;
                 keyPages = new byte[keyPagesNeeded][];
@@ -355,7 +355,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
                     && keyPagesNeeded > initialKeyPages.length;
 
-                int idPagesNeeded = (capacity * ID_SIZE - 1) >> PAGE_SHIFT;
+                int idPagesNeeded = Math.toIntExact(((long) capacity * ID_SIZE - 1) >> PAGE_SHIFT);
                 idPagesNeeded++;
                 idPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
