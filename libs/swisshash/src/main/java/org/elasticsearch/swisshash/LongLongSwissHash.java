@@ -349,7 +349,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private static final byte EMPTY = (byte) 0x80; // empty slot
 
-        private final byte[] controlData;
+        private final int numControlsInPage;
+        private final byte[][] controlPages;
 
         private final byte[][] idAndHashPages;
 
@@ -367,14 +368,23 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 + (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT
                 + 10
             );
-            int controlLength = capacity + BYTE_VECTOR_LANES;
-            breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
-            toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
-            controlData = new byte[controlLength];
-            Arrays.fill(controlData, EMPTY);
 
             boolean success = false;
             try {
+                final int controlPagesNeeded;
+                if (capacity >= 128 * 1024) {
+                    numControlsInPage = 128 * 1024;
+                    controlPagesNeeded = capacity / numControlsInPage;
+                    assert controlPagesNeeded * numControlsInPage == capacity;
+                } else {
+                    controlPagesNeeded = 1;
+                    numControlsInPage = capacity;
+                }
+                controlPages = new byte[controlPagesNeeded][];
+                for (int i = 0; i < controlPagesNeeded; i++) {
+                    controlPages[i] = new byte[numControlsInPage + BYTE_VECTOR_LANES];
+                    Arrays.fill(controlPages[i],EMPTY);
+                }
                 int idPagesNeeded = (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT;
                 idPagesNeeded++;
                 idAndHashPages = new byte[idPagesNeeded][];
@@ -395,7 +405,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final byte control = control(hash64);
             int group = hash & mask;
             for (;;) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                int controlIndex = group % numControlsInPage;
+                byte[] controlPage = controlPages[group / numControlsInPage];
+                ByteVector vec = ByteVector.fromArray(BS, controlPage, controlIndex);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
                     final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
@@ -413,7 +425,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 if (empty != 0) {
                     return -1;
                 }
-                group = slot(group + BYTE_VECTOR_LANES);
+                group = (group + BYTE_VECTOR_LANES) % mask;
             }
         }
 
@@ -429,10 +441,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             int group = hash & mask;
             addedKeys++;
             for (; ; ) {
-                if (controlData[group] == EMPTY) {
+                final int controlIndex = group % numControlsInPage;
+                final byte[] controlPage = controlPages[group / numControlsInPage];
+                if (controlPage[controlIndex] == EMPTY) {
                     perfectMatches++;
                 }
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                ByteVector vec = ByteVector.fromArray(BS, controlPage, controlIndex);
                 long matches = vec.eq(control).toLong();
                 probeControls++;
                 while (matches != 0) {
@@ -459,7 +473,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     size++;
                     return id;
                 }
-                group = (group + BYTE_VECTOR_LANES) & mask;
+                group = (group + BYTE_VECTOR_LANES) % mask;
             }
         }
 
@@ -467,11 +481,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
             final int offset = idAndHashOffset(insertSlot);
             LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
-            controlData[insertSlot] = control;
-            if (insertSlot == mask) {
-                Arrays.fill(controlData, mask, controlData.length, control);
+            final int controlIndexInPage = insertSlot % numControlsInPage;
+            final byte[] controlPage = controlPages[insertSlot / numControlsInPage];
+            if (controlIndexInPage == numControlsInPage - 1) {
+                Arrays.fill(controlPage, controlIndexInPage, controlPage.length, control);
             } else {
-                controlData[insertSlot] = control;
+                controlPage[controlIndexInPage] = control;
             }
         }
 
@@ -545,8 +560,14 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(int oldCapacity, BigCore newBigCore) {
+            byte[] controlPage = controlPages[0];
+            int controlIndex = 0;
             for (int i = 0; i < oldCapacity; i++) {
-                byte control = controlData[i];
+                if (controlIndex >= numControlsInPage) {
+                    controlPage = controlPages[i / numControlsInPage];
+                    controlIndex = 0;
+                }
+                byte control = controlPage[controlIndex++];
                 if (control == EMPTY) {
                     continue;
                 }
@@ -564,14 +585,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void insert(final int hash, final byte control, final int id) {
             int group = hash & mask;
             for (;;) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                int controlIndexInPage = group % numControlsInPage;
+                byte[] controlPage = controlPages[group / numControlsInPage];
+                ByteVector vec = ByteVector.fromArray(BS, controlPage, controlIndexInPage);
                 long empty = vec.eq(EMPTY).toLong();
                 if (empty != 0) {
                     final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
                     insertAtSlot(insertSlot, hash, control, id);
                     return;
                 }
-                group = (group + BYTE_VECTOR_LANES) & mask;
+                group = (group + BYTE_VECTOR_LANES) % mask;
                 insertProbes++;
             }
         }
@@ -597,7 +620,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         @Override
         public long ramBytesUsed() {
-            return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(controlData) + (long) idAndHashPages.length
+            return BASE_RAM_BYTES_USED  + (long) idAndHashPages.length
                 * PageCacheRecycler.PAGE_SIZE_IN_BYTES;
         }
 
