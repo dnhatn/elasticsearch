@@ -399,32 +399,27 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private int addImpl(final long key1, final long key2, final int hash) {
             final byte control = control(hash);
-            int group = hash & mask;
+            int g = hash & mask;
             for (;;) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final int id = id(checkSlot);
+                byte c = controlData[g];
+                if (c == EMPTY) {
+                    final int id = size;
+                    final long keyOffset = keyOffset(id);
+                    setKeys(keyOffset, key1, key2);
+                    bigCore.insertAtSlot(g, control, id);
+                    size++;
+                    return id;
+                } else if (c == control) {
+                    final int id = id(g);
                     final long keyOffset = keyOffset(id);
                     if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
                         return -1 - id;
                     }
-                    matches &= matches - 1; // clear the first set bit and try again
                 }
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    final int id = size;
-                    final long keyOffset = keyOffset(id);
-                    setKeys(keyOffset, key1, key2);
-                    bigCore.insertAtSlot(insertSlot, control, id);
-                    size++;
-                    return id;
-                }
-                group = (group + BYTE_VECTOR_LANES) & mask;
+                g = (++g) & mask;
             }
         }
+
 
         private void insertAtSlot(final int insertSlot, final byte control, final int id) {
             final int idOffset = idOffset(insertSlot);
