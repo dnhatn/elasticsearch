@@ -168,11 +168,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         toClose.clear();
     }
 
-    private int growTracking() {
+    private int growTracking(int times) {
         // Juggle constants for the new page size
         growCount++;
         int oldCapacity = capacity;
-        capacity <<= 1;
+        capacity *= times;
         if (capacity < 0) {
             throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
         }
@@ -251,7 +251,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         void transitionToBigCore() {
-            growTracking();
+            growTracking(128 * 1024);
             try {
                 bigCore = new BigCore();
                 rehash();
@@ -419,31 +419,31 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final byte control = control(hash64);
             int group = hash & mask;
             for (; ; ) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final long idAndHash = idAndHash(checkSlot);
-                    if (hash(idAndHash) == hash) {
-                        final int id = id(idAndHash);
+                int end = group + BYTE_VECTOR_LANES;
+                for (int g = group; g < end; g += BYTE_VECTOR_LANES) {
+                    byte c = controlData[g];
+                    if (c == EMPTY) {
+                        final int insertSlot = slot(g);
+                        final int id = size;
                         final long keyOffset = keyOffset(id);
-                        if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
-                            return -1 - id;
+                        setKeys(keyOffset, key1, key2);
+                        bigCore.insertAtSlot(insertSlot, hash, control, id);
+                        size++;
+                        return id;
+                    } else if (c == control) {
+                        final int checkSlot = slot(g);
+                        final long idAndHash = idAndHash(checkSlot);
+                        if (hash(idAndHash) == hash) {
+                            final int id = id(idAndHash);
+                            final long keyOffset = keyOffset(id);
+                            if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                                return -1 - id;
+                            }
                         }
                     }
-                    matches &= matches - 1; // clear the first set bit and try again
-                }
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    final int id = size;
-                    final long keyOffset = keyOffset(id);
-                    setKeys(keyOffset, key1, key2);
-                    bigCore.insertAtSlot(insertSlot, hash, control, id);
-                    size++;
-                    return id;
                 }
                 group = (group + BYTE_VECTOR_LANES) & mask;
+                insertProbes++;
             }
         }
 
@@ -515,7 +515,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private void grow() {
             long startTime = System.nanoTime();
-            final int oldCapacity = growTracking();
+            final int oldCapacity = growTracking(2);
             try {
                 var newBigCore = new BigCore();
                 rehash(oldCapacity, newBigCore);
