@@ -170,7 +170,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         // Juggle constants for the new page size
         growCount++;
         int oldCapacity = capacity;
-        capacity <<= times;
+        capacity *= times;
         if (capacity < 0) {
             throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
         }
