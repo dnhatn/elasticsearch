@@ -259,6 +259,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 close();
                 smallCore = null;
             }
+            growKeysPages();
         }
 
         @Override
@@ -328,6 +329,19 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
     }
 
+    private void growKeysPages() {
+        int keyPagesNeeded = (nextGrowSize * KEY_SIZE - 1) >> PAGE_SHIFT;
+        keyPagesNeeded++;
+        var initialKeyPages = keyPages;
+        keyPages = new byte[keyPagesNeeded][];
+        for (int i = 0; i < keyPagesNeeded; i++) {
+            keyPages[i] = (i < initialKeyPages.length) ? initialKeyPages[i] : grabKeyPage();
+        }
+//        assert keyPages[Math.toIntExact(keyOffset(mask) >> PAGE_SHIFT)] != null
+//            && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
+//            && keyPagesNeeded > initialKeyPages.length;
+    }
+
     final class BigCore extends Core implements Accountable {
         static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BigCore.class);
 
@@ -357,17 +371,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
             boolean success = false;
             try {
-                int keyPagesNeeded = (nextGrowSize * KEY_SIZE - 1) >> PAGE_SHIFT;
-                keyPagesNeeded++;
-                var initialKeyPages = keyPages;
-                keyPages = new byte[keyPagesNeeded][];
-                for (int i = 0; i < keyPagesNeeded; i++) {
-                    keyPages[i] = (i < initialKeyPages.length) ? initialKeyPages[i] : grabKeyPage();
-                }
-//                assert keyPages[Math.toIntExact(keyOffset(mask) >> PAGE_SHIFT)] != null
-//                    && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
-//                    && keyPagesNeeded > initialKeyPages.length;
-
                 int idPagesNeeded = (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT;
                 idPagesNeeded++;
                 idAndHashPages = new byte[idPagesNeeded][];
@@ -420,16 +423,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int hash = (int) hash64;
             final byte control = control(hash64);
             int group = hash & mask;
+            if (sparseKeys && controlData[group] == EMPTY) {
+                final int insertSlot = slot(group);
+                final int id = size;
+                final long keyOffset = keyOffset(id);
+                setKeys(keyOffset, key1, key2);
+                bigCore.insertAtSlot(insertSlot, hash, control, id);
+                size++;
+                return id;
+            }
             for (; ; ) {
-                if (sparseKeys && controlData[group] == EMPTY) {
-                    final int insertSlot = slot(group);
-                    final int id = size;
-                    final long keyOffset = keyOffset(id);
-                    setKeys(keyOffset, key1, key2);
-                    bigCore.insertAtSlot(insertSlot, hash, control, id);
-                    size++;
-                    return id;
-                }
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
@@ -534,6 +537,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             } finally {
                 close();
             }
+            growKeysPages();
             long endTime = System.nanoTime();
             System.err.println("--> resizing to " + capacity + " took " + (endTime - startTime));
         }
@@ -583,7 +587,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void setKeys(final long keyOffset, final long value1, final long value2) {
-            // TODO: ask the page later and grow and 1/8th instead of double every time
             final int keyPageOffset = Math.toIntExact(keyOffset >> PAGE_SHIFT);
             final int keyPageMask = Math.toIntExact(keyOffset & PAGE_MASK);
             LONG_HANDLE.set(keyPages[keyPageOffset], keyPageMask, value1);
