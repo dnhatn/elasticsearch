@@ -13,7 +13,6 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
-import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.recycler.Recycler;
@@ -342,6 +341,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 //            && keyPagesNeeded > initialKeyPages.length;
     }
 
+    private long addedKeys;
+    private long probeControls;
+    private long probeHashes;
+    private long probeKeys;
+
     final class BigCore extends Core implements Accountable {
         static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BigCore.class);
 
@@ -354,7 +358,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idAndHashPages;
 
         private int insertProbes;
-        private final boolean sparseKeys;
 
         BigCore() {
             super(
@@ -362,7 +365,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 + (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT
                 + 10
             );
-            this.sparseKeys = capacity >= 10_000;
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
@@ -423,22 +425,17 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int hash = (int) hash64;
             final byte control = control(hash64);
             int group = hash & mask;
-            if (sparseKeys && controlData[group] == EMPTY) {
-                final int insertSlot = slot(group);
-                final int id = size;
-                final long keyOffset = keyOffset(id);
-                setKeys(keyOffset, key1, key2);
-                bigCore.insertAtSlot(insertSlot, hash, control, id);
-                size++;
-                return id;
-            }
+            addedKeys++;
             for (; ; ) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
+                probeControls++;
                 while (matches != 0) {
+                    probeHashes++;
                     final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
                     final long idAndHash = idAndHash(checkSlot);
                     if (hash(idAndHash) == hash) {
+                        probeKeys++;
                         final int id = id(idAndHash);
                         final long keyOffset = keyOffset(id);
                         if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
@@ -601,6 +598,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         @Override
         public void close() {
+            if (capacity > 10000) {
+                System.err.println("--> capacity=" + capacity + " addedKeys=" + addedKeys + " probeControls=" + probeControls + " probeHashes=" + probeHashes + " probeKeys=" + probeKeys);
+            }
             super.close();
         }
     }
