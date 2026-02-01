@@ -340,6 +340,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idAndHashPages;
 
         private int insertProbes;
+        private final boolean sparseKeys;
 
         BigCore() {
             super(
@@ -347,6 +348,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 + (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT
                 + 10
             );
+            this.sparseKeys = capacity >= 10_000;
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
@@ -419,6 +421,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final byte control = control(hash64);
             int group = hash & mask;
             for (; ; ) {
+                if (sparseKeys && controlData[group] == EMPTY) {
+                    final int insertSlot = slot(group);
+                    final int id = size;
+                    final long keyOffset = keyOffset(id);
+                    setKeys(keyOffset, key1, key2);
+                    bigCore.insertAtSlot(insertSlot, hash, control, id);
+                    size++;
+                    return id;
+                }
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
