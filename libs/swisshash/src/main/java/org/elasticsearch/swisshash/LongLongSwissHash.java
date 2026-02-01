@@ -341,10 +341,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 //            && keyPagesNeeded > initialKeyPages.length;
     }
 
-    private long addedKeys;
-    private long probeControls;
-    private long probeHashes;
-    private long probeKeys;
 
     final class BigCore extends Core implements Accountable {
         static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BigCore.class);
@@ -358,6 +354,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idAndHashPages;
 
         private int insertProbes;
+
+        private long addedKeys;
+        private long perfectMatches = 0;
+        private long probeControls;
+        private long probeHashes;
+        private long probeKeys;
 
         BigCore() {
             super(
@@ -427,6 +429,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             int group = hash & mask;
             addedKeys++;
             for (; ; ) {
+                if (controlData[group] == EMPTY) {
+                    perfectMatches++;
+                }
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 probeControls++;
@@ -599,7 +604,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public void close() {
             if (capacity > 10000) {
-                System.err.println("--> capacity=" + capacity + " addedKeys=" + addedKeys + " probeControls=" + probeControls + " probeHashes=" + probeHashes + " probeKeys=" + probeKeys);
+                System.err.println("--> capacity=" + capacity + " addedKeys=" + addedKeys + " probeControls=" + probeControls + " probeHashes=" + probeHashes + " probeKeys=" + probeKeys + " perfectMatches=" + perfectMatches);
             }
             super.close();
         }
