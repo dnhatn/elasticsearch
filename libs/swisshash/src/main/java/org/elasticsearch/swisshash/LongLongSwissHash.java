@@ -171,6 +171,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         growCount++;
         int oldCapacity = capacity;
         capacity *= times;
+        System.err.println("--> capacity grown to " + capacity + " at size " + size);
         if (capacity < 0) {
             throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
         }
@@ -244,7 +245,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         void transitionToBigCore() {
-            growTracking(12 * 1024);
+            // 128 * 1024 -> at least 17 resizes
+            growTracking(128 * 1024);
             try {
                 bigCore = new BigCore();
                 rehash();
