@@ -431,8 +431,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             INT_HANDLE.set(idPages[idOffset >> PAGE_SHIFT], idOffset & PAGE_MASK, id);
             controlData[insertSlot] = control;
             // mirror only if slot is within the first group size, to handle wraparound loads
-            if (insertSlot < BYTE_VECTOR_LANES) {
-                controlData[insertSlot + capacity] = control;
+            if (insertSlot == mask) {
+                Arrays.fill(controlData, mask, controlData.length, control);
             }
         }
 
