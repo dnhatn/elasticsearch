@@ -166,11 +166,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         toClose.clear();
     }
 
-    private int growTracking() {
+    private int growTracking(int times) {
         // Juggle constants for the new page size
         growCount++;
         int oldCapacity = capacity;
-        capacity <<= 1;
+        capacity <<= times;
         if (capacity < 0) {
             throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
         }
@@ -244,7 +244,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         void transitionToBigCore() {
-            growTracking();
+            growTracking(12 * 1024);
             try {
                 bigCore = new BigCore();
                 rehash();
@@ -471,7 +471,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void grow() {
-            growTracking();
+            growTracking(2);
             try {
                 var newBigCore = new BigCore();
                 rehash(newBigCore);
