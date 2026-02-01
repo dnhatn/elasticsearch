@@ -13,6 +13,7 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.recycler.Recycler;
@@ -43,7 +44,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private static final int KEY_SIZE = Long.BYTES + Long.BYTES;
 
     private static final int ID_SIZE = Integer.BYTES;
-    private static final int ID_AND_HASH_SIZE = Integer.BYTES;
+    private static final int ID_AND_HASH_SIZE = Integer.BYTES + Integer.BYTES;
 
     static final int INITIAL_CAPACITY = PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE;
 
@@ -78,6 +79,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private byte[][] keyPages;
     private SmallCore smallCore;
     private BigCore bigCore;
+    private MultiCore multiCore;
     private final List<Releasable> toClose = new ArrayList<>();
 
     LongLongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
@@ -109,8 +111,24 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     public long find(final long key1, final long key2) {
         if (smallCore != null) {
             return smallCore.find(key1, key2);
-        } else {
+        } else if (bigCore != null) {
             return bigCore.find(key1, key2);
+        } else {
+            return multiCore.find(key1, key2);
+        }
+    }
+
+    void switchToMultiSegments() {
+        if (multiCore == null) {
+            return;
+        }
+        int nextCapacity = smallCore != null ? smallCore.growTracking() : bigCore.growTracking();
+        try {
+            multiCore = new MultiCore(nextCapacity);
+        } finally {
+            Releasables.close(smallCore, bigCore);
+            smallCore = null;
+            bigCore = null;
         }
     }
 
@@ -123,13 +141,22 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     public long add(final long key1, final long key2) {
         if (smallCore != null) {
             return smallCore.add(key1, key2);
+        } else if (bigCore != null) {
+            return bigCore.add(key1, key2);
+        } else {
+            return multiCore.add(key1, key2);
         }
-        return bigCore.add(key1, key2);
     }
 
     @Override
     public Status status() {
-        return smallCore != null ? smallCore.status() : bigCore.status();
+        if (smallCore != null) {
+            return smallCore.status();
+        } else if (bigCore != null) {
+            return bigCore.status();
+        } else {
+            return multiCore.status();
+        }
     }
 
     public abstract class Itr extends SwissHash.Itr {
@@ -142,7 +169,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     @Override
     public Itr iterator() {
-        return smallCore != null ? smallCore.iterator() : bigCore.iterator();
+        if (smallCore != null) {
+            return smallCore.iterator();
+        } else if (bigCore != null) {
+            return bigCore.iterator();
+        } else {
+            return multiCore.iterator();
+        }
     }
 
     @Override
@@ -378,6 +411,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int add(final long key1, final long key2) {
             if (size < nextGrowSize) {
                 return addImpl(key1, key2, hash(key1, key2));
+            } else if (size > INITIAL_CAPACITY * 128) {
+                transitionToMultiCore();
+                return multiCore.add(key1, key2);
             } else {
                 grow();
                 return bigCore.addImpl(key1, key2, hash(key1, key2));
@@ -391,6 +427,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 bigCore = newBigCore;
             } finally {
                 close();
+            }
+        }
+
+        private void transitionToMultiCore() {
+            try {
+                multiCore = new MultiCore(growTracking());
+            } finally {
+                close();
+                bigCore = null;
             }
         }
 
@@ -513,6 +558,329 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
     }
 
+    final class SegmentCore extends Core implements Accountable {
+        static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BigCore.class);
+
+        static final float FILL_FACTOR = 0.75F;
+
+        private static final byte EMPTY = (byte) 0x80; // empty slot
+
+        private final byte[] controlData;
+
+        private final byte[][] idAndHashPages;
+
+        private int insertProbes;
+        private int remainingSlots;
+
+        SegmentCore(int capacity) {
+            super(capacity, FILL_FACTOR);
+            this.remainingSlots = nextGrowSize;
+            int controlLength = capacity + BYTE_VECTOR_LANES;
+            breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
+            toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
+            controlData = new byte[controlLength];
+            Arrays.fill(controlData, EMPTY);
+
+            boolean success = false;
+            try {
+                int idPagesNeeded = (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT;
+                idPagesNeeded++;
+                idAndHashPages = new byte[idPagesNeeded][];
+                for (int i = 0; i < idPagesNeeded; i++) {
+                    idAndHashPages[i] = grabPage();
+                }
+                success = true;
+            } finally {
+                if (false == success) {
+                    close();
+                }
+            }
+        }
+
+        private static byte control(long hash64) {
+            return (byte) (hash64 >>> (Long.SIZE - 7));
+        }
+
+        int find(final long key1, final long key2, final long hash64) {
+            final int hash = hash(hash64);
+            final byte control = control(hash64);
+            int group = hash & mask;
+            for (;;) {
+                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                long matches = vec.eq(control).toLong();
+                while (matches != 0) {
+                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
+                    final long idAndHash = idAndHash(checkSlot);
+                    if (hash(idAndHash) == hash) {
+                        final int id = id(idAndHash);
+                        final long keyOffset = keyOffset(id);
+                        if (readKey1(keyOffset) == key1 && readKey2(keyOffset) == key2) {
+                            return id;
+                        }
+                    }
+                    matches &= matches - 1; // clear the first set bit and try again
+                }
+                long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    return -1;
+                }
+                group = slot(group + BYTE_VECTOR_LANES);
+            }
+        }
+
+        int add(final long key1, final long key2, final long hash64) {
+            final int hash = hash(hash64);
+            final byte control = control(hash64);
+            int group = hash & mask;
+            for (;;) {
+                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                long matches = vec.eq(control).toLong();
+                // check if that byte is empty then use it
+                while (matches != 0) {
+                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
+                    final long idAndHash = idAndHash(checkSlot);
+                    if (hash(idAndHash) == hash) {
+                        final int id = id(idAndHash);
+                        final long keyOffset = keyOffset(id);
+                        if (readKey1(keyOffset) == key1 && readKey2(keyOffset) == key2) {
+                            return -1 - id;
+                        }
+                    }
+                    matches &= matches - 1; // clear the first set bit and try again
+                }
+                long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                    final int id = size;
+                    final long keyOffset = keyOffset(id);
+                    writeKeys(keyOffset, key1, key2);
+                    insertAtSlot(insertSlot, hash, control, id);
+                    size++;
+                    return id;
+                }
+                group = (group + BYTE_VECTOR_LANES) & mask;
+            }
+        }
+
+        private void insertAtSlot(final int insertSlot, final int hash, final byte control, final int id) {
+            final long idAndHash = ((long) id << Integer.SIZE) | Integer.toUnsignedLong(hash);
+            final int offset = idAndHashOffset(insertSlot);
+            LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
+            controlData[insertSlot] = control;
+            --remainingSlots;
+            if (insertSlot == mask) {
+                Arrays.fill(controlData, mask, controlData.length, control);
+            } else {
+                controlData[insertSlot] = control;
+            }
+        }
+
+        private long idAndHash(final int slot) {
+            final int offset = idAndHashOffset(slot);
+            return (long) LONG_HANDLE.get(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK);
+        }
+
+        private static int hash(long value) {
+            return (int) value;
+        }
+
+        private static int id(long value) {
+            return (int) (value >>> Integer.SIZE);
+        }
+
+        int idAndHashOffset(int slot) {
+            return slot * ID_AND_HASH_SIZE;
+        }
+
+        @Override
+        protected Status status() {
+            return new BigCoreStatus(growCount, capacity, size, nextGrowSize, insertProbes, keyPages.length, idAndHashPages.length);
+        }
+
+        @Override
+        protected LongLongSwissHash.Itr iterator() {
+            return new LongLongSwissHash.Itr() {
+                @Override
+                public boolean next() {
+                    return ++keyId < size;
+                }
+
+                @Override
+                public int id() {
+                    return keyId;
+                }
+
+                @Override
+                public long key1() {
+                    return readKey1(keyOffset(keyId));
+                }
+
+                @Override
+                public long key2() {
+                    return readKey2(keyOffset(keyId));
+                }
+            };
+        }
+
+        private SegmentCore grow() {
+            try {
+                var newSegment = new SegmentCore(growTracking());
+                for (int i = 0; i < capacity; i++) {
+                    byte control = controlData[i];
+                    if (control == EMPTY) {
+                        continue;
+                    }
+                    final long idAndHash = idAndHash(i);
+                    newSegment.insert(hash(idAndHash), control, id(idAndHash));
+                }
+                return newSegment;
+            } finally {
+                close();
+            }
+        }
+
+        void insert(final int hash32, final byte control, final int id) {
+            int group = hash32 & mask;
+            for (;;) {
+                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                    insertAtSlot(insertSlot, hash32, control, id);
+                    return;
+                }
+                group = (group + BYTE_VECTOR_LANES) & mask;
+                insertProbes++;
+            }
+        }
+
+        @Override
+        public long ramBytesUsed() {
+            return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(controlData) + (long) idAndHashPages.length
+                * PageCacheRecycler.PAGE_SIZE_IN_BYTES;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+        }
+    }
+
+    final class MultiCore implements Releasable {
+        static final int NUM_CORES = 128;
+        final SegmentCore[] segments;
+        private int keysCapacity;
+
+        MultiCore(int newCapacity) {
+            maybeGrowKeyPages();
+            this.segments = new SegmentCore[NUM_CORES];
+            boolean success = false;
+            try {
+                int initialCapacity = Math.max(INITIAL_CAPACITY, newCapacity >> 7);
+                for (int c = 0; c < NUM_CORES; c++) {
+                    segments[c] = new SegmentCore(initialCapacity);
+                }
+                for (int id = 0; id < size; id++) {
+                    final long keyOffset = keyOffset(id);
+                    final long key1 = readKey1(keyOffset);
+                    final long key2 = readKey2(keyOffset);
+                    long hash64 = hash64(key1, key2);
+                    int segmentIndex = segmentIndex(hash64);
+                    maybeGrowSegment(segmentIndex).insert(SegmentCore.hash(hash64), SegmentCore.control(hash64), id);
+                }
+                keysCapacity = keyPages.length / KEY_SIZE;
+                success = true;
+            } finally {
+                if (success == false) {
+                    close();
+                }
+            }
+        }
+
+        static int segmentIndex(long hash64) {
+            return (int) (hash64 >> (Long.SIZE - 15)) & (NUM_CORES - 1);
+        }
+
+        @Override
+        public void close() {
+            Releasables.close(segments);
+        }
+
+        private void maybeGrowKeyPages() {
+            if (size < keysCapacity) {
+                return;
+            }
+            int newSize = ArrayUtil.oversize(size + 1, 1);
+            int keyPagesNeeded = ((newSize + 1) * KEY_SIZE - 1) >> PAGE_SHIFT;
+            keyPagesNeeded++;
+            var initialKeyPages = keyPages;
+            keyPages = new byte[keyPagesNeeded][];
+            for (int i = 0; i < keyPagesNeeded; i++) {
+                keyPages[i] = (i < initialKeyPages.length) ? initialKeyPages[i] : grabKeyPage();
+            }
+            keysCapacity = keyPagesNeeded * PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE;
+        }
+
+        private SegmentCore maybeGrowSegment(int segmentIndex) {
+            SegmentCore segment = segments[segmentIndex];
+            if (segment.remainingSlots == 0) {
+                SegmentCore newSegment = segment.grow();
+                segments[segmentIndex] = newSegment;
+                return newSegment;
+            }
+            return segment;
+        }
+
+        private int add(long key1, long key2) {
+            maybeGrowKeyPages();
+            final long hash64 = hash64(key1, key2);
+            final int segmentIndex = segmentIndex(hash64);
+            return maybeGrowSegment(segmentIndex).add(key1, key2, hash64);
+        }
+
+        private int find(long key1, long key2) {
+            final long hash64 = hash64(key1, key2);
+            final int segmentIndex = segmentIndex(hash64);
+            return segments[segmentIndex].find(key1, key2, hash64);
+        }
+
+        Itr iterator() {
+            return new Itr() {
+                @Override
+                public boolean next() {
+                    return ++keyId < size;
+                }
+
+                @Override
+                public int id() {
+                    return keyId;
+                }
+
+                @Override
+                public long key1() {
+                    return readKey1(keyOffset(keyId));
+                }
+
+                @Override
+                public long key2() {
+                    return readKey2(keyOffset(keyId));
+                }
+            };
+        }
+
+        Status status() {
+            return new BigCoreStatus(
+                growCount,
+                Arrays.stream(segments).mapToInt(c -> c.capacity).sum(),
+                size,
+                Arrays.stream(segments).mapToInt(c -> c.nextGrowSize).sum(),
+                Arrays.stream(segments).mapToInt(c -> c.insertProbes).sum(),
+                keyPages.length,
+                Arrays.stream(segments).mapToInt(c -> c.idAndHashPages.length).sum()
+            );
+        }
+    }
+
     @Override
     public LongLongHashTable maybeResize(long expectedEntries) {
         return this;
@@ -571,6 +939,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     @Override
     public long ramBytesUsed() {
-        return BASE_RAM_BYTES_USED + (smallCore != null ? smallCore.ramBytesUsed() : bigCore.ramBytesUsed());
+        return BASE_RAM_BYTES_USED;
     }
 }
