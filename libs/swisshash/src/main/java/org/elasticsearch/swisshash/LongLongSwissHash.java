@@ -348,6 +348,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         static final float FILL_FACTOR = 0.6F;
 
         private static final byte EMPTY = (byte) 0x80; // empty slot
+        private static final int CONTROL_PAGE_SHIFT = 17;
+        private static final int CONTROL_PAGE_SIZE = 1 << CONTROL_PAGE_SHIFT;
+        private static final int CONTROL_PAGE_MASK = CONTROL_PAGE_SIZE - 1;
 
         private final int numControlsInPage;
         private final byte[][] controlPages;
@@ -372,8 +375,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             boolean success = false;
             try {
                 final int controlPagesNeeded;
-                if (capacity >= 128 * 1024) {
-                    numControlsInPage = 128 * 1024;
+                if (capacity > CONTROL_PAGE_SIZE) {
+                    numControlsInPage = CONTROL_PAGE_SIZE;
                     controlPagesNeeded = capacity / numControlsInPage;
                     assert controlPagesNeeded * numControlsInPage == capacity;
                 } else {
@@ -441,8 +444,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             int group = hash & mask;
             addedKeys++;
             for (; ; ) {
-                final int controlIndex = group % numControlsInPage;
-                final byte[] controlPage = controlPages[group / numControlsInPage];
+                final int controlIndex = group & CONTROL_PAGE_MASK;
+                final byte[] controlPage = controlPages[group >>> CONTROL_PAGE_SHIFT];
                 if (controlPage[controlIndex] == EMPTY) {
                     perfectMatches++;
                 }
@@ -481,8 +484,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
             final int offset = idAndHashOffset(insertSlot);
             LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
-            final int controlIndexInPage = insertSlot % numControlsInPage;
-            final byte[] controlPage = controlPages[insertSlot / numControlsInPage];
+            final byte[] controlPage = controlPages[insertSlot >>> CONTROL_PAGE_SHIFT];
+            final int controlIndexInPage = insertSlot & CONTROL_PAGE_MASK;
             if (controlIndexInPage == numControlsInPage - 1) {
                 Arrays.fill(controlPage, controlIndexInPage, controlPage.length, control);
             } else {
@@ -564,7 +567,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             int controlIndex = 0;
             for (int i = 0; i < oldCapacity; i++) {
                 if (controlIndex >= numControlsInPage) {
-                    controlPage = controlPages[i / numControlsInPage];
+                    controlPage = controlPages[i >>> CONTROL_PAGE_SHIFT];
                     controlIndex = 0;
                 }
                 byte control = controlPage[controlIndex++];
@@ -585,9 +588,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void insert(final int hash, final byte control, final int id) {
             int group = hash & mask;
             for (;;) {
-                int controlIndexInPage = group % numControlsInPage;
-                byte[] controlPage = controlPages[group / numControlsInPage];
-                ByteVector vec = ByteVector.fromArray(BS, controlPage, controlIndexInPage);
+                final byte[] controlPage = controlPages[group >>> CONTROL_PAGE_SHIFT];
+                final int controlIndex = group & CONTROL_PAGE_MASK;
+                ByteVector vec = ByteVector.fromArray(BS, controlPage, controlIndex);
                 long empty = vec.eq(EMPTY).toLong();
                 if (empty != 0) {
                     final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
