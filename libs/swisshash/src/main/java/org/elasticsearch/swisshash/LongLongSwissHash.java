@@ -254,6 +254,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 close();
                 smallCore = null;
             }
+            System.err.println("--> transitioned to BigCore at size " + size);
         }
 
         @Override
