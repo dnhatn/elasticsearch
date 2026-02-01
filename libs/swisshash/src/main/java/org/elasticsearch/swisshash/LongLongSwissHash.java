@@ -411,9 +411,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int add(final long key1, final long key2) {
             if (size < nextGrowSize) {
                 return addImpl(key1, key2, hash(key1, key2));
-            } else if (size > INITIAL_CAPACITY * 128) {
-                transitionToMultiCore();
-                return multiCore.add(key1, key2);
             } else {
                 grow();
                 return bigCore.addImpl(key1, key2, hash(key1, key2));
@@ -443,6 +440,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final byte control = control(hash);
             int group = hash & mask;
             for (;;) {
+                if (controlData[group] == EMPTY) {
+                    final int insertSlot = slot(group);
+                    final int id = size;
+                    final long keyOffset = keyOffset(id);
+                    writeKeys(keyOffset, key1, key2);
+                    bigCore.insertAtSlot(insertSlot, control, id);
+                    size++;
+                    return id;
+                }
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
                 while (matches != 0) {
