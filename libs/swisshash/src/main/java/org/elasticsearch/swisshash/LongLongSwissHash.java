@@ -476,6 +476,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(int oldCapacity, BigCore newBigCore) {
+            System.err.println("--> old-capacity = " + oldCapacity + ", new-capacity=" + idAndHashPages.length);
             for (int slot = 0; slot < oldCapacity; slot++) {
                 int id = idAndHashPages[slot * 2];
                 if (id < 0) {
