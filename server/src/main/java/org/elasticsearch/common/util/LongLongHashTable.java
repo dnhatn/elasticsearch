@@ -41,8 +41,5 @@ public interface LongLongHashTable extends Releasable, Accountable {
     /** Returns the size (number of key/value pairs) in the table.*/
     long size();
 
-
-    int addWithoutStoreKeys(long key1, long key2);
-
-    void appendKeys(long key1, long key2);
+    int[] addUniqueKeys(long[] key1s, long[] key2s, int offset, int length);
 }
