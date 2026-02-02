@@ -34,21 +34,13 @@ public abstract class SwissHash {
     protected final PageCacheRecycler recycler;
     protected final CircuitBreaker breaker;
 
-    protected int capacity;
-    protected int mask;
-    protected int nextGrowSize;
+
     protected int size;
     protected int growCount;
 
-    protected SwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, int initialCapacity, float smallCoreFillFactor) {
+    protected SwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
         this.breaker = Objects.requireNonNull(breaker);
         this.recycler = recycler == null ? PageCacheRecycler.NON_RECYCLING_INSTANCE : recycler;
-
-        this.capacity = initialCapacity;
-        this.mask = capacity - 1;
-        this.nextGrowSize = (int) (capacity * smallCoreFillFactor);
-
-        assert initialCapacity == Integer.highestOneBit(initialCapacity) : "intial capacity is a power of two";
     }
 
     /**
@@ -234,13 +226,17 @@ public abstract class SwissHash {
     abstract class Core implements Releasable {
         private int acquiredPages = 0;
         final List<Releasable> toClose;
+        protected final int capacity;
+        protected final int mask;
+        protected final int nextGrowSize;
 
-        protected Core() {
-            toClose = new ArrayList<>();
-        }
+        protected Core(int initialCapacity, double fillFactor) {
+            this.capacity = initialCapacity;
+            this.mask = capacity - 1;
+            this.nextGrowSize = (int) (capacity * fillFactor);
 
-        protected Core(int estimatePages) {
-            toClose = new ArrayList<>(estimatePages);
+            assert initialCapacity == Integer.highestOneBit(initialCapacity) : "initial capacity is a power of two";
+            toClose = new ArrayList<>(initialCapacity / (PageCacheRecycler.PAGE_SIZE_IN_BYTES));
         }
 
         byte[] grabPage() {
@@ -249,6 +245,17 @@ public abstract class SwissHash {
             Recycler.V<byte[]> page = recycler.bytePage(false);
             toClose.add(page);
             return page.v();
+        }
+
+        protected int growTracking() {
+            // Juggle constants for the new page size
+            growCount++;
+            final int oldCapacity = capacity;
+            int newCapacity = capacity >> 1;
+            if (capacity < 0) {
+                throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + newCapacity);
+            }
+            return newCapacity;
         }
 
         /**
@@ -266,6 +273,10 @@ public abstract class SwissHash {
             breaker.addEstimateBytesAndMaybeBreak(-PageCacheRecycler.PAGE_SIZE_IN_BYTES * (long) acquiredPages, "SwissHash.Core");
             Releasables.close(toClose);
             toClose.clear();
+        }
+
+        final int slot(final int hash) {
+            return hash & mask;
         }
     }
 
