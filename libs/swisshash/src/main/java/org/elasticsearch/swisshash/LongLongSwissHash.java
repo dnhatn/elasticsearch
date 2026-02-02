@@ -477,6 +477,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 idAndHashPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
                     idAndHashPages[i] = grabPage();
+                    Arrays.fill(idAndHashPages[i], (byte)0xFF);
                 }
                 success = true;
             } finally {
@@ -566,7 +567,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final long idAndHash = idAndHash(checkSlot);
                     if (hash(idAndHash) == hash) {
                         final int id = id(idAndHash);
-                        if (id < maxId) {
+                        if (id != 0xFFFF_FFFF && id < maxId) {
                             final long keyOffset = keyOffset(id);
                             if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
                                 return id;
