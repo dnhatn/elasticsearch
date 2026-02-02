@@ -12,6 +12,7 @@ import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
+import org.elasticsearch.common.util.BytesRefHash;
 import org.elasticsearch.common.util.BytesRefHashTable;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.SeenGroupIds;
@@ -82,7 +83,7 @@ final class PackedValuesBlockHash extends BlockHash {
         this.nullTrackingBytes = (specs.size() + 7) / 8;
         boolean success = false;
         try {
-            this.bytesRefHash = HashImplFactory.newBytesRefHash(blockFactory);
+            this.bytesRefHash = new BytesRefHash(1024, blockFactory.bigArrays());
             this.bytes = new BreakingBytesRefBuilder(circuitBreaker, "PackedValuesBlockHash", this.nullTrackingBytes);
             success = true;
         } finally {
