@@ -439,8 +439,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             throw new UnsupportedOperationException();
         }
 
-        private long idAndHash(final int slot) {
-            final int offset = idAndHashOffset(slot);
+        private long idAndHash(final int offset) {
             return (long) LONG_HANDLE.get(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK);
         }
 
