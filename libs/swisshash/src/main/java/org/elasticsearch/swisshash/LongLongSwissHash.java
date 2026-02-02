@@ -514,7 +514,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private int[] batchAdd(long[] key1s, long[] key2s, int from, int to, int maxId) {
+        private void batchAdd(long[] key1s, long[] key2s, int from, int to, int maxId) {
             for (int sortedIdx = from; sortedIdx < to; sortedIdx++) {
                 int idx = batchWork.sorted[sortedIdx];
                 long k1 = key1s[idx];
@@ -522,13 +522,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final long hash64 = batchWork.hash64s[idx];
                 final int hash = (int) hash64;
                 final byte control = control(hash64);
-                final int groupOrId = reserve(k1, k2, hash, control, maxId);
-                if (groupOrId < 0) {
+                final int slotOrId = reserve(k1, k2, hash, control, maxId);
+                if (slotOrId < 0) {
                     batchWork.controls[sortedIdx] = control;
-                    batchWork.slots[sortedIdx] = -1 - groupOrId;
+                    batchWork.slots[sortedIdx] = -1 - slotOrId;
                     batchWork.ids[sortedIdx] = size - 1; // id added
                 } else {
-                    batchWork.ids[sortedIdx] = groupOrId;
+                    batchWork.ids[sortedIdx] = slotOrId;
                     batchWork.slots[sortedIdx] = -1;
                 }
             }
@@ -540,11 +540,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     int id = batchWork.ids[idx];
                     int hash = (int) batchWork.hash64s[idx];
                     final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
-                    final int offset = idAndHashOffset(slot);
+                    final int offset = idAndHashOffset(slot & mask);
                     LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
                 }
             }
-            return batchWork.ids;
         }
 
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
