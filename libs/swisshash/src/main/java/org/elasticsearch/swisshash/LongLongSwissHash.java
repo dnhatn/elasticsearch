@@ -363,6 +363,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             boolean success = false;
             try {
                 idAndHashPages = new int[2 * capacity];
+                Arrays.fill(idAndHashPages, -1);
                 success = true;
             } finally {
                 if (false == success) {
