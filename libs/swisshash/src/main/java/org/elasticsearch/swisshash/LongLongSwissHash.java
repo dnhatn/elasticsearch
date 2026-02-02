@@ -382,6 +382,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 idAndHashPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
                     idAndHashPages[i] = grabPage();
+                    Arrays.fill(idAndHashPages[i], (byte)0xFF);
                 }
                 success = true;
             } finally {
