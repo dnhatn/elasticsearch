@@ -300,7 +300,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         final int[] runningOffsets = new int[128];
 
         MultiCore(SmallCore smallCore) {
-            super(INITIAL_CAPACITY * 128, BigCore.FILL_FACTOR);
+            super(INITIAL_CAPACITY, BigCore.FILL_FACTOR);
             this.segments = new BigCore[128];
             boolean success = false;
             try {
@@ -315,6 +315,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     int segmentIndex = segmentIndex(hash64);
                     BigCore bigCore = segments[segmentIndex];
                     bigCore.insert((int)hash64, control(hash64), i);
+                }
+                for (int i = 0; i < segments.length; i++) {
+                    System.err.println("--> segment-" + i + " capacity=" + segments[i].capacity);
                 }
                 success = true;
             } finally {
@@ -355,18 +358,18 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
             int startOffset = 0;
             int maxId = size;
-            for (int i = 0; i < runningOffsets.length; i++) {
-                final int endOffset = runningOffsets[i];
+            for (int segmentIndex = 0; segmentIndex < runningOffsets.length; segmentIndex++) {
+                final int endOffset = runningOffsets[segmentIndex];
                 int total = endOffset - startOffset;
                 if (total > 0) {
-                    BigCore segment = segments[i];
+                    BigCore segment = segments[segmentIndex];
                     if (segment.numKeys + total >= segment.nextGrowSize) {
                         long startTime = System.nanoTime();
                         final BigCore newSegment = new BigCore(growTracking());
                         segment.rehash(segment.capacity, newSegment);
                         long endTime = System.nanoTime();
-                        System.err.println("--> add keys " + total + " resizing segment-" + i + " to " + newSegment.capacity + " took " + (endTime - startTime));
-                        segments[i] = newSegment;
+                        System.err.println("--> add keys " + total + " resizing segment-" + segmentIndex + " from " + segment.capacity + " to " + newSegment.capacity + " took " + (endTime - startTime));
+                        segments[segmentIndex] = newSegment;
                         segment.close();
                         segment = newSegment;
                     }
