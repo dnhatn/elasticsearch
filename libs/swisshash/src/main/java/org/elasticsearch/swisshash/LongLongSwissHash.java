@@ -252,7 +252,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         void transitionToBigCore() {
-            growTracking(capacity * 2   );
+            growTracking(capacity << 1);
             try {
                 bigCore = new BigCore();
                 rehash();
@@ -608,15 +608,19 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void maybeGrow(int extra) {
-            if ((size + extra) >= nextGrowSize) {
-                assert size == nextGrowSize;
-                grow();
+            int requiredSize = size + extra;
+            if (requiredSize >= nextGrowSize) {
+                int newSize = capacity << 1;
+                while (newSize < requiredSize) {
+                    newSize <<= 1;
+                }
+                grow(newSize);
             }
         }
 
-        private void grow() {
+        private void grow(int newSize) {
             long startTime = System.nanoTime();
-            final int oldCapacity = growTracking(128 * 1024 * 1024);
+            final int oldCapacity = growTracking(newSize);
             try {
                 var newBigCore = new BigCore();
                 rehash(oldCapacity, newBigCore);
