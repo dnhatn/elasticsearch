@@ -161,12 +161,7 @@ public final class LongLongHash extends AbstractHash implements LongLongHashTabl
     }
 
     @Override
-    public int addWithoutStoreKeys(long key1, long key2) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void appendKeys(long key1, long key2) {
+    public int[] addUniqueKeys(long[] key1s, long[] key2s, int offset, int length) {
         throw new UnsupportedOperationException();
     }
 }
