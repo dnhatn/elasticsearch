@@ -13,7 +13,6 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
-import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.recycler.Recycler;
@@ -460,19 +459,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
             int group = hash & mask;
-            if (EMPTY == controlData[group]) {
-                controlData[group] = control;
-                if (group < BYTE_VECTOR_LANES) {
-                    controlData[group + capacity] = control;
-                }
-                return -1 - group;
-            }
             for (; ; ) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final long idAndHash = idAndHash(checkSlot);
+                byte c = controlData[group];
+                if (EMPTY == c) {
+                    controlData[group] = control;
+                    if (group < BYTE_VECTOR_LANES) {
+                        controlData[group + capacity] = control;
+                    }
+                    return -1 - group;
+                } else if (c == control) {
+                    final long idAndHash = idAndHash(group);
                     if (hash(idAndHash) == hash) {
                         final int id = id(idAndHash);
                         if (id < maxId) {
@@ -482,18 +478,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                             }
                         }
                     }
-                    matches &= matches - 1; // clear the first set bit and try again
                 }
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    controlData[insertSlot] = control;
-                    if (insertSlot < BYTE_VECTOR_LANES) {
-                        controlData[insertSlot + capacity] = control;
-                    }
-                    return -1 - insertSlot;
-                }
-                group = slot(group + BYTE_VECTOR_LANES);
+                group = (++group) & mask;
             }
         }
 
