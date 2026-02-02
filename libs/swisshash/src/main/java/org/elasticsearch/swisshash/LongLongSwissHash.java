@@ -461,10 +461,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
             int group = hash & mask;
             if (EMPTY == controlData[group]) {
-                if (group == mask) {
-                    Arrays.fill(controlData, mask, controlData.length, control);
-                } else {
-                    controlData[group] = control;
+                controlData[group] = control;
+                if (group < BYTE_VECTOR_LANES) {
+                    controlData[group + capacity] = control;
                 }
                 return -1 - group;
             }
@@ -488,10 +487,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long empty = vec.eq(EMPTY).toLong();
                 if (empty != 0) {
                     final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    if (insertSlot == mask) {
-                        Arrays.fill(controlData, mask, controlData.length, control);
-                    } else {
-                        controlData[insertSlot] = control;
+                    controlData[insertSlot] = control;
+                    if (insertSlot < BYTE_VECTOR_LANES) {
+                        controlData[insertSlot + capacity] = control;
                     }
                     return -1 - insertSlot;
                 }
