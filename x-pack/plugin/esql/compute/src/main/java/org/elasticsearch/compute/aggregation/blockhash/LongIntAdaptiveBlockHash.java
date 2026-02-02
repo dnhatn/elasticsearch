@@ -41,6 +41,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
     private final int intChannel;
     private final int emitBatchSize;
     private final boolean reverseOutput;
+    private final int[] buffer;
 
     public LongIntAdaptiveBlockHash(List<GroupSpec> specs, BlockFactory blockFactory, int emitBatchSize, boolean reverseOutput) {
         super(specs, blockFactory, emitBatchSize);
@@ -49,6 +50,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
         this.emitBatchSize = emitBatchSize;
         this.reverseOutput = reverseOutput;
         this.current = new LongIntVectorOnlyBlockHash(blockFactory);
+        this.buffer = new int[emitBatchSize];
     }
 
     @Override
@@ -94,11 +96,22 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
             while (offset < position) {
                 final int batchSize = Math.min(emitBatchSize, position - offset);
                 try (var groupIdsBuilder = blockFactory.newIntVectorFixedBuilder(batchSize)) {
+                    final long sizeBefore = longLongHash.size();
                     for (int i = 0; i < batchSize; i++) {
                         long longKey = longVector.getLong(offset + i);
                         int intValue = intVector.getInt(offset + i);
-                        long ord = hashOrdToGroup(longLongHash.add(longKey, intValue));
-                        groupIdsBuilder.appendInt(i, Math.toIntExact(ord));
+                        buffer[i] = longLongHash.addWithoutStoreKeys(longKey, intValue);
+                    }
+                    for (int i = 0; i < batchSize; i++) {
+                        int groupId = buffer[i];
+                        if (groupId >= sizeBefore) {
+                            long longKey = longVector.getLong(offset + i);
+                            int intValue = intVector.getInt(offset + i);
+                            longLongHash.appendKeys(longKey, intValue);
+                        }
+                    }
+                    for (int i = 0; i < batchSize; i++) {
+                        groupIdsBuilder.appendInt(i, buffer[i]);
                     }
                     try (var groupIds = groupIdsBuilder.build()) {
                         addInput.add(offset, groupIds);

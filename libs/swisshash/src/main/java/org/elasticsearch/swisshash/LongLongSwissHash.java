@@ -81,6 +81,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private SmallCore smallCore;
     private BigCore bigCore;
     private final List<Releasable> toClose = new ArrayList<>();
+    private int storedKeys = 0;
 
     LongLongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
         super(recycler, breaker, INITIAL_CAPACITY, LongSwissHash.SmallCore.FILL_FACTOR);
@@ -371,6 +372,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 idAndHashPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
                     idAndHashPages[i] = grabPage();
+                    Arrays.fill(idAndHashPages[i], (byte) 0xFF);
                 }
                 success = true;
             } finally {
@@ -403,6 +405,47 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long empty = vec.eq(EMPTY).toLong();
                 if (empty != 0) {
                     return -1;
+                }
+                group = slot(group + BYTE_VECTOR_LANES);
+            }
+        }
+
+        private int addWithoutStoreKeys(final long key1, final long key2) {
+            final long hash64 = hash64(key1, key2);
+            final int hash = (int) hash64;
+            final byte control = control(hash64);
+            int group = hash & mask;
+            if (control == controlData[group]) {
+                final int id = size;
+                // TODO: maybe just store the control only?
+                bigCore.insertAtSlot(group, hash, control, id);
+                size++;
+                return id;
+            }
+            for (; ; ) {
+                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                long matches = vec.eq(control).toLong();
+                while (matches != 0) {
+                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
+                    final long idAndHash = idAndHash(checkSlot);
+                    if (hash(idAndHash) == hash) {
+                        final int id = id(idAndHash);
+                        if (id < storedKeys) {
+                            final long keyOffset = keyOffset(id);
+                            if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                                return id;
+                            }
+                        }
+                    }
+                    matches &= matches - 1; // clear the first set bit and try again
+                }
+                long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                    final int id = size;
+                    bigCore.insertAtSlot(insertSlot, hash, control, id);
+                    size++;
+                    return id;
                 }
                 group = slot(group + BYTE_VECTOR_LANES);
             }
@@ -577,6 +620,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int keyPageMask = Math.toIntExact(keyOffset & PAGE_MASK);
             LONG_HANDLE.set(keyPages[keyPageOffset], keyPageMask, value1);
             LONG_HANDLE.set(keyPages[keyPageOffset], (keyPageMask + Long.BYTES) & PAGE_MASK, value2);
+            storedKeys++;
         }
 
         @Override
@@ -605,6 +649,21 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         Objects.checkIndex(actualId, size());
         final long keyOffset = keyOffset(actualId);
         return smallCore != null ? smallCore.key2(Math.toIntExact(keyOffset)) : bigCore.key2(keyOffset);
+    }
+
+
+    @Override
+    public int addWithoutStoreKeys(long key1, long key2) {
+        if (smallCore != null) {
+            smallCore.transitionToBigCore();
+        }
+        bigCore.maybeGrow();
+        return bigCore.addWithoutStoreKeys(key1, key2);
+    }
+
+    @Override
+    public void appendKeys(long key1, long key2) {
+        bigCore.setKeys(keyOffset(storedKeys++), key1, key2);
     }
 
     private long keyOffset(final int id) {
