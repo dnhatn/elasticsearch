@@ -356,16 +356,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             int startOffset = 0;
             int maxId = size;
             for (int i = 0; i < runningOffsets.length; i++) {
-                int endOffset = runningOffsets[i];
-                if (endOffset > startOffset) {
-                    int total = endOffset - startOffset;
-                    BigCore bigCore = segments[i];
-                    if (bigCore.numKeys + total >= bigCore.nextGrowSize) {
-                        segments[i] = bigCore.grow();
-                        bigCore.close();
-                        bigCore = segments[i];
+                final int endOffset = runningOffsets[i];
+                int total = endOffset - startOffset;
+                if (total > 0) {
+                    BigCore segment = segments[i];
+                    if (segment.numKeys + total >= segment.nextGrowSize) {
+                        segments[i] = segment.grow();
+                        segment.close();
+                        segment = segments[i];
                     }
-                    bigCore.batchAdd(key1s, key2s, startOffset, endOffset, maxId);
+                    segment.batchAdd(key1s, key2s, startOffset, endOffset, maxId);
                     startOffset = endOffset;
                 }
             }
