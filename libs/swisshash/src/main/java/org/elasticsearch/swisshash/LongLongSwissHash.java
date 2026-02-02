@@ -327,7 +327,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     }
 
     private void growKeysPages() {
-        int keyPagesNeeded = (nextGrowSize * KEY_SIZE - 1) >> PAGE_SHIFT;
+        int keyPagesNeeded = Math.toIntExact(((long) nextGrowSize * KEY_SIZE - 1) >> PAGE_SHIFT);
         keyPagesNeeded++;
         var initialKeyPages = keyPages;
         keyPages = new byte[keyPagesNeeded][];
