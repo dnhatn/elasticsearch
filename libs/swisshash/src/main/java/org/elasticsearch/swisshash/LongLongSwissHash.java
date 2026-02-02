@@ -430,7 +430,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public void close() {
             super.close();
-            Releasables.close(multiCore);
+            Releasables.close(segments);
         }
     }
 
