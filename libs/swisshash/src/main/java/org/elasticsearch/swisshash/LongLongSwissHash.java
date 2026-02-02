@@ -494,9 +494,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
             final int offset = idAndHashOffset(insertSlot);
             LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
-            controlData[insertSlot] = control;
-            if (insertSlot < BYTE_VECTOR_LANES) {
-                controlData[insertSlot + capacity] = control;
+            if (insertSlot == mask) {
+                Arrays.fill(controlData, mask, controlData.length, control);
+            } else {
+                controlData[insertSlot] = control;
             }
         }
 
