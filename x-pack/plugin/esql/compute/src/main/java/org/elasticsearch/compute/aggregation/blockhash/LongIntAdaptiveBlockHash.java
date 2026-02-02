@@ -8,6 +8,7 @@
 package org.elasticsearch.compute.aggregation.blockhash;
 
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
@@ -101,7 +102,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
                     keys2[2] = intVector.getInt(offset + i);
                 }
                 final int[] ids = longLongHash.addUniqueKeys(keys1, keys2, 0, batchSize);
-                try (var groupIds = blockFactory.newIntArrayVector(ids, batchSize)) {
+                try (var groupIds = blockFactory.newIntArrayVector(ids, batchSize, RamUsageEstimator.sizeOf(ids))) {
                     addInput.add(offset, groupIds);
                 }
                 offset += batchSize;
