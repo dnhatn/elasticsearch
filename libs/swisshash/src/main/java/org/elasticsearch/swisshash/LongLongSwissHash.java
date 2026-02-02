@@ -362,7 +362,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
             boolean success = false;
             try {
-                idAndHashPages = new int[2 * capacity];
+                this.idAndHashPages = new int[2 * capacity];
+                System.err.println("--> allocate = " + capacity + ", length =" + idAndHashPages.length);
                 Arrays.fill(idAndHashPages, -1);
                 success = true;
             } finally {
@@ -476,7 +477,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(int oldCapacity, BigCore newBigCore) {
-            System.err.println("--> old-capacity = " + oldCapacity + ", new-capacity=" + idAndHashPages.length);
+            System.err.println("--> old-capacity = " + oldCapacity + ", length =" + idAndHashPages.length);
             for (int slot = 0; slot < oldCapacity; slot++) {
                 int id = idAndHashPages[slot * 2];
                 if (id < 0) {
