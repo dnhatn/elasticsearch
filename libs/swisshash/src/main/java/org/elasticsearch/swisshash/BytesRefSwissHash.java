@@ -162,7 +162,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
     private long add(BytesRef key, int hash) {
         if (smallCore != null) {
-            if (size < nextGrowSize) {
+            if (size < smallCore.nextGrowSize) {
                 return smallCore.add(key, hash);
             }
             smallCore.transitionToBigCore();
@@ -263,10 +263,9 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         }
 
         void transitionToBigCore() {
-            int oldCapacity = growTracking();
             try {
-                bigCore = new BigCore();
-                rehash(oldCapacity);
+                bigCore = new BigCore(growTracking());
+                rehash(capacity);
             } finally {
                 close();
                 smallCore = null;
@@ -465,10 +464,9 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         }
 
         private void grow() {
-            int oldCapacity = growTracking();
             try {
-                BigCore newBigCore = new BigCore();
-                rehash(oldCapacity, newBigCore);
+                BigCore newBigCore = new BigCore(growTracking());
+                rehash(capacity, newBigCore);
                 bigCore = newBigCore;
             } finally {
                 close();
@@ -545,10 +543,6 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
     int hash(BytesRef v) {
         return BitMixer.mix32(v.hashCode());
-    }
-
-    int slot(int hash) {
-        return hash & mask;
     }
 
     private boolean matches(BytesRef key, int id) {
