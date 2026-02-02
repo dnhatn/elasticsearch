@@ -29,6 +29,7 @@ import org.elasticsearch.core.Releasables;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -90,22 +91,34 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
             IntVector intVector = Objects.requireNonNull(intVector(page), "required int vector");
             int position = longVector.getPositionCount();
             int offset = 0;
-
+            LongLongHashTable.QuickAdd quickAdd = longLongHash.prepare(position);
+            assert quickAdd != null;
             while (offset < position) {
                 final int batchSize = Math.min(emitBatchSize, position - offset);
                 try (var groupIdsBuilder = blockFactory.newIntVectorFixedBuilder(batchSize)) {
+                    final long sizeBefore = longLongHash.size();
                     for (int i = 0; i < batchSize; i++) {
                         long longKey = longVector.getLong(offset + i);
                         int intValue = intVector.getInt(offset + i);
-                        long ord = hashOrdToGroup(longLongHash.add(longKey, intValue));
-                        groupIdsBuilder.appendInt(i, Math.toIntExact(ord));
+                        int ord = quickAdd.reserve(longKey, intValue);
+                        groupIdsBuilder.appendInt(i, ord);
                     }
+                    // append keys
                     try (var groupIds = groupIdsBuilder.build()) {
+                        for (int i = 0; i < batchSize; i++) {
+                            final int ord = groupIds.getInt(i);
+                            if (ord >= sizeBefore) {
+                                long longKey = longVector.getLong(offset + i);
+                                int intKey = intVector.getInt(offset + i);
+                                quickAdd.storeKeys(ord, longKey, intKey);
+                            }
+                        }
                         addInput.add(offset, groupIds);
                     }
                 }
                 offset += batchSize;
             }
+
         }
 
         @Override
