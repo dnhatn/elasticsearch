@@ -464,6 +464,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         }
 
         private void grow() {
+            bigCore = null;
             try {
                 BigCore newBigCore = new BigCore(growTracking());
                 rehash(capacity, newBigCore);
