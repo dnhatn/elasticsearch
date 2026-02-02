@@ -438,10 +438,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         int newSize = size + extraSize;
         int keyPagesNeeded = (newSize * KEY_SIZE - 1) >> PAGE_SHIFT;
         keyPagesNeeded++;
-        var initialKeyPages = keyPages;
-        if (initialKeyPages.length < keyPagesNeeded) {
-            keyPagesNeeded = ArrayUtil.oversize(keyPagesNeeded, 1);
+        if (keyPages.length >= keyPagesNeeded) {
+            return;
         }
+        var initialKeyPages = keyPages;
         keyPages = new byte[keyPagesNeeded][];
         for (int i = 0; i < keyPagesNeeded; i++) {
             keyPages[i] = (i < initialKeyPages.length) ? initialKeyPages[i] : grabKeyPage();
@@ -656,7 +656,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 close();
             }
             long endTime = System.nanoTime();
-            System.err.println("--> resizing to " + capacity + " took " + (endTime - startTime));
+            System.err.println("--> resizing to " + newBigCore.capacity + " took " + (endTime - startTime));
             return newBigCore;
         }
 
