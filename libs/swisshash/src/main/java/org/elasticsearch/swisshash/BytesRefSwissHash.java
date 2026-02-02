@@ -117,7 +117,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
     }
 
     private BytesRefSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker, BytesRefArray bytesRefs, boolean ownsBytesRefs) {
-        super(recycler, breaker, INITIAL_CAPACITY, SmallCore.FILL_FACTOR);
+        super(recycler, breaker);
         this.bytesRefs = bytesRefs;
         this.ownsBytesRefs = ownsBytesRefs;
         boolean success = false;
@@ -205,19 +205,6 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         }
     }
 
-    private int growTracking() {
-        // Juggle constants for the new page size
-        growCount++;
-        int oldCapacity = capacity;
-        capacity <<= 1;
-        if (capacity < 0) {
-            throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
-        }
-        mask = capacity - 1;
-        nextGrowSize = (int) (capacity * BigCore.FILL_FACTOR);
-        return oldCapacity;
-    }
-
     /**
      * Open addressed hash table the probes by triangle numbers. Empty
      * {@code id}s are encoded as {@code -1}. This hash table can't
@@ -232,6 +219,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
         private final byte[] idAndHashPage;
 
         private SmallCore() {
+            super(INITIAL_CAPACITY, FILL_FACTOR);
             boolean success = false;
             try {
                 idAndHashPage = grabPage();
@@ -352,7 +340,8 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
         private int insertProbes;
 
-        BigCore() {
+        BigCore(int initialCapacity) {
+            super(initialCapacity, FILL_FACTOR);
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "BytesRefSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
