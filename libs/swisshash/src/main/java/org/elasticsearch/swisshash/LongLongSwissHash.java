@@ -488,10 +488,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long empty = vec.eq(EMPTY).toLong();
                 if (empty != 0) {
                     final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    if (group == mask) {
+                    if (insertSlot == mask) {
                         Arrays.fill(controlData, mask, controlData.length, control);
                     } else {
-                        controlData[group] = control;
+                        controlData[insertSlot] = control;
                     }
                     return -1 - insertSlot;
                 }
