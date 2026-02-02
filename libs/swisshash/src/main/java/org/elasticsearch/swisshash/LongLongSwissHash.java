@@ -372,7 +372,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 idAndHashPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
                     idAndHashPages[i] = grabPage();
-                    Arrays.fill(idAndHashPages[i], (byte) 0xFF);
                 }
                 success = true;
             } finally {
@@ -588,6 +587,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          */
         private void insert(final int hash, final byte control, final int id) {
             int group = hash & mask;
+            if (controlData[group] == EMPTY) {
+                insertAtSlot(group, hash, control, id);
+                return;
+            }
             for (;;) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long empty = vec.eq(EMPTY).toLong();
