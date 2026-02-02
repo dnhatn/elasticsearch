@@ -482,6 +482,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final int id = size;
                     final long keyOffset = keyOffset(id);
                     setKeys(keyOffset, key1, key2);
+                    storedKeys++;
                     bigCore.insertAtSlot(insertSlot, hash, control, id);
                     size++;
                     return id;
@@ -620,7 +621,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int keyPageMask = Math.toIntExact(keyOffset & PAGE_MASK);
             LONG_HANDLE.set(keyPages[keyPageOffset], keyPageMask, value1);
             LONG_HANDLE.set(keyPages[keyPageOffset], (keyPageMask + Long.BYTES) & PAGE_MASK, value2);
-            storedKeys++;
         }
 
         @Override
