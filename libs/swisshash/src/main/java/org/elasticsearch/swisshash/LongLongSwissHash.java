@@ -110,12 +110,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
      */
     @Override
     public long find(final long key1, final long key2) {
-        final int hash = hash(key1, key2);
-        if (smallCore != null) {
-            return smallCore.find(key1, key2, hash);
-        } else {
-            return multiCore.find(key1, key2);
-        }
+        throw new UnsupportedOperationException("not yet implemented");
     }
 
     /**
@@ -125,13 +120,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
      */
     @Override
     public long add(final long key1, final long key2) {
-        if (smallCore != null) {
-            if (size < smallCore.nextGrowSize) {
-                return smallCore.add(key1, key2);
-            }
-            smallCore.transitionToBigCore();
-        }
-        return multiCore.add(key1, key2);
+        throw new UnsupportedOperationException("not yet implemented");
     }
 
     @Override
@@ -327,6 +316,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     BigCore bigCore = segments[segmentIndex];
                     bigCore.insert((int)hash64, control(hash64), i);
                 }
+                success = true;
             } finally {
                 if (success == false) {
                     close();
