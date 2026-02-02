@@ -415,7 +415,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int hash = (int) hash64;
             final byte control = control(hash64);
             int group = hash & mask;
-            if (control == controlData[group]) {
+            if (EMPTY == controlData[group]) {
                 final int id = size;
                 // TODO: maybe just store the control only?
                 bigCore.insertAtSlot(group, hash, control, id);
@@ -496,10 +496,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final int offset = idAndHashOffset(insertSlot);
             LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
             controlData[insertSlot] = control;
-            if (insertSlot == mask) {
-                Arrays.fill(controlData, mask, controlData.length, control);
-            } else {
-                controlData[insertSlot] = control;
+            if (insertSlot < BYTE_VECTOR_LANES) {
+                controlData[insertSlot + capacity] = control;
             }
         }
 
