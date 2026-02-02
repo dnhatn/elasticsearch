@@ -371,7 +371,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     int total = endOffset - startOffset;
                     BigCore bigCore = segments[i];
                     if (bigCore.numKeys + total >= bigCore.nextGrowSize) {
-                        segments[i] = bigCore = bigCore.grow();
+                        segments[i] = bigCore.grow();
+                        bigCore.close();
+                        bigCore = segments[i];
                     }
                     bigCore.batchAdd(key1s, key2s, startOffset, endOffset, maxId);
                     startOffset = endOffset;
@@ -648,13 +650,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private BigCore grow() {
             long startTime = System.nanoTime();
-            final BigCore newBigCore;
-            try {
-                newBigCore = new BigCore(growTracking());
-                rehash(capacity, newBigCore);
-            } finally {
-                close();
-            }
+            final BigCore newBigCore = new BigCore(growTracking());
+            rehash(capacity, newBigCore);
             long endTime = System.nanoTime();
             System.err.println("--> resizing to " + newBigCore.capacity + " took " + (endTime - startTime));
             return newBigCore;
