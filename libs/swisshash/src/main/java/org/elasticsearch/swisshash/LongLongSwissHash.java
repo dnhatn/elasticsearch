@@ -332,13 +332,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private static class BatchWork {
         int[] ids = new int[128];
         int[] hashes = new int[128];
-        byte[] controls = new byte[128];
 
         void ensureCapacity(int length) {
             if (ids.length < length) {
                 ids = new int[length];
                 hashes = new int[length];
-                controls = new byte[length];
             }
         }
     }
@@ -431,29 +429,24 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long k1 = key1s[i];
                 long k2 = key2s[i];
                 final long hash64 = hash64(k1, k2);
-                final int hash = (int) hash64;
+                final int hash = batchWork.hashes[i] = (int) hash64;
                 final byte control = control(hash64);
-                final int groupOrId = reserve(k1, k2, hash, control, size);
-                if (groupOrId < 0) {
-                    batchWork.hashes[i] = hash;
-                    batchWork.controls[i] = control;
-                }
-                batchWork.ids[i] = groupOrId;
+                batchWork.ids[i] = reserve(k1, k2, hash, control, size);
             }
             int nextId = size;
-            // flush unwritten ids
+            // flush ids
             for (int i = 0; i < length; i++) {
                 int id = batchWork.ids[i];
                 if (id < 0) {
                     final int slot = -1 - id;
-                    id = nextId++;
+                    batchWork.ids[i] = id = nextId++;
                     int hash = batchWork.hashes[i];
                     final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                     final int offset = idAndHashOffset(slot);
                     LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
                 }
             }
-            // flush keys for new ids
+            // flush keys
             for (int i = 0; i < length; i++) {
                 int id = batchWork.ids[i];
                 if (id >= size) {
