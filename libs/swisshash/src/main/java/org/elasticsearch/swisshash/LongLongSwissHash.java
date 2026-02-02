@@ -45,7 +45,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private static final int ID_SIZE = Integer.BYTES;
     private static final int ID_AND_HASH_SIZE = Long.BYTES;
 
-
     static final int INITIAL_CAPACITY = PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE;
 
     static {
@@ -335,13 +334,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         for (int i = 0; i < keyPagesNeeded; i++) {
             keyPages[i] = (i < initialKeyPages.length) ? initialKeyPages[i] : grabKeyPage();
         }
-//        assert keyPages[Math.toIntExact(keyOffset(mask) >> PAGE_SHIFT)] != null
-//            && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
-//            && keyPagesNeeded > initialKeyPages.length;
+        // assert keyPages[Math.toIntExact(keyOffset(mask) >> PAGE_SHIFT)] != null
+        // && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
+        // && keyPagesNeeded > initialKeyPages.length;
     }
 
-
-    final class BigCore extends Core implements Accountable, QuickAdd {
+    final class BigCore extends Core implements Accountable {
         static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BigCore.class);
 
         static final float FILL_FACTOR = 0.6F;
@@ -354,11 +352,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int sizeStarted;
 
         BigCore() {
-            super(
-                ((capacity * KEY_SIZE - 1) >> PAGE_SHIFT) - keyPages.length
-                + (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT
-                + 10
-            );
+            super(((capacity * KEY_SIZE - 1) >> PAGE_SHIFT) - keyPages.length + (capacity * ID_AND_HASH_SIZE - 1) >> PAGE_SHIFT + 10);
 
             boolean success = false;
             try {
@@ -377,8 +371,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             throw new UnsupportedOperationException();
         }
 
-        @Override
-        public int reserve(long key1, long key2) {
+        int reserve(long key1, long key2) {
             maybeGrow();
             return bigCore.reserveImpl(key1, key2);
         }
@@ -387,7 +380,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final long hash64 = hash64(key1, key2);
             final int hash = (int) hash64;
             int group = hash & mask;
-            for (; ; ) {
+            for (;;) {
                 int id = idAndHashPages[group * 2];
                 if (id < 0) {
                     break; // empty
@@ -405,8 +398,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             return id;
         }
 
-        @Override
-        public void storeKeys(int id, long key1, long key2) {
+        void storeKeys(int id, long key1, long key2) {
             final long keyOffset = keyOffset(id);
             setKeys(keyOffset, key1, key2);
             size++;
@@ -420,7 +412,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private int addImpl(final long key1, final long key2) {
             throw new UnsupportedOperationException();
         }
-
 
         @Override
         protected Status status() {
@@ -465,8 +456,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             growTracking();
             try {
                 var newBigCore = new BigCore();
-                rehash(oldCapacity, newBigCore);
                 newBigCore.sizeStarted = this.sizeStarted;
+                rehash(oldCapacity, newBigCore);
                 bigCore = newBigCore;
             } finally {
                 close();
@@ -494,7 +485,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          */
         private void insert(final int hash, final int id) {
             int group = hash & mask;
-            for (; ; ) {
+            for (;;) {
                 int idx = group * 2;
                 if (idAndHashPages[idx] < 0) {
                     idAndHashPages[idx] = id;
@@ -526,8 +517,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         @Override
         public long ramBytesUsed() {
-            return BASE_RAM_BYTES_USED  + (long) idAndHashPages.length
-                * PageCacheRecycler.PAGE_SIZE_IN_BYTES;
+            return BASE_RAM_BYTES_USED + (long) idAndHashPages.length * PageCacheRecycler.PAGE_SIZE_IN_BYTES;
         }
 
         @Override
@@ -552,14 +542,17 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         return smallCore != null ? smallCore.key2(Math.toIntExact(keyOffset)) : bigCore.key2(keyOffset);
     }
 
-
     @Override
-    public QuickAdd prepare(int extraCapacity) {
+    public int reserve(long key1, long key2) {
         if (smallCore != null) {
             smallCore.transitionToBigCore();
         }
-        bigCore.sizeStarted = size;
-        return bigCore;
+        return bigCore.reserve(key1, key2);
+    }
+
+    @Override
+    public void storeKeys(int id, long key1, long key2) {
+        bigCore.storeKeys(id, key1, key2);
     }
 
     private long keyOffset(final int id) {

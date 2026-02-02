@@ -29,7 +29,6 @@ import org.elasticsearch.core.Releasables;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -42,6 +41,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
     private final int intChannel;
     private final int emitBatchSize;
     private final boolean reverseOutput;
+    private final int[] buffer;
 
     public LongIntAdaptiveBlockHash(List<GroupSpec> specs, BlockFactory blockFactory, int emitBatchSize, boolean reverseOutput) {
         super(specs, blockFactory, emitBatchSize);
@@ -50,6 +50,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
         this.emitBatchSize = emitBatchSize;
         this.reverseOutput = reverseOutput;
         this.current = new LongIntVectorOnlyBlockHash(blockFactory);
+        this.buffer = new int[emitBatchSize];
     }
 
     @Override
@@ -91,28 +92,27 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
             IntVector intVector = Objects.requireNonNull(intVector(page), "required int vector");
             int position = longVector.getPositionCount();
             int offset = 0;
-            LongLongHashTable.QuickAdd quickAdd = longLongHash.prepare(position);
-            assert quickAdd != null;
             while (offset < position) {
                 final int batchSize = Math.min(emitBatchSize, position - offset);
+                int upTo = 0;
                 try (var groupIdsBuilder = blockFactory.newIntVectorFixedBuilder(batchSize)) {
-                    final long sizeBefore = longLongHash.size();
+                    final int sizeBefore = Math.toIntExact(longLongHash.size());
                     for (int i = 0; i < batchSize; i++) {
                         long longKey = longVector.getLong(offset + i);
                         int intValue = intVector.getInt(offset + i);
-                        int ord = quickAdd.reserve(longKey, intValue);
+                        int ord = longLongHash.reserve(longKey, intValue);
                         groupIdsBuilder.appendInt(i, ord);
-                    }
-                    // append keys
-                    try (var groupIds = groupIdsBuilder.build()) {
-                        for (int i = 0; i < batchSize; i++) {
-                            final int ord = groupIds.getInt(i);
-                            if (ord >= sizeBefore) {
-                                long longKey = longVector.getLong(offset + i);
-                                int intKey = intVector.getInt(offset + i);
-                                quickAdd.storeKeys(ord, longKey, intKey);
-                            }
+                        if (ord >= sizeBefore) {
+                            buffer[upTo++] = i;
                         }
+                    }
+                    for (int i = 0; i < upTo; i++) {
+                        final int idx = buffer[i];
+                        long longKey = longVector.getLong(offset + idx);
+                        int intKey = intVector.getInt(offset + idx);
+                        longLongHash.storeKeys(sizeBefore + i, longKey, intKey);
+                    }
+                    try (var groupIds = groupIdsBuilder.build()) {
                         addInput.add(offset, groupIds);
                     }
                 }

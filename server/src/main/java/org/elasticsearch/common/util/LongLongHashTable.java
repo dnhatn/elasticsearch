@@ -42,11 +42,7 @@ public interface LongLongHashTable extends Releasable, Accountable {
     /** Returns the size (number of key/value pairs) in the table.*/
     long size();
 
-    interface QuickAdd {
-        int reserve(long key1, long key2);
-        void storeKeys(int id, long key1, long key2);
-    }
 
-    @Nullable
-    QuickAdd prepare(int expectedSize);
+    int reserve(long key1, long key2);
+    void storeKeys(int id, long key1, long key2);
 }

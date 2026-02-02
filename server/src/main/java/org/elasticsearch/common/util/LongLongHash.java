@@ -161,7 +161,12 @@ public final class LongLongHash extends AbstractHash implements LongLongHashTabl
     }
 
     @Override
-    public QuickAdd prepare(int expectedSize) {
+    public int reserve(long key1, long key2) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void storeKeys(int id, long key1, long key2) {
         throw new UnsupportedOperationException();
     }
 }
