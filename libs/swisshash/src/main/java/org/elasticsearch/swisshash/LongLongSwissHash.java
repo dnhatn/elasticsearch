@@ -333,14 +333,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         int[] ids = new int[128];
         int[] hashes = new int[128];
         byte[] controls = new byte[128];
-        int[] slots = new int[128];
 
         void ensureCapacity(int length) {
             if (ids.length < length) {
                 ids = new int[length];
                 hashes = new int[length];
                 controls = new byte[length];
-                slots = new int[length];
             }
         }
     }
@@ -388,6 +386,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 idAndHashPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
                     idAndHashPages[i] = grabPage();
+                    Arrays.fill(idAndHashPages[i], (byte)0xFF);
                 }
                 success = true;
             } finally {
@@ -428,29 +427,26 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
             batchWork.ensureCapacity(length);
-            int maxId = size;
             for (int i = 0; i < length; i++) {
                 long k1 = key1s[i];
-                long k2 = key2s[1];
+                long k2 = key2s[i];
                 final long hash64 = hash64(k1, k2);
                 final int hash = (int) hash64;
                 final byte control = control(hash64);
-                final int groupOrId = reserve(k1, k2, hash, control, maxId);
+                final int groupOrId = reserve(k1, k2, hash, control, size);
                 if (groupOrId < 0) {
                     batchWork.hashes[i] = hash;
                     batchWork.controls[i] = control;
-                    batchWork.slots[i] = -1 - groupOrId;
-                    batchWork.ids[i] = size - 1; // id added
-                } else {
-                    batchWork.slots[i] = -1;
-                    batchWork.ids[i] = groupOrId;
                 }
+                batchWork.ids[i] = groupOrId;
             }
+            int nextId = size;
             // flush unwritten ids
             for (int i = 0; i < length; i++) {
-                int slot = batchWork.slots[i];
-                if (slot >= 0){
-                    int id = batchWork.ids[i];
+                int id = batchWork.ids[i];
+                if (id < 0) {
+                    final int slot = -1 - id;
+                    id = nextId++;
                     int hash = batchWork.hashes[i];
                     final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                     final int offset = idAndHashOffset(slot);
@@ -459,15 +455,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
             // flush keys for new ids
             for (int i = 0; i < length; i++) {
-                int slot = batchWork.slots[i];
-                if (slot >= 0) {
-                    int id = batchWork.ids[i];
-                    if (id >= maxId) {
-                        final long keyOffset = keyOffset(id);
-                        setKeys(keyOffset, key1s[i], key2s[i]);
-                    }
+                int id = batchWork.ids[i];
+                if (id >= size) {
+                    final long keyOffset = keyOffset(id);
+                    setKeys(keyOffset, key1s[i], key2s[i]);
                 }
             }
+            size = nextId;
             return batchWork.ids;
         }
 
@@ -479,7 +473,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 } else {
                     controlData[group] = control;
                 }
-                size++;
                 return -1 - group;
             }
             for (; ; ) {
@@ -502,10 +495,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long empty = vec.eq(EMPTY).toLong();
                 if (empty != 0) {
                     final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    final int id = size;
-                    bigCore.insertAtSlot(insertSlot, hash, control, id);
-                    size++;
-                    return id;
+                    if (group == mask) {
+                        Arrays.fill(controlData, mask, controlData.length, control);
+                    } else {
+                        controlData[group] = control;
+                    }
+                    return -1 - insertSlot;
                 }
                 group = slot(group + BYTE_VECTOR_LANES);
             }
