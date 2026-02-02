@@ -399,6 +399,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public int reserve(long key1, long key2) {
             maybeGrow();
+            return bigCore.reserveImpl(key1, key2);
+        }
+
+        private int reserveImpl(final long key1, final long key2) {
             final long hash64 = hash64(key1, key2);
             final int hash = (int) hash64;
             int group = hash & mask;
