@@ -441,20 +441,22 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     batchWork.slots[i] = -1 - groupOrId;
                     batchWork.ids[i] = size - 1; // id added
                 } else {
+                    batchWork.slots[i] = Integer.MAX_VALUE;
                     batchWork.ids[i] = groupOrId;
-                    batchWork.slots[i] = -1;
                 }
             }
             // flush unwritten ids
+            Arrays.sort(batchWork.slots, 0, length);
             for (int i = 0; i < length; i++) {
                 int slot = batchWork.slots[i];
-                if (slot >= 0) {
+                if (slot != Integer.MAX_VALUE){
                     int id = batchWork.ids[i];
                     int hash = batchWork.hashes[i];
                     final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                     final int offset = idAndHashOffset(slot);
                     LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
                 }
+
             }
             // flush keys for new ids
             for (int i = 0; i < length; i++) {
