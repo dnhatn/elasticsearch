@@ -224,7 +224,7 @@ public abstract class SwissHash {
      * and {@link Releasable}.
      */
     abstract class Core implements Releasable {
-        private int acquiredPages = 0;
+        private long acquireBytes = 0;
         final List<Releasable> toClose;
         protected final int capacity;
         protected final int mask;
@@ -236,12 +236,12 @@ public abstract class SwissHash {
             this.nextGrowSize = (int) (capacity * fillFactor);
 
             assert initialCapacity == Integer.highestOneBit(initialCapacity) : "initial capacity is a power of two";
-            toClose = new ArrayList<>(initialCapacity / (PageCacheRecycler.PAGE_SIZE_IN_BYTES));
+            toClose = new ArrayList<>();
         }
 
         byte[] grabPage() {
             breaker.addEstimateBytesAndMaybeBreak(PageCacheRecycler.PAGE_SIZE_IN_BYTES, "SwissHash.Core");
-            acquiredPages++;
+            acquireBytes += PageCacheRecycler.PAGE_SIZE_IN_BYTES;
             Recycler.V<byte[]> page = recycler.bytePage(false);
             toClose.add(page);
             return page.v();
@@ -250,10 +250,9 @@ public abstract class SwissHash {
         protected int growTracking() {
             // Juggle constants for the new page size
             growCount++;
-            final int oldCapacity = capacity;
-            int newCapacity = capacity >> 1;
+            int newCapacity = capacity << 1;
             if (capacity < 0) {
-                throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + newCapacity);
+                throw new IllegalArgumentException("overflow: oldCapacity=" + capacity + ", new capacity=" + newCapacity);
             }
             return newCapacity;
         }
@@ -270,7 +269,7 @@ public abstract class SwissHash {
 
         @Override
         public void close() {
-            breaker.addEstimateBytesAndMaybeBreak(-PageCacheRecycler.PAGE_SIZE_IN_BYTES * (long) acquiredPages, "SwissHash.Core");
+            breaker.addWithoutBreaking(-acquireBytes);
             Releasables.close(toClose);
             toClose.clear();
         }
