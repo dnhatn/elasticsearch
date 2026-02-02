@@ -409,16 +409,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 int id = id(idAndHash);
                 if (id < 0) {
                     break; // empty
-                } else {
-                    if (hash(idAndHash) == hash) {
-                        if (id < sizeStarted) {
-                            final long keyOffset = keyOffset(id);
-                            if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
-                                return id; // found existing
-                            }
-                        } else {
-                            break; // no match
-                        }
+                } else if (id < sizeStarted && hash(idAndHash) == hash) {
+                    final long keyOffset = keyOffset(id);
+                    if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                        return id; // found existing
                     }
                 }
                 group = (++group) % mask;
