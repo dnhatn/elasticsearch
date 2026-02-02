@@ -159,4 +159,9 @@ public final class LongLongHash extends AbstractHash implements LongLongHashTabl
     public long ramBytesUsed() {
         return BASE_RAM_BYTES_USED + keys.ramBytesUsed() + ids.ramBytesUsed();
     }
+
+    @Override
+    public QuickAdd prepare(int expectedSize) {
+        throw new UnsupportedOperationException();
+    }
 }
