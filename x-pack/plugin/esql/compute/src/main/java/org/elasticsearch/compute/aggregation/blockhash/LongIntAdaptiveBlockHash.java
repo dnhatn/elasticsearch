@@ -8,6 +8,7 @@
 package org.elasticsearch.compute.aggregation.blockhash;
 
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
@@ -42,13 +43,20 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
     private final int emitBatchSize;
     private final boolean reverseOutput;
 
+    private final long[] batchKey1s;
+    private final long[] batchKey2s;
+    private final int[] batchIds;
+
     public LongIntAdaptiveBlockHash(List<GroupSpec> specs, BlockFactory blockFactory, int emitBatchSize, boolean reverseOutput) {
         super(specs, blockFactory, emitBatchSize);
         this.longChannel = reverseOutput ? specs.get(1).channel() : specs.get(0).channel();
         this.intChannel = reverseOutput ? specs.get(0).channel() : specs.get(1).channel();
-        this.emitBatchSize = emitBatchSize;
+        this.emitBatchSize = Math.max(emitBatchSize, 2048);
         this.reverseOutput = reverseOutput;
         this.current = new LongIntVectorOnlyBlockHash(blockFactory);
+        this.batchKey1s = new long[this.emitBatchSize];
+        this.batchKey2s = new long[this.emitBatchSize];
+        this.batchIds = new int[this.emitBatchSize];
     }
 
     @Override
@@ -93,16 +101,14 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
 
             while (offset < position) {
                 final int batchSize = Math.min(emitBatchSize, position - offset);
-                try (var groupIdsBuilder = blockFactory.newIntVectorFixedBuilder(batchSize)) {
-                    for (int i = 0; i < batchSize; i++) {
-                        long longKey = longVector.getLong(offset + i);
-                        int intValue = intVector.getInt(offset + i);
-                        long ord = hashOrdToGroup(longLongHash.add(longKey, intValue));
-                        groupIdsBuilder.appendInt(i, Math.toIntExact(ord));
-                    }
-                    try (var groupIds = groupIdsBuilder.build()) {
-                        addInput.add(offset, groupIds);
-                    }
+                // TODO: allow to use the key directly from the vectors to avoid the copy
+                for (int i = 0; i < batchSize; i++) {
+                    batchKey1s[i] = longVector.getLong(offset + i);
+                    batchKey2s[i] = intVector.getInt(offset + i);
+                }
+                longLongHash.addBatch(batchKey1s, batchKey2s, batchIds, batchSize);
+                try (var groupIds = blockFactory.newIntArrayVector(batchIds, batchSize, RamUsageEstimator.sizeOf(batchSize))) {
+                    addInput.add(offset, groupIds);
                 }
                 offset += batchSize;
             }

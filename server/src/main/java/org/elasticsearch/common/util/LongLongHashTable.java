@@ -38,6 +38,12 @@ public interface LongLongHashTable extends Releasable, Accountable {
      */
     long add(long key1, long key2);
 
+    /**
+     * Adds a batch of key pairs to the table. Unlike {@link #add(long, long)},
+     * the returned ids are actual the ids.
+     */
+    void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length);
+
     /** Returns the size (number of key/value pairs) in the table.*/
     long size();
 }

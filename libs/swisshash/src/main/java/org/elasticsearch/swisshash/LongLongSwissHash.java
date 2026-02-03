@@ -132,6 +132,19 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     }
 
     @Override
+    public void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
+        if (smallCore != null) {
+            for (int i = 0; i < length; i++) {
+                long id = add(firstKeys[i], secondKeys[i]);
+                id = id < 0 ? -1 - id : id;
+                ids[i] = (int) id;
+            }
+            return;
+        }
+        bigCore.addBatch(firstKeys, secondKeys, ids, length);
+    }
+
+    @Override
     public Status status() {
         return smallCore != null ? smallCore.status() : bigCore.status();
     }
@@ -386,6 +399,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     return -1;
                 }
                 group = slot(group + BYTE_VECTOR_LANES);
+            }
+        }
+
+        void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
+            for (int i = 0; i < length; i++) {
+                final long key1 = firstKeys[i];
+                final long key2 = secondKeys[i];
+                long id = add(key1, key2, hash(key1, key2));
+                id = id < 0 ? -1 - id : id;
+                ids[i] = (int) id;
             }
         }
 
