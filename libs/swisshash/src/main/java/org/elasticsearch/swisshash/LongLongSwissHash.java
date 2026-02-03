@@ -385,29 +385,29 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             while (offset < length) {
                 final int batchSize = Math.min(length - offset, batchWork.hash64s.length);
                 int end = offset + batchSize;
-                for (int i = offset; i < end; i++) {
-                    batchWork.hash64s[i] = hash64(key1s[i], key2s[i]);
+                for (int i = 0; i < batchSize; i++) {
+                    batchWork.hash64s[i] = hash64(key1s[offset + i], key2s[offset + i]);
                 }
                 long dummy = 0;
-                for (int i = offset; i < end; i++) {
+                for (int i = 0; i < batchSize; i++) {
                     dummy ^= controlData[(int) batchWork.hash64s[i] & CONTROL_HASH];
                 }
                 if (dummy == -1) {
                     System.err.println("--> all control blocks full!");
                 }
-                for (int i = offset; i < end; i++) {
-                    long k1 = key1s[i];
-                    long k2 = key2s[i];
+                for (int i = 0; i < batchSize; i++) {
+                    long k1 = key1s[offset + i];
+                    long k2 = key2s[offset + i];
                     long hash64 = batchWork.hash64s[i];
                     final byte control = control(hash64);
-                    batchWork.ids[i] = reserve(k1, k2, (int) hash64, control, keysAdded);
+                    batchWork.ids[offset + i] = reserve(k1, k2, (int) hash64, control, keysAdded);
                 }
                 // flush ids
-                for (int i = offset; i < end; i++) {
+                for (int i = 0; i < batchSize; i++) {
                     int id = batchWork.ids[i];
                     if (id < 0) {
                         final int slot = -1 - id;
-                        batchWork.ids[i] = id = size++;
+                        batchWork.ids[offset + i] = id = size++;
                         int hash = (int) batchWork.hash64s[i];
                         final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                         final int idOffset = idAndHashOffset(slot);
