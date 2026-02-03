@@ -342,6 +342,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idAndHashPages;
 
         private int insertProbes;
+        private final int CONTROL_HASH;
 
         BigCore() {
             super(
@@ -350,6 +351,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 + 10
             );
             int controlLength = (capacity >>> 3) + 1;
+            CONTROL_HASH = mask >>> 3;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
             controlData = new long[controlLength];
@@ -383,6 +385,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
             batchWork.ensureCapacity(length);
+            long empties = 0;
             for (int i = 0; i < length; i++) {
                 long k1 = key1s[i];
                 long k2 = key2s[i];
@@ -419,11 +422,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
 
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
-            int blockIdx = (hash & mask >>> 3);
+            int blockIdx = hash & CONTROL_HASH;
             long pattern = (control & 0xFFL) * LSB_ONES;
 
             for (;;) {
-                long block = controlData[blockIdx];
+                final long block = controlData[blockIdx];
 
                 long match = block ^ pattern;
                 match = (match - LSB_ONES) & ~match & MSB_ONES;
@@ -443,49 +446,38 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     match &= (match - 1);
                 }
 
-                if ((block & MSB_ONES) != 0) {
-                    long emptyMatches = block & MSB_ONES;
+                final long emptyMatches = block & MSB_ONES;
+                if (emptyMatches != 0) {
                     int bitPos = Long.numberOfTrailingZeros(emptyMatches);
                     int subSlot = bitPos >>> 3;
+                    insertAtSlot(blockIdx, subSlot, control);
                     int slot = (blockIdx << 3) + subSlot;
-                    insertAtSlot(slot, control);
                     return -1 - slot;
                 }
 
                 insertProbes++;
-                blockIdx = (blockIdx + 1) & ((mask >>> 3));
+                blockIdx = (blockIdx + 1) & CONTROL_HASH;
             }
         }
 
-        private int checkSlot(int slot, long key1, long key2, int hash, int maxId) {
-            final long idAndHash = idAndHash(slot);
-            if (hash(idAndHash) == hash) {
-                final int id = id(idAndHash);
-                if (id < maxId) {
-                    final long keyOffset = keyOffset(id);
-                    if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
-                        return id;
-                    }
-                }
+        static final long[] SUB_SLOT_MASKS = new long[8];
+        static {
+            for (int i = 0; i < SUB_SLOT_MASKS.length; i++) {
+                SUB_SLOT_MASKS[i] = 0xFFL << (i * 8);
             }
-            return -1;
         }
 
-        private void insertAtSlot(final int slot, final byte control) {
-
-            int blockIdx = slot >>> 3;
-            int subSlot = slot & 7;
-
+        private void insertAtSlot(final int slot, final int subSlot, final byte control) {
             // Read-Modify-Write the specific byte
             long shift = subSlot << 3;
             long longMask = 0xFFL << shift;
             long longVal = (control & 0xFFL) << shift;
 
-            long block = controlData[blockIdx];
+            long block = controlData[slot];
             block = (block & ~longMask) | longVal;
-            controlData[blockIdx] = block;
+            controlData[slot] = block;
 
-            if (blockIdx == 0) {
+            if (slot == 0) {
                 controlData[controlData.length - 1] = block;
             }
         }
