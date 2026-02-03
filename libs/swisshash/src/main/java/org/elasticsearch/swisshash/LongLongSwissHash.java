@@ -331,11 +331,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private static class BatchWork {
         int[] ids = new int[128];
         long[] hash64s = new long[128];
+        byte[] controls = new byte[128];
 
         void ensureCapacity(int length) {
             if (ids.length < length) {
                 ids = new int[length];
                 hash64s = new long[length];
+                controls = new byte[length];
             }
         }
     }
@@ -423,22 +425,27 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
             batchWork.ensureCapacity(length);
-            int empty = 0;
-            final int sizeBefore = size;
             for (int i = 0; i < length; i++) {
                 long hash64 = hash64(key1s[i], key2s[i]);
                 batchWork.hash64s[i] = hash64;
                 int group = ((int) (hash64)) & mask;
-                if (controlData[slot(group)] == EMPTY) {
-                    empty++;
-                }
+                batchWork.controls[i] = controlData[group];
             }
-            System.err.println("--> empty = " + empty + " out of " + length);
+            final int sizeBefore = size;
             for (int i = 0; i < length; i++) {
                 final long hash64 = batchWork.hash64s[i];
                 final int hash = (int) hash64;
                 final byte control = control(hash64);
-                batchWork.ids[i] = reserve(key1s[i], key2s[i], hash, control, sizeBefore);
+                if (EMPTY == controlData[i]) {
+                    final int insertSlot = slot(hash % mask);
+                    controlData[insertSlot] = control;
+                    if (insertSlot < BYTE_VECTOR_LANES) {
+                        controlData[insertSlot + capacity] = control;
+                    }
+                    batchWork.ids[i] = -1 - insertSlot;
+                } else {
+                    batchWork.ids[i] = reserve(key1s[i], key2s[i], hash, control, sizeBefore);
+                }
             }
             int newSize = flushIds(length);
             flushKeys(key1s, key2s, length);
