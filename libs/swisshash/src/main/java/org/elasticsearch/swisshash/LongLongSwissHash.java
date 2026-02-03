@@ -499,7 +499,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long empty2 = match(word2, EMPTY_PATTERN);
 
                 if (empty1 != 0) {
-                    int bitPos = Long.numberOfTrailingZeros(match1);
+                    int bitPos = Long.numberOfTrailingZeros(empty1);
                     int insertSlot = slot(group + (bitPos >>> 3));
                     controlData[insertSlot] = control;
                     if (insertSlot < BYTE_VECTOR_LANES) {
@@ -508,7 +508,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     return -1 - insertSlot;
                 }
                 if (empty2 != 0) {
-                    int bitPos = Long.numberOfTrailingZeros(match2);
+                    int bitPos = Long.numberOfTrailingZeros(empty2);
                     int insertSlot = slot(group + (bitPos >>> 3));
                     controlData[insertSlot] = control;
                     if (insertSlot < BYTE_VECTOR_LANES) {
@@ -700,15 +700,25 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 return;
             }
             for (;;) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                long word1 = (long) LONG_HANDLE.get(controlData, group);
+                long word2 = (long) LONG_HANDLE.get(controlData, group + 8);
+
+                long empty1 = match(word1, EMPTY_PATTERN);
+                long empty2 = match(word2, EMPTY_PATTERN);
+
+                if (empty1 != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(empty1);
+                    int insertSlot = slot(group + (bitPos >>> 3));
                     insertAtSlot(insertSlot, hash, control, id);
                     return;
                 }
-                group = (group + BYTE_VECTOR_LANES) & mask;
-                insertProbes++;
+                if (empty2 != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(empty2);
+                    int insertSlot = slot(group + (bitPos >>> 3));
+                    insertAtSlot(insertSlot, hash, control, id);
+                    return;
+                }
+                group = (group + 16) & mask;
             }
         }
 
