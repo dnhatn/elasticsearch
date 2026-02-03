@@ -454,7 +454,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 }
 
                 insertProbes++;
-                blockIdx = (blockIdx + 1) & ((mask >>> 3));
+                blockIdx = ((blockIdx + 1) & mask) >>> 3;
             }
         }
 
