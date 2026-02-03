@@ -584,30 +584,52 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             System.err.println("--> resizing to " + capacity + " took " + (endTime - startTime));
         }
 
+        final int REHASH_BATCH_SIZE = 256;
+        final long[] rehashIds = new long[REHASH_BATCH_SIZE];
+        final byte[] rehashControls = new byte[REHASH_BATCH_SIZE];
+
         private void rehash(int oldCapacity, BigCore newBigCore) {
-            int limit = controlData.length - 1;
+            int batchCount = 0;
+            int limit = controlData.length - 1; // Skip mirror block
+
 
             for (int i = 0; i < limit; i++) {
                 long block = controlData[i];
-                if (block == MSB_ONES) continue; // Skip empty blocks
-
-                // Invert so populated slots have 1s
+                if (block == MSB_ONES) continue;
                 long populated = (~block) & MSB_ONES;
 
                 while (populated != 0) {
+                    // 1. Extract Data from Old Table
                     int bitPos = Long.numberOfTrailingZeros(populated);
-                    int subSlot = bitPos >>> 3;
-                    int oldSlot = (i << 3) + subSlot;
+                    int oldSlot = (i << 3) + (bitPos >>> 3);
 
-                    long packed = idAndHash(oldSlot);
-                    int hash = (int) packed;
-                    int id = (int) (packed >>> 32);
-                    byte control = (byte) (block >>> bitPos);
+                    rehashIds[batchCount] = idAndHash(oldSlot);
+                    rehashControls[batchCount] = (byte) (block >>> bitPos);
+                    batchCount++;
 
-                    newBigCore.insert(hash, control, id);
+                    // 3. Flush if Full
+                    if (batchCount == REHASH_BATCH_SIZE) {
+                        flushRehashBatch(newBigCore, batchCount);
+                        batchCount = 0;
+                    }
 
                     populated &= (populated - 1);
                 }
+            }
+            if (batchCount > 0) {
+                flushRehashBatch(newBigCore, batchCount);
+            }
+        }
+
+        private void flushRehashBatch(BigCore newCore, int count) {
+            long dummy = 0;
+            for (int i = 0; i < count; i++) {
+                int blockIdx = ((int) rehashIds[i] & CONTROL_HASH);
+                dummy ^= newCore.controlData[blockIdx];
+            }
+            if (dummy == -1) System.out.print("");
+            for (int i = 0; i < count; i++) {
+                newCore.insert((int) rehashIds[i], rehashControls[i], id(rehashIds[i]));
             }
         }
 
