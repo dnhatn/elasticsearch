@@ -319,13 +319,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     }
 
     private static class BatchWork {
-        int[] ids = new int[128];
-        int[] hashes = new int[128];
+        int[] ids = new int[1024];
+        long[] hash64s = new long[1024];
 
         void ensureCapacity(int length) {
             if (ids.length < length) {
                 ids = new int[length];
-                hashes = new int[length];
+                hash64s = new long[length];
             }
         }
     }
@@ -385,14 +385,22 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
             batchWork.ensureCapacity(length);
-            long empties = 0;
+            for (int i = 0; i < length; i++) {
+                batchWork.hash64s[i] = hash64(key1s[i], key2s[i]);
+            }
+            long dummy = 0;
+            for (int i = 0; i < length; i++) {
+                dummy ^= controlData[(int) batchWork.hash64s[i] & CONTROL_HASH];
+            }
+            if (dummy == -1) {
+                System.err.println("--> all control blocks full!");
+            }
             for (int i = 0; i < length; i++) {
                 long k1 = key1s[i];
                 long k2 = key2s[i];
-                final long hash64 = hash64(k1, k2);
-                final int hash = batchWork.hashes[i] = (int) hash64;
+                long hash64 = batchWork.hash64s[i];
                 final byte control = control(hash64);
-                batchWork.ids[i] = reserve(k1, k2, hash, control, size);
+                batchWork.ids[i] = reserve(k1, k2, (int) hash64, control, size);
             }
             int nextId = size;
             // flush ids
@@ -401,7 +409,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 if (id < 0) {
                     final int slot = -1 - id;
                     batchWork.ids[i] = id = nextId++;
-                    int hash = batchWork.hashes[i];
+                    int hash = (int) batchWork.hash64s[i];
                     final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                     final int offset = idAndHashOffset(slot);
                     LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
@@ -611,10 +619,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 if (emptyMatches != 0) {
                     int bitPos = Long.numberOfTrailingZeros(emptyMatches);
                     int subSlot = bitPos >>> 3;
-                    int insertSlot = (blockIdx << 3) + subSlot;
-                    insertAtSlot(insertSlot, control);
+                    insertAtSlot(blockIdx, subSlot, control);
 
                     final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
+                    int insertSlot = (blockIdx << 3) + subSlot;
                     final int offset = idAndHashOffset(insertSlot);
                     LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
                     return;
