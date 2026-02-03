@@ -419,7 +419,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
 
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
-            int blockIdx = (hash & mask) >>> 3;
+            int blockIdx = (hash & mask >>> 3);
             long pattern = (control & 0xFFL) * LSB_ONES;
 
             for (;;) {
