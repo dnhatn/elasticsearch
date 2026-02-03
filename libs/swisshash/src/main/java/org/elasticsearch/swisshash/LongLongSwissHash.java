@@ -585,18 +585,28 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(int oldCapacity, BigCore newBigCore) {
-            for (int i = 0; i < oldCapacity; i += 8) {
-                long controlBlock = controlData[i];
-                for (int b = 0; b < 8; b++) {
-                    byte control = (byte) (controlBlock & 0xFF);
-                    controlBlock >>>= 8;
-                    if (control == EMPTY) {
-                        continue;
-                    }
-                    final long value = idAndHash(i << 3 + b);
-                    final int hash = hash(value);
-                    final int id = id(value);
+            int limit = controlData.length - 1;
+
+            for (int i = 0; i < limit; i++) {
+                long block = controlData[i];
+                if (block == MSB_ONES) continue; // Skip empty blocks
+
+                // Invert so populated slots have 1s
+                long populated = (~block) & MSB_ONES;
+
+                while (populated != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(populated);
+                    int subSlot = bitPos >>> 3;
+                    int oldSlot = (i << 3) + subSlot;
+
+                    long packed = idAndHash(oldSlot);
+                    int hash = (int) packed;
+                    int id = (int) (packed >>> 32);
+                    byte control = (byte) (block >>> bitPos);
+
                     newBigCore.insert(hash, control, id);
+
+                    populated &= (populated - 1);
                 }
             }
         }
