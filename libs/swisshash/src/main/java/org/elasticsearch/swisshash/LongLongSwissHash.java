@@ -448,8 +448,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     int bitPos = Long.numberOfTrailingZeros(emptyMatches);
                     int subSlot = bitPos >>> 3;
                     int slot = (blockIdx << 3) + subSlot;
-
-                    insertAtSlot(slot, hash, control, size++);
+                    insertAtSlot(slot, control);
                     return -1 - slot;
                 }
 
@@ -472,10 +471,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             return -1;
         }
 
-        private void insertAtSlot(final int slot, final int hash, final byte control, final int id) {
-            final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
-            final int offset = idAndHashOffset(slot);
-            LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
+        private void insertAtSlot(final int slot, final byte control) {
 
             int blockIdx = slot >>> 3;
             int subSlot = slot & 7;
@@ -624,7 +620,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     int bitPos = Long.numberOfTrailingZeros(emptyMatches);
                     int subSlot = bitPos >>> 3;
                     int insertSlot = (blockIdx << 3) + subSlot;
-                    insertAtSlot(insertSlot, hash, control, id);
+                    insertAtSlot(insertSlot, control);
+
+                    final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
+                    final int offset = idAndHashOffset(insertSlot);
+                    LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
                     return;
                 }
                 blockIdx = (blockIdx + 1) & ((mask >>> 3));
