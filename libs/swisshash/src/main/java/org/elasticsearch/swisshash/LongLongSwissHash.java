@@ -337,6 +337,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             if (ids.length < length) {
                 ids = new int[length];
                 hash64s = new long[length];
+                controls = new byte[length];
             }
         }
     }
@@ -428,7 +429,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long hash64 = hash64(key1s[i], key2s[i]);
                 batchWork.hash64s[i] = hash64;
                 int group = ((int) (hash64)) & mask;
-                batchWork.controls[i] = controlData[slot(group)];
+                batchWork.controls[i] = controlData[group];
             }
             final int sizeBefore = size;
             for (int i = 0; i < length; i++) {
