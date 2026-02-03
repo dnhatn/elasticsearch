@@ -437,15 +437,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final int hash = (int) hash64;
                 final byte control = control(hash64);
                 if (EMPTY == controlData[i]) {
-                    int group = hash % mask;
-                    controlData[group] = control;
-                    if (group < BYTE_VECTOR_LANES) {
-                        controlData[group + capacity] = control;
+                    final int insertSlot = slot(hash % mask);
+                    controlData[insertSlot] = control;
+                    if (insertSlot < BYTE_VECTOR_LANES) {
+                        controlData[insertSlot + capacity] = control;
                     }
-                    batchWork.ids[i] = -1 - group;
-                    continue;
+                    batchWork.ids[i] = -1 - insertSlot;
+                } else {
+                    batchWork.ids[i] = reserve(key1s[i], key2s[i], hash, control, sizeBefore);
                 }
-                batchWork.ids[i] = reserve(key1s[i], key2s[i], hash, control, sizeBefore);
             }
             int newSize = flushIds(length);
             flushKeys(key1s, key2s, length);
