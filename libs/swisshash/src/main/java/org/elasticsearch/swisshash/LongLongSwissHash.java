@@ -319,8 +319,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     }
 
     private static class BatchWork {
-        int[] ids = new int[1024];
-        long[] hash64s = new long[1024];
+        int[] ids = new int[256];
+        long[] hash64s = new long[256];
 
         void ensureCapacity(int length) {
             if (ids.length < length) {
@@ -384,49 +384,53 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
 
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
-            batchWork.ensureCapacity(length);
-            for (int i = 0; i < length; i++) {
-                batchWork.hash64s[i] = hash64(key1s[i], key2s[i]);
-            }
-            long dummy = 0;
-            for (int i = 0; i < length; i++) {
-                dummy ^= controlData[(int) batchWork.hash64s[i] & CONTROL_HASH];
-            }
-            if (dummy == -1) {
-                System.err.println("--> all control blocks full!");
-            }
-            for (int i = 0; i < length; i++) {
-                long k1 = key1s[i];
-                long k2 = key2s[i];
-                long hash64 = batchWork.hash64s[i];
-                final byte control = control(hash64);
-                batchWork.ids[i] = reserve(k1, k2, (int) hash64, control, size);
-            }
-            int nextId = size;
-            // flush ids
-            for (int i = 0; i < length; i++) {
-                int id = batchWork.ids[i];
-                if (id < 0) {
-                    final int slot = -1 - id;
-                    batchWork.ids[i] = id = nextId++;
-                    int hash = (int) batchWork.hash64s[i];
-                    final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
-                    final int offset = idAndHashOffset(slot);
-                    LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
+            int offset = 0;
+            while (offset < length) {
+                final int batchSize = Math.min(length - offset, batchWork.ids.length);
+                int end = offset + batchSize;
+                for (int i = offset; i < end; i++) {
+                    batchWork.hash64s[i] = hash64(key1s[i], key2s[i]);
                 }
-            }
-            // flush keys
-            for (int i = 0; i < length; i++) {
-                int id = batchWork.ids[i];
-                if (id >= size) {
-                    final long keyOffset = keyOffset(id);
-                    setKeys(keyOffset, key1s[i], key2s[i]);
+                long dummy = 0;
+                for (int i = offset; i < end; i++) {
+                    dummy ^= controlData[(int) batchWork.hash64s[i] & CONTROL_HASH];
                 }
+                if (dummy == -1) {
+                    System.err.println("--> all control blocks full!");
+                }
+                for (int i = offset; i < end; i++) {
+                    long k1 = key1s[i];
+                    long k2 = key2s[i];
+                    long hash64 = batchWork.hash64s[i];
+                    final byte control = control(hash64);
+                    batchWork.ids[i] = reserve(k1, k2, (int) hash64, control, size);
+                }
+                int nextId = size;
+                // flush ids
+                for (int i = offset; i < end; i++) {
+                    int id = batchWork.ids[i];
+                    if (id < 0) {
+                        final int slot = -1 - id;
+                        batchWork.ids[i] = id = nextId++;
+                        int hash = (int) batchWork.hash64s[i];
+                        final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
+                        final int idOffset = idAndHashOffset(slot);
+                        LONG_HANDLE.set(idAndHashPages[idOffset >> PAGE_SHIFT], idOffset & PAGE_MASK, idAndHash);
+                    }
+                }
+                // flush keys
+                for (int i = offset; i < end; i++) {
+                    int id = batchWork.ids[i];
+                    if (id >= size) {
+                        final long keyOffset = keyOffset(id);
+                        setKeys(keyOffset, key1s[i], key2s[i]);
+                    }
+                }
+                size = nextId;
+                offset += batchSize;
             }
-            size = nextId;
             return batchWork.ids;
         }
-
 
 
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
