@@ -13,7 +13,6 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
-import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.recycler.Recycler;
@@ -331,12 +330,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     private static class BatchWork {
         int[] ids = new int[128];
-        int[] hashes = new int[128];
+        long[] hash64s = new long[128];
+        byte[] controls = new byte[128];
 
         void ensureCapacity(int length) {
             if (ids.length < length) {
                 ids = new int[length];
-                hashes = new int[length];
+                hash64s = new long[length];
             }
         }
     }
@@ -422,17 +422,37 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
             batchWork.ensureCapacity(length);
             for (int i = 0; i < length; i++) {
-                long k1 = key1s[i];
-                long k2 = key2s[i];
-                final long hash64 = hash64(k1, k2);
-                final int hash = batchWork.hashes[i] = (int) hash64;
-                final byte control = control(hash64);
-                batchWork.ids[i] = reserve(k1, k2, hash, control, size);
+                long hash64 = hash64(key1s[i], key2s[i]);
+                batchWork.hash64s[i] = hash64;
+                int group = ((int) (hash64)) & mask;
+                batchWork.controls[i] = controlData[group];
             }
+            final int sizeBefore = size;
+            for (int i = 0; i < length; i++) {
+                final long hash64 = batchWork.hash64s[i];
+                final int hash = (int) hash64;
+                final byte control = control(hash64);
+                if (EMPTY == controlData[i]) {
+                    int group = hash % mask;
+                    controlData[group] = control;
+                    if (group < BYTE_VECTOR_LANES) {
+                        controlData[group + capacity] = control;
+                    }
+                    batchWork.ids[i] = -1 - group;
+                    continue;
+                }
+                batchWork.ids[i] = reserve(key1s[i], key2s[i], hash, control, sizeBefore);
+            }
+            int newSize = flushIds(length);
+            flushKeys(key1s, key2s, length);
+            size = newSize;
+            return batchWork.ids;
+        }
+
+        private int flushIds(int length) {
             int nextId = size;
             // flush ids
             for (int i = 0; i < length; i++) {
@@ -440,13 +460,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 if (id < 0) {
                     final int slot = -1 - id;
                     batchWork.ids[i] = id = nextId++;
-                    int hash = batchWork.hashes[i];
+                    int hash = (int) batchWork.hash64s[i];
                     final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                     final int offset = idAndHashOffset(slot);
                     LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
                 }
             }
-            // flush keys
+            return nextId;
+        }
+
+        private void flushKeys(long[] key1s, long[] key2s, int length) {
             for (int i = 0; i < length; i++) {
                 int id = batchWork.ids[i];
                 if (id >= size) {
@@ -454,19 +477,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     setKeys(keyOffset, key1s[i], key2s[i]);
                 }
             }
-            size = nextId;
-            return batchWork.ids;
         }
 
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
             int group = hash & mask;
-            if (EMPTY == controlData[group]) {
-                controlData[group] = control;
-                if (group < BYTE_VECTOR_LANES) {
-                    controlData[group + capacity] = control;
-                }
-                return -1 - group;
-            }
             for (; ; ) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
                 long matches = vec.eq(control).toLong();
