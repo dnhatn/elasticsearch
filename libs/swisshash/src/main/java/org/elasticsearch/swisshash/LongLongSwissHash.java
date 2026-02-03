@@ -321,13 +321,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private static class BatchWork {
         int[] ids = new int[256];
         long[] hash64s = new long[256];
-
-        void ensureCapacity(int length) {
-            if (ids.length < length) {
-                ids = new int[length];
-                hash64s = new long[length];
-            }
-        }
     }
 
     final class BigCore extends Core implements Accountable {
@@ -384,9 +377,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
 
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
+            if (batchWork.ids.length < length) {
+                batchWork.ids = new int[length];
+            }
             int offset = 0;
+            int keysAdded = size;
             while (offset < length) {
-                final int batchSize = Math.min(length - offset, batchWork.ids.length);
+                final int batchSize = Math.min(length - offset, batchWork.hash64s.length);
                 int end = offset + batchSize;
                 for (int i = offset; i < end; i++) {
                     batchWork.hash64s[i] = hash64(key1s[i], key2s[i]);
@@ -403,31 +400,29 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     long k2 = key2s[i];
                     long hash64 = batchWork.hash64s[i];
                     final byte control = control(hash64);
-                    batchWork.ids[i] = reserve(k1, k2, (int) hash64, control, size);
+                    batchWork.ids[i] = reserve(k1, k2, (int) hash64, control, keysAdded);
                 }
-                int nextId = size;
                 // flush ids
                 for (int i = offset; i < end; i++) {
                     int id = batchWork.ids[i];
                     if (id < 0) {
                         final int slot = -1 - id;
-                        batchWork.ids[i] = id = nextId++;
+                        batchWork.ids[i] = id = size++;
                         int hash = (int) batchWork.hash64s[i];
                         final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                         final int idOffset = idAndHashOffset(slot);
                         LONG_HANDLE.set(idAndHashPages[idOffset >> PAGE_SHIFT], idOffset & PAGE_MASK, idAndHash);
                     }
                 }
-                // flush keys
-                for (int i = offset; i < end; i++) {
-                    int id = batchWork.ids[i];
-                    if (id >= size) {
-                        final long keyOffset = keyOffset(id);
-                        setKeys(keyOffset, key1s[i], key2s[i]);
-                    }
-                }
-                size = nextId;
                 offset += batchSize;
+            }
+            // flush keys
+            for (int i = 0; i < length; i++) {
+                int id = batchWork.ids[i];
+                if (id >= keysAdded) {
+                    final long keyOffset = keyOffset(id);
+                    setKeys(keyOffset, key1s[i], key2s[i]);
+                }
             }
             return batchWork.ids;
         }
@@ -435,7 +430,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
             int blockIdx = hash & CONTROL_HASH;
-            long pattern = (control & 0xFFL) * LSB_ONES;
+            final long pattern = (control & 0xFFL) * LSB_ONES;
 
             for (;;) {
                 final long block = controlData[blockIdx];
@@ -448,7 +443,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final long idAndHash = idAndHash(slot);
                     if ((int) idAndHash == hash) {
                         final int id = id(idAndHash);
-                        if (id < maxId) {
+                        if (id != 0xFFFF_FFFF && id < maxId) {
                             final long keyOffset = keyOffset(id);
                             if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
                                 return id;
@@ -616,7 +611,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          * by {@link #rehash} because we know all keys are unique.
          */
         private void insert(final int hash, final byte control, final int id) {
-            int blockIdx = (hash & mask) >>> 3;
+            int blockIdx = hash & CONTROL_HASH;
             for (; ; ) {
                 long block = controlData[blockIdx];
                 final long emptyMatches = block & MSB_ONES;
@@ -631,7 +626,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
                     return;
                 }
-                blockIdx = (blockIdx + 1) & ((mask >>> 3));
+                blockIdx = (blockIdx + 1) & CONTROL_HASH;
             }
         }
 
