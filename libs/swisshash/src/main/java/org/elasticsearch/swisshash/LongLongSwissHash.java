@@ -458,6 +458,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             return batchWork.ids;
         }
 
+
+
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
             int group = hash & mask;
             if (EMPTY == controlData[group]) {
@@ -467,34 +469,71 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 }
                 return -1 - group;
             }
-            for (; ; ) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final long idAndHash = idAndHash(checkSlot);
-                    if (hash(idAndHash) == hash) {
-                        final int id = id(idAndHash);
-                        if (id < maxId) {
-                            final long keyOffset = keyOffset(id);
-                            if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
-                                return id;
-                            }
-                        }
+            final long controlPattern = (control & 0xFFL) * LSB_ONES;
+
+            for (;;) {
+                long word1 = (long) LONG_HANDLE.get(controlData, group);
+                long word2 = (long) LONG_HANDLE.get(controlData, group + 8);
+
+                // 1. Check for existing key (Deduplication)
+                long match1 = match(word1, controlPattern);
+                long match2 = match(word2, controlPattern);
+
+                while ((match1 | match2) != 0) {
+                    if (match1 != 0) {
+                        int bitPos = Long.numberOfTrailingZeros(match1);
+                        int slot = slot(group + (bitPos >>> 3));
+                        int id = checkSlot(slot, key1, key2, hash, maxId);
+                        if (id >= 0) return id;
+                        match1 &= (match1 - 1);
+                    } else {
+                        int bitPos = Long.numberOfTrailingZeros(match2);
+                        int slot = slot(group + (bitPos >>> 3));
+                        int id = checkSlot(slot, key1, key2, hash, maxId);
+                        if (id >= 0) return id;
+                        match2 &= (match2 - 1);
                     }
-                    matches &= matches - 1; // clear the first set bit and try again
                 }
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+
+                long empty1 = match(word1, EMPTY_PATTERN);
+                long empty2 = match(word2, EMPTY_PATTERN);
+
+                if (empty1 != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(match1);
+                    int insertSlot = slot(group + (bitPos >>> 3));
                     controlData[insertSlot] = control;
                     if (insertSlot < BYTE_VECTOR_LANES) {
                         controlData[insertSlot + capacity] = control;
                     }
                     return -1 - insertSlot;
                 }
-                group = slot(group + BYTE_VECTOR_LANES);
+                if (empty2 != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(match2);
+                    int insertSlot = slot(group + (bitPos >>> 3));
+                    controlData[insertSlot] = control;
+                    if (insertSlot < BYTE_VECTOR_LANES) {
+                        controlData[insertSlot + capacity] = control;
+                    }
+                    return -1 - insertSlot;
+                }
+
+                // 3. Jump to next group
+                group = (group + 16) & mask;
             }
+        }
+
+        private int checkSlot(int slot, long key1, long key2, int hash, int maxId) {
+            final long idAndHash = idAndHash(slot);
+            if (hash(idAndHash) == hash) {
+                final int id = id(idAndHash);
+                if (id < maxId) {
+                    final long keyOffset = keyOffset(id);
+                    if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                        return id;
+                    }
+                }
+            }
+            return -1;
         }
 
         private int add(final long key1, final long key2) {
@@ -540,11 +579,29 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
             final int offset = idAndHashOffset(insertSlot);
             LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
-            if (insertSlot == mask) {
-                Arrays.fill(controlData, mask, controlData.length, control);
+            if (insertSlot < BYTE_VECTOR_LANES) {
+                controlData[insertSlot + capacity] = control;
             } else {
                 controlData[insertSlot] = control;
             }
+        }
+
+        // 0x0101010101010101L
+        private static final long LSB_ONES = 0x0101010101010101L;
+        // 0x8080808080808080L
+        private static final long MSB_ONES = 0x8080808080808080L;
+
+        static final long EMPTY_PATTERN = (EMPTY & 0xFFL) * LSB_ONES;
+
+
+        /**
+         * Returns a long where each byte is 0x80 if the corresponding byte in 'word'
+         * equals 'byteVal', and 0x00 otherwise.
+         */
+        private static long match(long word, long bytePattern) {
+            long input = word ^ bytePattern;
+            // Standard "Has Zero Byte" bit hack
+            return (input - LSB_ONES) & ~input & MSB_ONES;
         }
 
         private long idAndHash(final int slot) {
