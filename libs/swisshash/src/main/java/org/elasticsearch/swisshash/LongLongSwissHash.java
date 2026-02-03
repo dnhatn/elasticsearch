@@ -10,6 +10,7 @@
 package org.elasticsearch.swisshash;
 
 import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
@@ -469,7 +470,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
             for (; ; ) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long matches = vec.eq(control).toLong();
+                VectorMask<Byte> eq = vec.eq(control);
+                long matches = eq.toLong();
                 while (matches != 0) {
                     final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
                     final long idAndHash = idAndHash(checkSlot);
@@ -522,9 +524,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     }
                     matches &= matches - 1; // clear the first set bit and try again
                 }
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                int firstTrue = vec.eq(EMPTY).firstTrue();
+                if (firstTrue < BYTE_VECTOR_LANES) {
+                    final int insertSlot = slot(group + firstTrue);
                     final int id = size;
                     final long keyOffset = keyOffset(id);
                     setKeys(keyOffset, key1, key2);
@@ -540,10 +542,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
             final int offset = idAndHashOffset(insertSlot);
             LONG_HANDLE.set(idAndHashPages[offset >> PAGE_SHIFT], offset & PAGE_MASK, idAndHash);
-            if (insertSlot == mask) {
-                Arrays.fill(controlData, mask, controlData.length, control);
-            } else {
-                controlData[insertSlot] = control;
+            controlData[insertSlot] = control;
+            if (insertSlot < BYTE_VECTOR_LANES) {
+                controlData[insertSlot + capacity] = control;
             }
         }
 
@@ -638,15 +639,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          */
         private void insert(final int hash, final byte control, final int id) {
             int group = hash & mask;
-            if (controlData[group] == EMPTY) {
-                insertAtSlot(group, hash, control, id);
-                return;
-            }
             for (;;) {
                 ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                final int first = vec.eq(EMPTY).firstTrue();
+                if (first < BYTE_VECTOR_LANES) {
+                    final int insertSlot = slot(group + first);
                     insertAtSlot(insertSlot, hash, control, id);
                     return;
                 }
