@@ -49,7 +49,7 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
         super(specs, blockFactory, emitBatchSize);
         this.longChannel = reverseOutput ? specs.get(1).channel() : specs.get(0).channel();
         this.intChannel = reverseOutput ? specs.get(0).channel() : specs.get(1).channel();
-        this.emitBatchSize = Math.max(emitBatchSize, 2048);
+        this.emitBatchSize = Math.min(emitBatchSize, 1024);
         this.reverseOutput = reverseOutput;
         this.current = new LongIntVectorOnlyBlockHash(blockFactory);
         this.keys1 = new long[emitBatchSize];
