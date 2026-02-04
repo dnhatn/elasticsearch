@@ -553,18 +553,33 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(BigCore newBigCore) {
-            for (int p = 0; p < idPages.length; p++) {
-                byte[] currentPage = idPages[p];
-                // Now process only the slots that belong to this page
-                int startSlot = (p << PAGE_SHIFT) / ID_HASH_SIZE;
-                int endSlot = startSlot + (PageCacheRecycler.PAGE_SIZE_IN_BYTES / ID_HASH_SIZE);
+            final int blocks = (controlData.length - BYTE_VECTOR_LANES) >>> 3;
 
-                for (int slot = startSlot; slot < endSlot; slot++) {
-                    byte ctrl = controlData[slot];
-                    if (ctrl != EMPTY) {
-                        long packed = (long) LONG_HANDLE.get(currentPage, (slot * ID_HASH_SIZE) & PAGE_MASK);
-                        newBigCore.insert((int)packed, ctrl, (int)(packed >>> 32));
-                    }
+            for (int i = 0; i < blocks; i++) {
+                // Load 8 control bytes at once
+                long block = (long) LONG_HANDLE.get(controlData, i << 3);
+
+                // If all 8 slots are empty (0x80), skip them instantly
+                if (block == 0x8080808080808080L) continue;
+
+                // Use SWAR to find bits where the high bit is NOT set (populated slots)
+                long populated = (~block) & 0x8080808080808080L;
+
+                while (populated != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(populated);
+                    int subSlot = bitPos >>> 3;
+                    int oldSlot = (i << 3) + subSlot;
+
+                    // Only touch the paged memory (Cold RAM) for actual data
+                    long packed = idAndHash(oldSlot);
+                    int hash = (int) packed;
+                    int id = (int) (packed >>> 32);
+                    byte control = (byte) ((block >>> (subSlot << 3)) & 0xFFL);
+
+                    // Blind insert into the new, larger contiguous table
+                    newBigCore.insert(hash, control, id);
+
+                    populated &= (populated - 1);
                 }
             }
         }
