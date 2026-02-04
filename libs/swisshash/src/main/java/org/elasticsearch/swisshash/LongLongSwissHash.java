@@ -79,8 +79,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private SmallCore smallCore;
     private BigCore bigCore;
     private final List<Releasable> toClose = new ArrayList<>();
-    private final BigCore.BatchWork batchWork = new BigCore.BatchWork();
-
 
     LongLongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
         super(recycler, breaker, INITIAL_CAPACITY, LongSwissHash.SmallCore.FILL_FACTOR);
@@ -135,10 +133,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     }
 
     @Override
-    public int[] addBatch(long[] firstKeys, long[] secondKeys, int length) {
-        if (batchWork.ids.length < length) {
-            batchWork.ids = new int[length];
-        }
+    public void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
         if (smallCore != null) {
             smallCore.transitionToBigCore();
         }
@@ -156,8 +151,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             mask = capacity - 1;
             bigCore.grow();
         }
-        bigCore.batchAdd(firstKeys, secondKeys, length);
-        return  batchWork.ids;
+        bigCore.batchAdd(firstKeys, secondKeys, ids, length);
     }
 
     @Override
@@ -190,6 +184,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     @Override
     public void close() {
+        breaker.addWithoutBreaking(-usedBytes);
         Releasables.close(smallCore, bigCore);
         Releasables.close(toClose);
         toClose.clear();
@@ -388,12 +383,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private static class BatchWork {
-            int[] ids = new int[256];
-            long[] hash64s = new long[256];
-        }
+        final long[] batchHash64s = new long[256];
 
-        private int[] batchAdd(long[] key1s, long[] key2s, int length) {
+        private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
             // Ensure the global result array can hold all IDs
             int offset = 0;
             int keysAddedAtStart = size;
@@ -410,7 +402,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
                     long h64 = hash64(key1s[absIdx], key2s[absIdx]);
-                    batchWork.hash64s[i] = h64; // Relative 0..255
+                    batchHash64s[i] = h64; // Relative 0..255
                     // SWAR Prefetch: Touch the 8-byte control block
                     dummy ^= controlData[(int) (h64 & CONTROL_HASH)];
                 }
@@ -419,8 +411,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 // PHASE 2: Reserve Slots
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
-                    long h64 = batchWork.hash64s[i];
-                    batchWork.ids[absIdx] = reserve(
+                    long h64 = batchHash64s[i];
+                    batchIds[absIdx] = reserve(
                         key1s[absIdx],
                         key2s[absIdx],
                         (int)h64,
@@ -432,13 +424,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 // PHASE 3: Flush Metadata (ID & Hash)
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
-                    int res = batchWork.ids[absIdx];
+                    int res = batchIds[absIdx];
                     if (res < 0) {
                         final int slot = -1 - res;
                         int id = nextId++;
-                        batchWork.ids[absIdx] = id; // Convert negative slot to actual ID
+                        batchIds[absIdx] = id; // Convert negative slot to actual ID
 
-                        int hash = (int)batchWork.hash64s[i];
+                        int hash = (int) batchHash64s[i];
                         final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                         final long idOffset = idOffset(slot);
                         LONG_HANDLE.set(idPages[(int)(idOffset >> PAGE_SHIFT)], (int)(idOffset & PAGE_MASK), idAndHash);
@@ -449,7 +441,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 // Crucial: Only flush keys for the current chunk to stay O(N)
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
-                    int id = batchWork.ids[absIdx];
+                    int id = batchIds[absIdx];
                     if (id >= keysAddedAtStart) {
                         setKeys(id, key1s[absIdx], key2s[absIdx]);
                     }
@@ -458,7 +450,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 size = nextId; // Commit the new IDs
                 offset += batchSize;
             }
-            return batchWork.ids;
         }
 
         private static final long LSB_ONES = 0x0101010101010101L;
@@ -569,29 +560,66 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(BigCore newBigCore) {
-            int limit = controlData.length - 1;
+            final int blocksToProcess = controlData.length - 1;
 
-            for (int i = 0; i < limit; i++) {
+            // Internal buffer to store keys found in the old table before "flushing" them to the new one.
+            // 1024 is a good size for L1/L2 cache locality.
+            final int REHASH_BUFFER_SIZE = 1024;
+            int[] bufferIds = new int[REHASH_BUFFER_SIZE];
+            int[] bufferHashes = new int[REHASH_BUFFER_SIZE];
+            byte[] bufferControls = new byte[REHASH_BUFFER_SIZE];
+            int count = 0;
+
+            for (int i = 0; i < blocksToProcess; i++) {
                 long block = controlData[i];
-                if (block == MSB_ONES) continue; // Skip empty blocks
+                if (block == MSB_ONES) continue;
 
-                // Invert so populated slots have 1s
                 long populated = (~block) & MSB_ONES;
-
                 while (populated != 0) {
                     int bitPos = Long.numberOfTrailingZeros(populated);
                     int subSlot = bitPos >>> 3;
                     int oldSlot = (i << 3) + subSlot;
 
                     long packed = idAndHash(oldSlot);
-                    int hash = (int) packed;
-                    int id = (int) (packed >>> 32);
-                    byte control = (byte) (block >>> bitPos);
 
-                    newBigCore.insert(hash, control, id);
+                    // Buffer the data
+                    bufferHashes[count] = (int) packed;
+                    bufferIds[count] = (int) (packed >>> 32);
+                    bufferControls[count] = (byte) ((block >>> (subSlot << 3)) & 0xFFL);
+                    count++;
+
+                    // When the buffer is full, perform a "Sequential Burst" into the new core
+                    if (count == REHASH_BUFFER_SIZE) {
+                        flushRehashBuffer(newBigCore, bufferHashes, bufferIds, bufferControls, count);
+                        count = 0;
+                    }
 
                     populated &= (populated - 1);
                 }
+            }
+
+            // Don't forget the final remainder
+            if (count > 0) {
+                flushRehashBuffer(newBigCore, bufferHashes, bufferIds, bufferControls, count);
+            }
+        }
+
+        /**
+         * Performs a blind insert into the new core.
+         * Since we are rehashing, we know there are no duplicates.
+         */
+        private void flushRehashBuffer(BigCore newBigCore, int[] hashes, int[] ids, byte[] controls, int count) {
+            // Stage 1: Prefetch the new control blocks
+            long prefetchAccumulator = 0;
+            for (int i = 0; i < count; i++) {
+                prefetchAccumulator ^= controlData[hashes[i] & newBigCore.CONTROL_HASH];
+            }
+            if (prefetchAccumulator == -1) System.err.print("");
+
+            // Stage 2: Blind Insert
+            // This uses the SWAR 'insert' logic but benefits from the data being hot in L1
+            for (int i = 0; i < count; i++) {
+                newBigCore.insert(hashes[i], controls[i], ids[i]);
             }
         }
 

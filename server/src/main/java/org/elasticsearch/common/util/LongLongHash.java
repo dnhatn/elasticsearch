@@ -140,7 +140,7 @@ public final class LongLongHash extends AbstractHash implements LongLongHashTabl
     }
 
     @Override
-    public int[] addBatch(long[] firstKeys, long[] secondKeys,int length) {
+    public void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
         throw new UnsupportedOperationException();
     }
 
