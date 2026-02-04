@@ -46,8 +46,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     static final int INITIAL_CAPACITY = PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE;
 
-    private static boolean NEVER_TRUE = System.currentTimeMillis() < 0;
-
     static {
         if (PageCacheRecycler.PAGE_SIZE_IN_BYTES >> PAGE_SHIFT != 1) {
             throw new AssertionError("bad constants");
@@ -398,20 +396,18 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             while (offset < length) {
                 final int batchSize = Math.min(length - offset, CHUNK_LIMIT);
                 int nextId = size;
-
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
                     long h64 = hash64(key1s[absIdx], key2s[absIdx]);
                     batchHash64s[i] = h64; // Relative 0..255
                 }
 
-                // PHASE 1: Hash & Prefetch (Relative Indexing)
-                long dummy = 0;
-                for (int i = 0; i < batchSize; i++) {
-                    dummy ^= controlData[(int) (batchHash64s[i] & mask)];
-                }
-                if (dummy == -1) System.err.print("");
+                long sink = 0;
 
+                // PHASE 1: Hash & Prefetch (Relative Indexing)
+                for (int i = 0; i < batchSize; i++) {
+                    sink ^= controlData[(int) (batchHash64s[i] & mask)];
+                }
                 // PHASE 2: Reserve Slots
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
@@ -448,7 +444,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                         setKeys(id, key1s[absIdx], key2s[absIdx]);
                     }
                 }
-
+                // never true
+                if (sink == 0x7FFFFFFF_FFFFFFFFL) {
+                    batchHash64s[1] = sink;
+                }
                 size = nextId; // Commit the new IDs
                 offset += batchSize;
             }
