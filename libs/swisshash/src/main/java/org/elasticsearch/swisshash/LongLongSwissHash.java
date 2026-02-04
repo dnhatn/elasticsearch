@@ -560,65 +560,29 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(BigCore newBigCore) {
-            final int blocksToProcess = controlData.length - 1;
+            int limit = controlData.length - 1;
 
-            // Internal buffer to store keys found in the old table before "flushing" them to the new one.
-            // 1024 is a good size for L1/L2 cache locality.
-            final int REHASH_BUFFER_SIZE = 1024;
-            int[] bufferIds = new int[REHASH_BUFFER_SIZE];
-            int[] bufferHashes = new int[REHASH_BUFFER_SIZE];
-            byte[] bufferControls = new byte[REHASH_BUFFER_SIZE];
-            int count = 0;
-
-            for (int i = 0; i < blocksToProcess; i++) {
+            for (int i = 0; i < limit; i++) {
                 long block = controlData[i];
-                if (block == MSB_ONES) continue;
+                if (block == MSB_ONES) continue; // Skip empty blocks
 
+                // Invert so populated slots have 1s
                 long populated = (~block) & MSB_ONES;
+
                 while (populated != 0) {
                     int bitPos = Long.numberOfTrailingZeros(populated);
                     int subSlot = bitPos >>> 3;
                     int oldSlot = (i << 3) + subSlot;
 
                     long packed = idAndHash(oldSlot);
+                    int hash = (int) packed;
+                    int id = (int) (packed >>> 32);
+                    byte control = (byte) (block >>> bitPos);
 
-                    // Buffer the data
-                    bufferHashes[count] = (int) packed;
-                    bufferIds[count] = (int) (packed >>> 32);
-                    bufferControls[count] = (byte) ((block >>> (subSlot << 3)) & 0xFFL);
-                    count++;
+                    newBigCore.insert(hash, control, id);
 
-                    // When the buffer is full, perform a "Sequential Burst" into the new core
-                    if (count == REHASH_BUFFER_SIZE) {
-                        newBigCore.flushRehashBuffer(bufferHashes, bufferIds, bufferControls, count);
-                        count = 0;
-                    }
                     populated &= (populated - 1);
                 }
-            }
-
-            // Don't forget the final remainder
-            if (count > 0) {
-                newBigCore.flushRehashBuffer(bufferHashes, bufferIds, bufferControls, count);
-            }
-        }
-
-        /**
-         * Performs a blind insert into the new core.
-         * Since we are rehashing, we know there are no duplicates.
-         */
-        private void flushRehashBuffer(int[] hashes, int[] ids, byte[] controls, int count) {
-            // Stage 1: Prefetch the new control blocks
-            long prefetchAccumulator = 0;
-            for (int i = 0; i < count; i++) {
-                prefetchAccumulator ^= controlData[hashes[i] & CONTROL_HASH];
-            }
-            if (prefetchAccumulator == -1) System.err.print("");
-
-            // Stage 2: Blind Insert
-            // This uses the SWAR 'insert' logic but benefits from the data being hot in L1
-            for (int i = 0; i < count; i++) {
-                insert(hashes[i], controls[i], ids[i]);
             }
         }
 
