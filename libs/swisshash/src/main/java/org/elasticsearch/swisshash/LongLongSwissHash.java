@@ -564,7 +564,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             bigCore = null;
             try {
                 var newBigCore = new BigCore();
-                rehash(newBigCore);
+                rehash(controlData, idPages);
                 bigCore = newBigCore;
             } finally {
                 close();
@@ -572,35 +572,26 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             growKeyPages(nextGrowSize +1);
         }
 
-        private void rehash(BigCore newBigCore) {
-            final int blocks = (controlData.length - BYTE_VECTOR_LANES) >>> 3;
-
-            for (int i = 0; i < blocks; i++) {
-                // Load 8 control bytes at once
-                long block = (long) LONG_HANDLE.get(controlData, i << 3);
-
-                // If all 8 slots are empty (0x80), skip them instantly
-                if (block == 0x8080808080808080L) continue;
-
-                // Use SWAR to find bits where the high bit is NOT set (populated slots)
-                long populated = (~block) & 0x8080808080808080L;
-
-                while (populated != 0) {
-                    int bitPos = Long.numberOfTrailingZeros(populated);
-                    int subSlot = bitPos >>> 3;
-                    int oldSlot = (i << 3) + subSlot;
-
-                    // Only touch the paged memory (Cold RAM) for actual data
-                    long packed = idAndHash(oldSlot);
-                    int hash = (int) packed;
-                    int id = (int) (packed >>> 32);
-                    byte control = (byte) ((block >>> (subSlot << 3)) & 0xFFL);
-
-                    // Blind insert into the new, larger contiguous table
-                    newBigCore.insert(hash, control, id);
-
-                    populated &= (populated - 1);
+        private void rehash(byte[] oldControlData, byte[][] oldIdPages) {
+            int length = oldControlData.length - BYTE_VECTOR_LANES;
+            for (int slot = 0; slot < length; slot++) {
+                byte ctrl = oldControlData[slot];
+                if (ctrl == EMPTY) {
+                    continue;
                 }
+                final long idOffset = idOffset(slot);
+                final int pageIndex = (int) (idOffset >> PAGE_SHIFT);
+                final int indexInPage = (int) (idOffset & PAGE_MASK);
+                final long packed = (long) LONG_HANDLE.get(oldIdPages[pageIndex], indexInPage);
+                final int h32 = (int) packed;
+                int newSlot = h32 & mask;
+                while (controlData[newSlot] != EMPTY) {
+                    newSlot = (newSlot + 1) & mask;
+                }
+                insertAtSlot(newSlot, ctrl);
+
+                final long newOffset = (long) newSlot << 3;
+                LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
             }
         }
 
