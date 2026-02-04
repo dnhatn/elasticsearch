@@ -584,20 +584,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final long packed = (long) LONG_HANDLE.get(oldIdPages[(int) (oldIdOffset >> PAGE_SHIFT)], (int) (oldIdOffset & PAGE_MASK));
                 final int h32 = (int) packed;
                 int newSlot = h32 & mask;
-                for (; ; ) {
-                    ByteVector vec = ByteVector.fromArray(BS, controlData, newSlot);
-                    final long empty = vec.eq(EMPTY).toLong();
-                    if (empty != 0) {
-                        int bit = Long.numberOfTrailingZeros(empty);
-                        int finalSlot = (newSlot + bit) & mask;
-                        insertAtSlot(finalSlot, ctrl);
-                        final long newOffset = (long) finalSlot << 3;
-                        LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
-                        break;
-                    }
-                    newSlot = (newSlot + BYTE_VECTOR_LANES) & mask;
+                while (controlData[newSlot] != EMPTY) {
+                    int finalSlot = newSlot & mask;
+                    // mirror once at the end
+                    controlData[finalSlot] = ctrl;
+                    final long newOffset = (long) finalSlot << 3;
+                    LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
+                    newSlot = (newSlot + 1) & mask;
                 }
             }
+            System.arraycopy(controlData, 0, controlData, controlData.length - BYTE_VECTOR_LANES, BYTE_VECTOR_LANES);
             long endTime = System.nanoTime();
             System.err.println("--> rehashing " + length + " took " + (endTime - startTime) + " ns");
         }
