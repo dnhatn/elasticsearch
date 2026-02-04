@@ -13,6 +13,7 @@ module org.elasticsearch.swisshash {
     requires org.elasticsearch.server;
     requires org.elasticsearch.xcontent;
     requires org.apache.lucene.core;
+    requires org.lz4.java;
 
     exports org.elasticsearch.swisshash;
 }
