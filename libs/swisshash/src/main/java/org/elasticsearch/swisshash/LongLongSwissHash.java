@@ -10,6 +10,8 @@
 package org.elasticsearch.swisshash;
 
 import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.VectorMask;
+import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
@@ -411,7 +413,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
                     long h64 = batchHash64s[i];
-                    batchIds[absIdx] = reserve(
+                    batchIds[absIdx] = reserveVector(
                         key1s[absIdx],
                         key2s[absIdx],
                         h64,
@@ -510,6 +512,34 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 }
 
                 blockIdx = (blockIdx + 1) & CONTROL_LONG_BLOCK_MASK;
+            }
+        }
+
+        private int reserveVector(long key1, long key2, long h64, int keysAddedAtStart) {
+            final byte control = control(h64);
+            int hash = (int) h64;
+            int group = hash & mask;
+            for (; ; ) {
+                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                long matches = vec.eq(control).toLong();
+                while (matches != 0) {
+                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
+                    final long idAndHash = idAndHash(checkSlot);
+                    if ((int) idAndHash == hash) {
+                        final int id = id(idAndHash);
+                        if (id < keysAddedAtStart && checkKeys(id, key1, key2)) {
+                            return id;
+                        }
+                    }
+                    matches &= matches - 1; // clear the first set bit and try again
+                }
+                final long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                    bigCore.insertAtSlot(insertSlot, control);
+                    return -1 - insertSlot;
+                }
+                group = (group + BYTE_VECTOR_LANES) & mask;
             }
         }
 
