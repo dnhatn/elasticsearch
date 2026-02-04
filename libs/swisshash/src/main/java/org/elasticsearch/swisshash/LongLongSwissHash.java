@@ -587,10 +587,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 while (controlData[newSlot] != EMPTY) {
                     newSlot = (newSlot + 1) & mask;
                 }
-                int finalSlot = newSlot & mask;
                 // mirror once at the end
-                controlData[finalSlot] = ctrl;
-                final long newOffset = (long) finalSlot << 3;
+                controlData[newSlot] = ctrl;
+                final long newOffset = (long) newSlot << 3;
                 LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
             }
             System.arraycopy(controlData, 0, controlData, capacity, BYTE_VECTOR_LANES);
