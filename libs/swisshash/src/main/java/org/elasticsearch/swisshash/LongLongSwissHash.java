@@ -392,7 +392,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             int keysAddedAtStart = size;
 
             // Process in chunks that fit the internal BatchWork buffers
-
             while (offset < length) {
                 final int batchSize = Math.min(length - offset, CHUNK_LIMIT);
                 int nextId = size;
@@ -444,9 +443,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                         setKeys(id, key1s[absIdx], key2s[absIdx]);
                     }
                 }
-                // never true
-                if (sink == 0x7FFFFFFF_FFFFFFFFL) {
-                    batchHash64s[1] = sink;
+                // we need this to make sure sink is used and not optimized away
+                if (sink == 0xEFEF_EFEF_EFEF_EFEFL) {
+                    throw new IllegalStateException("should neve happen");
                 }
                 size = nextId; // Commit the new IDs
                 offset += batchSize;
