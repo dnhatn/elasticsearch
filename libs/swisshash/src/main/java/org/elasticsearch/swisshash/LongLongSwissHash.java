@@ -121,12 +121,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
      */
     @Override
     public long find(final long key1, final long key2) {
-        final int hash = hash(key1, key2);
-        if (smallCore != null) {
-            return smallCore.find(key1, key2, hash);
-        } else {
-            return bigCore.find(key1, key2, hash, control(hash));
-        }
+        throw new UnsupportedOperationException();
     }
 
     /**
@@ -136,14 +131,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
      */
     @Override
     public long add(final long key1, final long key2) {
-        final int hash = hash(key1, key2);
-        if (smallCore != null) {
-            if (size < nextGrowSize) {
-                return smallCore.add(key1, key2, hash);
-            }
-            smallCore.transitionToBigCore();
-        }
-        return bigCore.add(key1, key2, hash);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -196,8 +184,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
      * and the remaining 7 bits contain the top 7 bits of the hash.
      * So it looks like {@code 0b0xxx_xxxx}.
      */
-    private static byte control(int hash) {
-        return (byte) (hash >>> (Integer.SIZE - 7));
+    private static byte control(long hash) {
+        return (byte) (hash >>> (Long.SIZE - 7));
     }
 
     @Override
@@ -398,33 +386,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private int find(final long key1, final long key2, final int hash, final byte control) {
-            int group = hash & mask;
-            for (;;) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final long idAndHash = idAndHash(checkSlot);
-                    if ((int) idAndHash == hash) {
-                        final int id = id(idAndHash);
-                        if (checkKeys(id, key1, key2)) {
-                            return id;
-                        }
-                    }
-                    matches &= matches - 1; // clear the first set bit and try again
-                }
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    return -1;
-                }
-                group = slot(group + BYTE_VECTOR_LANES);
-            }
-        }
-
         private static class BatchWork {
             int[] ids = new int[256];
-            int[] hashes = new int[256];
+            long[] hash64s = new long[256];
         }
 
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
@@ -443,21 +407,21 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long dummy = 0;
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
-                    int h64 = hash(key1s[absIdx], key2s[absIdx]);
-                    batchWork.hashes[i] = h64; // Relative 0..255
+                    long h64 = hash64(key1s[absIdx], key2s[absIdx]);
+                    batchWork.hash64s[i] = h64; // Relative 0..255
                     // SWAR Prefetch: Touch the 8-byte control block
-                    dummy ^= controlData[h64 & mask];
+                    dummy ^= controlData[(int)h64 & mask];
                 }
                 if (dummy == -1) System.err.print("");
 
                 // PHASE 2: Reserve Slots
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
-                    int h64 = batchWork.hashes[i];
+                    long h64 = batchWork.hash64s[i];
                     batchWork.ids[absIdx] = reserve(
                         key1s[absIdx],
                         key2s[absIdx],
-                        h64,
+                        (int)h64,
                         control(h64),
                         keysAddedAtStart
                     );
@@ -472,7 +436,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                         int id = nextId++;
                         batchWork.ids[absIdx] = id; // Convert negative slot to actual ID
 
-                        int hash = batchWork.hashes[i];
+                        int hash = (int)batchWork.hash64s[i];
                         final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                         final long idOffset = idOffset(slot);
                         LONG_HANDLE.set(idPages[(int)(idOffset >> PAGE_SHIFT)], (int)(idOffset & PAGE_MASK), idAndHash);
@@ -535,41 +499,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private int add(final long key1, final long key2, final int hash) {
-            maybeGrow();
-            return bigCore.addImpl(key1, key2, hash);
-        }
-
-        private int addImpl(final long key1, final long key2, final int hash) {
-            final byte control = control(hash);
-            int group = hash & mask;
-            for (;;) {
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final long idAndHash = idAndHash(checkSlot);
-                    if ((int) idAndHash == hash) {
-                        final int id = id(idAndHash);
-                        if (checkKeys(id, key1, key2)) {
-                            return -1 - id;
-                        }
-                    }
-                    matches &= matches - 1; // clear the first set bit and try again
-                }
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    final int id = size;
-                    setKeys(id, key1, key2);
-                    final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
-                    insertAtSlot(insertSlot, control, idAndHash);
-                    size++;
-                    return id;
-                }
-                group = (group + BYTE_VECTOR_LANES) & mask;
-            }
-        }
 
         private void insertAtSlot(final int insertSlot, final byte control, final long idAndHash) {
             final long idOffset = idOffset(insertSlot);
@@ -634,8 +563,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void rehash(BigCore newBigCore) {
             for (int i = 0; i < size; i++) {
                 final long keyOffset = keyOffset(i);
-                final int hash = hash(key1(keyOffset), key2(keyOffset));
-                newBigCore.insert(hash, control(hash), i);
+                final long hash64 = hash64(key1(keyOffset), key2(keyOffset));
+                newBigCore.insert((int)hash64, control(hash64), i);
             }
         }
 
@@ -733,6 +662,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     private static int hash(long key1, long key2) {
         return 31 * BitMixer.mix(key1) + BitMixer.mix(key2);
+    }
+
+    private static long hash64(long key1, long key2) {
+        return 31L * BitMixer.mix64(key1) + BitMixer.mix64(key2);
     }
 
     private int slot(final int hash) {
