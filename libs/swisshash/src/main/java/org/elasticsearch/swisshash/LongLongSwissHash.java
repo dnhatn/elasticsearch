@@ -561,12 +561,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void grow() {
-            bigCore.close();
-            // TODO: it's better to transfer the pages
             bigCore = null;
-            bigCore = new BigCore();
-            bigCore.rehashFromKeys();
-            growKeyPages(nextGrowSize + 1);
+            try {
+                var newBigCore = new BigCore();
+                rehash(newBigCore);
+                bigCore = newBigCore;
+            } finally {
+                close();
+            }
+            growKeyPages(nextGrowSize +1);
         }
 
         private void rehashx(BigCore newBigCore) {
@@ -601,7 +604,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private void rehashFromKeys() {
+        private void rehash(BigCore newBigCore) {
             int fullPages = size / (PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE);
             int remainingEntries = size % (PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE);
             int id = 0;
@@ -609,14 +612,14 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 byte[] page = keyPages[i];
                 for (int j = 0; j < PageCacheRecycler.PAGE_SIZE_IN_BYTES; j += KEY_SIZE) {
                     final long h64 = hash64((long) LONG_HANDLE.get(page, j), (long) LONG_HANDLE.get(page, j + Long.BYTES));
-                    insert((int) h64, control(h64), id++);
+                    newBigCore.insert((int) h64, control(h64), id++);
                 }
             }
             if (remainingEntries > 0) {
                 byte[] page = keyPages[fullPages];
                 for (int j = 0; j < remainingEntries * KEY_SIZE; j += KEY_SIZE) {
                     final long h64 = hash64((long) LONG_HANDLE.get(page, j), (long) LONG_HANDLE.get(page, j + Long.BYTES));
-                    insert((int) h64, control(h64), id++);
+                    newBigCore.insert((int) h64, control(h64), id++);
                 }
             }
         }
