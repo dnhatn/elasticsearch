@@ -359,6 +359,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idPages;
 
         private int insertProbes;
+        private int prefetchSink;
 
         BigCore() {
             int controlLength = capacity + BYTE_VECTOR_LANES;
@@ -408,12 +409,38 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
-            for (int i = 0; i < length; i++) {
-                final long key1 = firstKeys[i];
-                final long key2 = secondKeys[i];
-                long id = add(key1, key2, hash(key1, key2));
-                id = id < 0 ? -1 - id : id;
-                ids[i] = (int) id;
+            final int BATCH_SIZE = 128;
+            int[] batchHashes = new int[BATCH_SIZE];
+
+            for (int offset = 0; offset < length; offset += BATCH_SIZE) {
+                int limit = Math.min(BATCH_SIZE, length - offset);
+
+                // PHASE 1: Compute Hashes
+                for (int i = 0; i < limit; i++) {
+                    batchHashes[i] = hash(firstKeys[offset + i], secondKeys[offset + i]);
+                }
+
+                // PHASE 2: Prefetch Control Bytes (Memory Bound)
+                // We touch the first byte of the probing group.
+                // The CPU fetches the entire 64-byte cache line, which covers
+                // the 16 bytes needed by the Vector load in Phase 3.
+                byte accumulator = 0;
+                for (int i = 0; i < limit; i++) {
+                    int group = batchHashes[i] & mask;
+                    accumulator ^= controlData[group];
+                }
+                this.prefetchSink = accumulator;
+
+                // PHASE 3: Vector Insert (L1 Cache Hit)
+                // Now that data is in L1, the Vector instructions execute instantly.
+                for (int i = 0; i < limit; i++) {
+                    long k1 = firstKeys[offset + i];
+                    long k2 = secondKeys[offset + i];
+                    int hash = batchHashes[i];
+
+                    long id = addImpl(k1, k2, hash);
+                    ids[offset + i] = (int) (id < 0 ? -1 - id : id);
+                }
             }
         }
 
