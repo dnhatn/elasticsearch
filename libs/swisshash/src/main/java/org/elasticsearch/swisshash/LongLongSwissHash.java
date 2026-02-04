@@ -383,7 +383,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        final long[] batchHash64s = new long[256];
+        final int CHUNK_LIMIT = 512;
+        final long[] batchHash64s = new long[CHUNK_LIMIT];
 
         private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
             // Ensure the global result array can hold all IDs
@@ -391,7 +392,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             int keysAddedAtStart = size;
 
             // Process in chunks that fit the internal BatchWork buffers
-            final int CHUNK_LIMIT = 256;
 
             while (offset < length) {
                 final int batchSize = Math.min(length - offset, CHUNK_LIMIT);
