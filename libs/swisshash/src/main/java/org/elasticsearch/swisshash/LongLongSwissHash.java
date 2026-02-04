@@ -373,7 +373,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idPages;
 
         private int insertProbes;
-        private int prefetchSink;
 
         BigCore() {
             int controlLength = capacity + BYTE_VECTOR_LANES;
@@ -452,7 +451,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 // Prefetch Control Byte (L1 Hint)
                 accumulator ^= controlData[hash & mask];
             }
-            this.prefetchSink = accumulator;
+            if (accumulator == -1) {
+                System.err.println("avoid dead code");
+            }
 
             // --- PHASE 3: PROBE & CLAIM (PURE L1 EXECUTION) ---
             // Goal: Do NOT touch idPages or keyPages here unless absolutely necessary.
