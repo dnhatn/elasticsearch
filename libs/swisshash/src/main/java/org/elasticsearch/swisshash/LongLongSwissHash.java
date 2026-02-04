@@ -352,20 +352,20 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private static final byte EMPTY = (byte) 0x80; // empty slot
 
-        private final long[] controlData;
+        private final byte[] controlData;
 
         private final byte[][] idPages;
 
         private int insertProbes;
-        private final int CONTROL_HASH;
+        private final int CONTROL_BLOCK_MASK;
 
         BigCore() {
-            int controlLength = (capacity >>> 3) + 1;
-            CONTROL_HASH = mask >>> 3;
+            int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
-            controlData = new long[controlLength];
-            Arrays.fill(controlData, 0x8080808080808080L); // fill with EMPTY
+            controlData = new byte[controlLength];
+            CONTROL_BLOCK_MASK = capacity - 1;
+            Arrays.fill(controlData, EMPTY);
 
             boolean success = false;
             try {
@@ -404,7 +404,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     long h64 = hash64(key1s[absIdx], key2s[absIdx]);
                     batchHash64s[i] = h64; // Relative 0..255
                     // SWAR Prefetch: Touch the 8-byte control block
-                    dummy ^= controlData[(int) (h64 & CONTROL_HASH)];
+                    dummy ^= controlData[(int) (h64 & CONTROL_BLOCK_MASK)];
                 }
                 if (dummy == -1) System.err.print("");
 
@@ -455,57 +455,85 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private static final long LSB_ONES = 0x0101010101010101L;
         private static final long MSB_ONES = 0x8080808080808080L;
 
-        private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
-            int blockIdx = hash & CONTROL_HASH;
+        private int reserve(final long k1, final long k2, final int hash, final byte control, final int maxId) {
+            // Start at the ideal bucket
+            int startSlot = hash & mask;
+
+            // --- STAGE 1: THE VECTOR BURST ---
+            // We check 16 slots at once. In a healthy table, the key or an EMPTY slot
+            // is found here >90% of the time. Contiguous array makes this a single MOV instruction.
+            ByteVector vec = ByteVector.fromArray(BS, controlData, startSlot);
+
+            // Check for existing key (Control Match)
+            long matches = vec.eq(control).toLong();
+            while (matches != 0) {
+                int bit = Long.numberOfTrailingZeros(matches);
+                int slot = (startSlot + bit) & mask;
+
+                // We only touch paged memory if the control byte matches
+                long packed = idAndHash(slot);
+                if ((int) packed == hash) {
+                    int id = (int) (packed >>> 32);
+                    // Since maxId is passed, we can skip checking keys added in the current batch
+                    if (id != 0xFFFF_FFFF && id < maxId) {
+                        if (checkKeys(id, k1, k2)) return id;
+                    }
+                }
+                matches &= (matches - 1);
+            }
+
+            // Check for an empty slot to claim
+            long empty = vec.eq(EMPTY).toLong();
+            if (empty != 0) {
+                int bit = Long.numberOfTrailingZeros(empty);
+                int insertSlot = (startSlot + bit) & mask;
+
+                // Claim the slot immediately in metadata
+                insertAtSlot(insertSlot, control);
+                return -1 - insertSlot;
+            }
+
+            // --- STAGE 2: THE SWAR FALLBACK ---
+            // If the 16-slot window failed (rare), we fall back to a tight 8-slot SWAR probe.
+            // We align the block index to the next 8-byte boundary.
+            int blockIdx = ((startSlot + BYTE_VECTOR_LANES) & mask) >>> 3;
             final long pattern = (control & 0xFFL) * LSB_ONES;
 
             for (;;) {
-                final long block = controlData[blockIdx];
+                // Treat the byte[] as a long via VarHandle
+                long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
 
-                long match = block ^ pattern;
-                match = (match - LSB_ONES) & ~match & MSB_ONES;
-                while (match != 0) {
-                    final int bitPos = Long.numberOfTrailingZeros(match);
-                    final int slot = (blockIdx << 3) + (bitPos >>> 3);
-                    final long idAndHash = idAndHash(slot);
-                    if ((int) idAndHash == hash) {
-                        final int id = id(idAndHash);
-                        if (id != 0xFFFF_FFFF && id < maxId) {
-                            final long keyOffset = keyOffset(id);
-                            if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
-                                return id;
-                            }
-                        }
+                // SWAR Match Logic
+                long m = block ^ pattern;
+                m = (m - LSB_ONES) & ~m & MSB_ONES;
+                while (m != 0) {
+                    int slot = (blockIdx << 3) + (Long.numberOfTrailingZeros(m) >>> 3);
+                    long packed = idAndHash(slot & mask);
+                    if ((int) packed == hash) {
+                        int id = (int) (packed >>> 32);
+                        if (id != 0xFFFF_FFFF && id < maxId && checkKeys(id, k1, k2)) return id;
                     }
-                    match &= (match - 1);
+                    m &= (m - 1);
                 }
 
-                final long emptyMatches = block & MSB_ONES;
-                if (emptyMatches != 0) {
-                    int bitPos = Long.numberOfTrailingZeros(emptyMatches);
-                    int subSlot = bitPos >>> 3;
-                    insertAtSlot(blockIdx, subSlot, control);
-                    int slot = (blockIdx << 3) + subSlot;
-                    return -1 - slot;
+                // SWAR Empty Logic
+                long e = block & 0x8080808080808080L;
+                if (e != 0) {
+                    int slot = (blockIdx << 3) + (Long.numberOfTrailingZeros(e) >>> 3);
+                    int insertSlot = slot & mask;
+                    insertAtSlot(insertSlot, control);
+                    return -1 - insertSlot;
                 }
 
-                insertProbes++;
-                blockIdx = (blockIdx + 1) & CONTROL_HASH;
+                // Linear probe to next block
+                blockIdx = (blockIdx + 1) & CONTROL_BLOCK_MASK;
             }
         }
 
-        private void insertAtSlot(final int slot, final int subSlot, final byte control) {
-            // Read-Modify-Write the specific byte
-            long shift = (long)subSlot << 3;
-            long longMask = 0xFFL << shift;
-            long longVal = (control & 0xFFL) << shift;
-
-            long block = controlData[slot];
-            block = (block & ~longMask) | longVal;
-            controlData[slot] = block;
-
-            if (slot == 0) {
-                controlData[controlData.length - 1] = block;
+        private void insertAtSlot(final int slot, final byte control) {
+            controlData[slot] = control;
+            if (slot < BYTE_VECTOR_LANES) {
+                controlData[capacity + slot] = control;
             }
         }
 
@@ -560,25 +588,30 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(BigCore newBigCore) {
-            int limit = controlData.length - 1;
+            final int blocks = capacity >>> 3;
 
-            for (int i = 0; i < limit; i++) {
-                long block = controlData[i];
-                if (block == MSB_ONES) continue; // Skip empty blocks
+            for (int i = 0; i < blocks; i++) {
+                // Load 8 control bytes at once
+                long block = (long) LONG_HANDLE.get(controlData, i << 3);
 
-                // Invert so populated slots have 1s
-                long populated = (~block) & MSB_ONES;
+                // If all 8 slots are empty (0x80), skip them instantly
+                if (block == 0x8080808080808080L) continue;
+
+                // Use SWAR to find bits where the high bit is NOT set (populated slots)
+                long populated = (~block) & 0x8080808080808080L;
 
                 while (populated != 0) {
                     int bitPos = Long.numberOfTrailingZeros(populated);
                     int subSlot = bitPos >>> 3;
                     int oldSlot = (i << 3) + subSlot;
 
+                    // Only touch the paged memory (Cold RAM) for actual data
                     long packed = idAndHash(oldSlot);
                     int hash = (int) packed;
                     int id = (int) (packed >>> 32);
-                    byte control = (byte) (block >>> bitPos);
+                    byte control = (byte) ((block >>> (subSlot << 3)) & 0xFFL);
 
+                    // Blind insert into the new, larger contiguous table
                     newBigCore.insert(hash, control, id);
 
                     populated &= (populated - 1);
@@ -591,23 +624,56 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          * by {@link #rehash} because we know all keys are unique.
          */
         private void insert(final int hash, final byte control, final int id) {
-            int blockIdx = hash & CONTROL_HASH;
-            for (; ; ) {
-                long block = controlData[blockIdx];
-                final long emptyMatches = block & MSB_ONES;
-                if (emptyMatches != 0) {
-                    int bitPos = Long.numberOfTrailingZeros(emptyMatches);
-                    int subSlot = bitPos >>> 3;
-                    insertAtSlot(blockIdx, subSlot, control);
+            int startSlot = hash & mask;
 
-                    final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
-                    int insertSlot = (blockIdx << 3) + subSlot;
-                    final long offset = idOffset(insertSlot);
-                    LONG_HANDLE.set(idPages[(int)(offset >> PAGE_SHIFT)], (int)(offset & PAGE_MASK), idAndHash);
+            // Try Vector first for the 'One-Hit' claim
+            ByteVector vec = ByteVector.fromArray(BS, controlData, startSlot);
+            long empty = vec.eq(EMPTY).toLong();
+            if (empty != 0) {
+                int bit = Long.numberOfTrailingZeros(empty);
+                int slot = (startSlot + bit) & mask;
+
+                // Metadata Write
+                insertAtSlot(slot, control);
+                // Payload Write (Paged)
+                writeIdAndHash(slot, id, hash);
+                return;
+            }
+
+            // Fallback to SWAR probe for the hole
+            int blockIdx = ((startSlot + 16) & mask) >>> 3;
+            for (;;) {
+                long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
+                long e = block & 0x8080808080808080L;
+                if (e != 0) {
+                    int slot = (blockIdx << 3) + (Long.numberOfTrailingZeros(e) >>> 3);
+                    slot &= mask;
+                    insertAtSlot(slot, control);
+                    writeIdAndHash(slot, id, hash);
                     return;
                 }
-                blockIdx = (blockIdx + 1) & CONTROL_HASH;
+                blockIdx = (blockIdx + 1) & CONTROL_BLOCK_MASK;
             }
+        }
+
+        private void writeIdAndHash(final int slot, final int id, final int hash) {
+            // idOffset(slot) is simply: (long) slot * 8
+            final long offset = (long) slot << 3;
+
+            // 1. Resolve the page (The 'First Indirection')
+            final int pageIdx = (int) (offset >>> PAGE_SHIFT);
+            final byte[] page = idPages[pageIdx];
+
+            // 2. Resolve the offset within the page
+            final int indexInPage = (int) (offset & PAGE_MASK);
+
+            // 3. Pack the ID and Hash into a single 64-bit long
+            // ID in high 32 bits, Hash in low 32 bits
+            final long packed = ((long) id << 32) | Integer.toUnsignedLong(hash);
+
+            // 4. Perform a PLAIN store (no Release/Volatile overhead)
+            // Using VarHandle.set on a local 'page' reference is highly optimizable by the JIT.
+            LONG_HANDLE.set(page, indexInPage, packed);
         }
 
         private long key1(final long keyOffset) {
