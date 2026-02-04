@@ -155,7 +155,18 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             return;
         }
         if (size + length >= nextGrowSize) {
-            bigCore.grow(size + length);
+            // Juggle constants for the new page size
+            growCount++;
+            int oldCapacity = capacity;
+            while (nextGrowSize <= size + length) {
+                capacity <<= 1;
+                if (capacity < 0) {
+                    throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
+                }
+                nextGrowSize = (int) (capacity * LongSwissHash.BigCore.FILL_FACTOR);
+            }
+            mask = capacity - 1;
+            bigCore.grow();
         }
         bigCore.addBatch(firstKeys, secondKeys, ids, length);
     }
@@ -195,17 +206,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         toClose.clear();
     }
 
-    private int growTracking(int minSize) {
+    private int growTracking() {
         // Juggle constants for the new page size
         growCount++;
         int oldCapacity = capacity;
-        while (nextGrowSize < minSize) {
-            capacity <<= 1;
-            if (capacity < 0) {
-                throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
-            }
-            nextGrowSize = (int) (capacity * LongSwissHash.BigCore.FILL_FACTOR);
+        capacity <<= 1;
+        if (capacity < 0) {
+            throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
         }
+        nextGrowSize = (int) (capacity * LongSwissHash.BigCore.FILL_FACTOR);
         mask = capacity - 1;
         return oldCapacity;
     }
@@ -276,7 +285,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         void transitionToBigCore() {
-            growTracking(INITIAL_CAPACITY * 2);
+            growTracking();
             try {
                 bigCore = new BigCore();
                 rehash();
@@ -415,102 +424,107 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         final int BATCH_SIZE = 128;
         final int[] batchHashes = new int[BATCH_SIZE];
+        final int[] pendingKeyIndices = new int[BATCH_SIZE];
 
         void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
-            // 128 is the sweet spot
             for (int offset = 0; offset < length; offset += BATCH_SIZE) {
                 int limit = Math.min(BATCH_SIZE, length - offset);
-
-                // PHASE 1: Compute Hashes (CPU Bound)
-                for (int i = 0; i < limit; i++) {
-                    batchHashes[i] = hash(firstKeys[offset + i], secondKeys[offset + i]);
-                }
-
-                // PHASE 2: Prefetch (Memory Bound)
-                // Prevents Dead Code Elimination via 'prefetchSink'
-                int accumulator = 0;
-                for (int i = 0; i < limit; i++) {
-                    int group = batchHashes[i] & mask;
-                    accumulator ^= controlData[group];
-                }
-                this.prefetchSink = accumulator;
-
-                // PHASE 3: Claim Slots (L1 Cache / Metadata Bound)
-                // We allocate the IDs and update Control bytes, but we DO NOT write the heavy keys yet.
-                for (int i = 0; i < limit; i++) {
-                    long k1 = firstKeys[offset + i];
-                    long k2 = secondKeys[offset + i];
-                    int hash = batchHashes[i];
-
-                    // Calls the specialized 'claim' method
-                    ids[offset + i] = claimSlotImpl(k1, k2, hash);
-                }
-
-                // PHASE 4: Store Keys (Sequential Write Bound)
-                // Now we blast the key data into the Key Pages linearly.
-                // The CPU Write-Combining buffers love this.
-                for (int i = 0; i < limit; i++) {
-                    int resultId = ids[offset + i];
-
-                    // If ID is positive, it means it's a NEW insertion.
-                    // If negative, it was existing (keys already there), so skip.
-                    if (resultId >= 0) {
-                        setKeys(resultId, firstKeys[offset + i], secondKeys[offset + i]);
-                    } else {
-                        // Fix the ID for the output array (-1 - id -> id)
-                        ids[offset + i] = -1 - resultId;
-                    }
-                }
+                processChunk(firstKeys, secondKeys, ids, offset, limit);
             }
         }
 
         /**
-         * Specialized version of addImpl that CLAIMS the slot but skips setKeys().
+         * The hot loop. Stateless and pure.
+         * Takes arrays as arguments to ensure data integrity.
          */
-        private int claimSlotImpl(final long key1, final long key2, final int hash) {
-            final byte control = control(hash);
-            int group = hash & mask;
+        private void processChunk(long[] firstKeys, long[] secondKeys, int[] ids, int offset, int limit) {
+            final int batchStartSize = size;
 
-            for (;;) {
-                // Vector Load (Hot L1)
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+            int accumulator = 0;
+            for (int i = 0; i < limit; i++) {
+                final int hash = hash(firstKeys[offset + i], secondKeys[offset + i]);
+                accumulator ^= controlData[hash & mask];
+                batchHashes[i] = hash;
+            }
+            this.prefetchSink = accumulator;
 
-                // 1. Check Matches
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
-                    final long idAndHash = idAndHash(checkSlot);
-                    if ((int) idAndHash == hash) {
-                        final int id = id(idAndHash);
-                        // WARNING: This check reads 'keyPages'.
-                        // If we are checking against a key added IN THIS BATCH,
-                        // the data is not written yet! (See constraint above).
-                        if (checkKeys(id, key1, key2)) {
-                            return -1 - id; // Return negative ID for existing
+            // --- PHASE 3: CLAIM & RESOLVE ---
+            for (int i = 0; i < limit; i++) {
+                final long k1 = firstKeys[offset + i];
+                final long k2 = secondKeys[offset + i];
+                final int hash = batchHashes[i];
+                final byte control = control(hash);
+                int group = hash & mask;
+
+                // Restart label for probing
+                search_loop: for (;;) {
+                    ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+
+                    // A. Match Check
+                    long matches = vec.eq(control).toLong();
+                    while (matches != 0) {
+                        final int bit = Long.numberOfTrailingZeros(matches);
+                        final int checkSlot = slot(group + bit);
+                        final long idAndHash = idAndHash(checkSlot);
+
+                        if ((int) idAndHash == hash) {
+                            final int id = (int) (idAndHash >>> 32);
+                            final boolean isMatch;
+
+                            // HYBRID CHECK:
+                            // We use 'batchStartSize' to determine WHERE the key lives.
+                            if (id < batchStartSize) {
+                                // ID is old -> Check 'keyPages' (Cold RAM)
+                                isMatch = checkKeys(id, k1, k2);
+                            } else {
+                                // ID is new (from this batch) -> Check 'firstKeys' (Hot Cache)
+                                // pendingKeyIndices maps: (ID - Start) -> Relative Batch Index
+                                int keyIndex = offset + pendingKeyIndices[id - batchStartSize];
+                                isMatch = (firstKeys[keyIndex] == k1 && secondKeys[keyIndex] == k2);
+                            }
+
+                            if (isMatch) {
+                                ids[offset + i] = -1 - id; // Duplicate found
+                                break search_loop;
+                            }
                         }
+                        matches &= (matches - 1);
                     }
-                    matches &= matches - 1;
+
+                    // B. Empty Check
+                    long empty = vec.eq(EMPTY).toLong();
+                    if (empty != 0) {
+                        int bit = Long.numberOfTrailingZeros(empty);
+                        int insertSlot = slot(group + bit);
+                        int id = size;
+
+                        // Register Pending Key: Map (NewID - Start) -> Relative Index (0..127)
+                        // We store 'i' (relative), not 'offset + i' (absolute), to keep the index small.
+                        pendingKeyIndices[id - batchStartSize] = i;
+
+                        // Write Metadata
+                        long val = ((long) id << 32) | Integer.toUnsignedLong(hash);
+                        insertAtSlot(insertSlot, control, val);
+
+                        size++;
+                        ids[offset + i] = id; // New ID
+                        break search_loop;
+                    }
+
+                    // C. Probe
+                    group = (group + BYTE_VECTOR_LANES) & mask;
                 }
+            }
 
-                // 2. Check Empty
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
-                    final int id = size; // Claim the next ID
+            // --- PHASE 4: WRITE KEYS ---
+            final int newCount = size - batchStartSize;
+            for (int i = 0; i < newCount; i++) {
+                // pIdx is the relative index (0..127) stored in Phase 3
+                int pIdx = pendingKeyIndices[i];
+                int absIndex = offset + pIdx;
 
-                    // SKIP KEY WRITE (Moved to Phase 4)
-                    // setKeys(id, key1, key2); <-- Removed
-
-                    // Write Metadata
-                    final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
-                    insertAtSlot(insertSlot, control, idAndHash);
-
-                    size++;
-                    return id; // Return positive ID for new
-                }
-
-                // Linear Probe
-                group = (group + BYTE_VECTOR_LANES) & mask;
+                // Sequential Write to Cold Storage
+                setKeys(batchStartSize + i, firstKeys[absIndex], secondKeys[absIndex]);
             }
         }
 
@@ -593,12 +607,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void maybeGrow() {
             if (size >= nextGrowSize) {
                 assert size == nextGrowSize;
-                grow(size + 1);
+                growTracking();
+                grow();
             }
         }
 
-        private void grow(int minSize) {
-            growTracking(minSize);
+        private void grow() {
             bigCore = null;
             try {
                 var newBigCore = new BigCore();
