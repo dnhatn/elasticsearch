@@ -46,6 +46,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
     static final int INITIAL_CAPACITY = PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE;
 
+    private static boolean NEVER_TRUE = System.currentTimeMillis() < 0;
+
     static {
         if (PageCacheRecycler.PAGE_SIZE_IN_BYTES >> PAGE_SHIFT != 1) {
             throw new AssertionError("bad constants");
@@ -385,6 +387,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         final int CHUNK_LIMIT = 256;
         final long[] batchHash64s = new long[CHUNK_LIMIT];
+        volatile long times;
+
+        private void blackhole(byte value) {
+            if (NEVER_TRUE) {
+                times += value;
+            }
+        }
 
         private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
             // Ensure the global result array can hold all IDs
@@ -404,12 +413,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 }
 
                 // PHASE 1: Hash & Prefetch (Relative Indexing)
-                long dummy = 0;
                 for (int i = 0; i < batchSize; i++) {
-                    dummy ^= controlData[(int) (batchHash64s[i] & mask)];
+                    blackhole( controlData[(int) (batchHash64s[i] & mask)]);
                 }
-                if (dummy == -1) System.err.print("");
-
                 // PHASE 2: Reserve Slots
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
