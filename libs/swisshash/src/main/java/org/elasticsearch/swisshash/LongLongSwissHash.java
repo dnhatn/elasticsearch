@@ -572,7 +572,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             growKeyPages(nextGrowSize +1);
         }
 
-        private void rehash(BigCore newBigCore) {
+        private void rehashx(BigCore newBigCore) {
             final int blocks = (controlData.length - BYTE_VECTOR_LANES) >>> 3;
 
             for (int i = 0; i < blocks; i++) {
@@ -600,6 +600,26 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     newBigCore.insert(hash, control, id);
 
                     populated &= (populated - 1);
+                }
+            }
+        }
+
+        private void rehash(BigCore newBigCore) {
+            int fullPages = size / (PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE);
+            int remainingEntries = size % (PageCacheRecycler.PAGE_SIZE_IN_BYTES / KEY_SIZE);
+            int id = 0;
+            for (int i = 0; i < fullPages; i++) {
+                byte[] page = keyPages[i];
+                for (int j = 0; j < PageCacheRecycler.PAGE_SIZE_IN_BYTES; j += KEY_SIZE) {
+                    final long h64 = hash64((long) LONG_HANDLE.get(page, j), (long) LONG_HANDLE.get(page, j + Long.BYTES));
+                    newBigCore.insert((int) h64, control(h64), id++);
+                }
+            }
+            if (remainingEntries > 0) {
+                byte[] page = keyPages[fullPages];
+                for (int j = 0; j < remainingEntries * KEY_SIZE; j += KEY_SIZE) {
+                    final long h64 = hash64((long) LONG_HANDLE.get(page, j), (long) LONG_HANDLE.get(page, j + Long.BYTES));
+                    newBigCore.insert((int) h64, control(h64), id++);
                 }
             }
         }
