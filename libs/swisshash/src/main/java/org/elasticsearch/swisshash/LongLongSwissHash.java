@@ -377,52 +377,73 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
 
         private int[] batchAdd(long[] key1s, long[] key2s, int length) {
+            // Ensure the global result array can hold all IDs
             if (batchWork.ids.length < length) {
                 batchWork.ids = new int[length];
             }
+
             int offset = 0;
-            int keysAdded = size;
+            int keysAddedAtStart = size;
+
+            // Process in chunks that fit the internal BatchWork buffers
+            final int CHUNK_LIMIT = 256;
+
             while (offset < length) {
-                final int batchSize = Math.min(length - offset, batchWork.hash64s.length);
-                int end = offset + batchSize;
-                for (int i = 0; i < batchSize; i++) {
-                    batchWork.hash64s[i] = hash64(key1s[offset + i], key2s[offset + i]);
-                }
+                final int batchSize = Math.min(length - offset, CHUNK_LIMIT);
+                int nextId = size;
+
+                // PHASE 1: Hash & Prefetch (Relative Indexing)
                 long dummy = 0;
                 for (int i = 0; i < batchSize; i++) {
-                    dummy ^= controlData[(int) batchWork.hash64s[i] & CONTROL_HASH];
+                    int absIdx = offset + i;
+                    long h64 = hash64(key1s[absIdx], key2s[absIdx]);
+                    batchWork.hash64s[i] = h64; // Relative 0..255
+                    // SWAR Prefetch: Touch the 8-byte control block
+                    dummy ^= controlData[(int) (h64 & CONTROL_HASH)];
                 }
-                if (dummy == -1) {
-                    System.err.println("--> all control blocks full!");
-                }
+                if (dummy == -1) System.err.print("");
+
+                // PHASE 2: Reserve Slots
                 for (int i = 0; i < batchSize; i++) {
-                    long k1 = key1s[offset + i];
-                    long k2 = key2s[offset + i];
-                    long hash64 = batchWork.hash64s[i];
-                    final byte control = control(hash64);
-                    batchWork.ids[offset + i] = reserve(k1, k2, (int) hash64, control, keysAdded);
+                    int absIdx = offset + i;
+                    long h64 = batchWork.hash64s[i];
+                    batchWork.ids[absIdx] = reserve(
+                        key1s[absIdx],
+                        key2s[absIdx],
+                        (int) h64,
+                        control(h64),
+                        keysAddedAtStart
+                    );
                 }
-                // flush ids
+
+                // PHASE 3: Flush Metadata (ID & Hash)
                 for (int i = 0; i < batchSize; i++) {
-                    int id = batchWork.ids[i];
-                    if (id < 0) {
-                        final int slot = -1 - id;
-                        batchWork.ids[offset + i] = id = size++;
+                    int absIdx = offset + i;
+                    int res = batchWork.ids[absIdx];
+                    if (res < 0) {
+                        final int slot = -1 - res;
+                        int id = nextId++;
+                        batchWork.ids[absIdx] = id; // Convert negative slot to actual ID
+
                         int hash = (int) batchWork.hash64s[i];
                         final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
                         final int idOffset = idAndHashOffset(slot);
                         LONG_HANDLE.set(idAndHashPages[idOffset >> PAGE_SHIFT], idOffset & PAGE_MASK, idAndHash);
                     }
                 }
-                offset += batchSize;
-            }
-            // flush keys
-            for (int i = 0; i < length; i++) {
-                int id = batchWork.ids[i];
-                if (id >= keysAdded) {
-                    final long keyOffset = keyOffset(id);
-                    setKeys(keyOffset, key1s[i], key2s[i]);
+
+                // PHASE 4: Flush Keys (Sequential Writes)
+                // Crucial: Only flush keys for the current chunk to stay O(N)
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    int id = batchWork.ids[absIdx];
+                    if (id >= keysAddedAtStart) {
+                        setKeys(keyOffset(id), key1s[absIdx], key2s[absIdx]);
+                    }
                 }
+
+                size = nextId; // Commit the new IDs
+                offset += batchSize;
             }
             return batchWork.ids;
         }
@@ -476,7 +497,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private void insertAtSlot(final int slot, final int subSlot, final byte control) {
             // Read-Modify-Write the specific byte
-            long shift = subSlot << 3;
+            long shift = (long)subSlot << 3;
             long longMask = 0xFFL << shift;
             long longVal = (control & 0xFFL) << shift;
 
