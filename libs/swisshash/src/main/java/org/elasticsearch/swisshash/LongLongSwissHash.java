@@ -153,7 +153,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             mask = capacity - 1;
             bigCore.grow();
         }
-        bigCore.batchAdd(firstKeys, secondKeys, ids, length);
+        bigCore.batchAddUniques(firstKeys, secondKeys, ids, length);
     }
 
     @Override
@@ -388,7 +388,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         final int CHUNK_LIMIT = 256;
         final long[] batchHash64s = new long[CHUNK_LIMIT];
 
-        private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
+        private void batchAddUniques(long[] key1s, long[] key2s, int[] batchIds, int length) {
             // Ensure the global result array can hold all IDs
             int offset = 0;
             int keysAddedAtStart = size;
@@ -451,6 +451,24 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
                 size = nextId; // Commit the new IDs
                 offset += batchSize;
+            }
+        }
+
+        private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
+            for (int i = 0; i < length; i++) {
+                final long k1 = key1s[i];
+                final long k2 = key2s[i];
+                final long h64 = hash64(k1, k2);
+                final int res = reserve(k1, k2, h64, size);
+                if (res < 0) {
+                    final int slot = -1 - res;
+                    final int id = size++;
+                    batchIds[i] = id;
+                    writeIdAndHash(slot, id, (int) h64);
+                    setKeys(id, k1, k2);
+                } else {
+                    batchIds[i] = res;
+                }
             }
         }
 
@@ -719,8 +737,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         return 31 * BitMixer.mix(key1) + BitMixer.mix(key2);
     }
 
-    private static long hash64(long key1, long key2) {
-        return 31L * BitMixer.mix64(key1) + BitMixer.mix64(key2);
+    private static long hash64(long k1, long k2) {
+        long x = k1 ^ k2;
+        x ^= x >>> 33;
+        x *= 0x9E3779B97F4A7C15L;
+        x ^= x >>> 33;
+        return x;
     }
 
     private int slot(final int hash) {
