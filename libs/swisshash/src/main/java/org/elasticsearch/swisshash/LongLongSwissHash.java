@@ -357,14 +357,14 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private final byte[][] idPages;
 
         private int insertProbes;
-        private final int CONTROL_BLOCK_MASK;
+        private final int CONTROL_LONG_BLOCK_MASK;
 
         BigCore() {
             int controlLength = capacity + BYTE_VECTOR_LANES;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
             controlData = new byte[controlLength];
-            CONTROL_BLOCK_MASK = capacity - 1;
+            CONTROL_LONG_BLOCK_MASK = (capacity >>> 3) - 1;
             Arrays.fill(controlData, EMPTY);
 
             boolean success = false;
@@ -404,7 +404,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     long h64 = hash64(key1s[absIdx], key2s[absIdx]);
                     batchHash64s[i] = h64; // Relative 0..255
                     // SWAR Prefetch: Touch the 8-byte control block
-                    dummy ^= controlData[(int) (h64 & CONTROL_BLOCK_MASK)];
+                    dummy ^= controlData[(int) (h64 & mask)];
                 }
                 if (dummy == -1) System.err.print("");
 
@@ -526,7 +526,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 }
 
                 // Linear probe to next block
-                blockIdx = (blockIdx + 1) & CONTROL_BLOCK_MASK;
+                blockIdx = (blockIdx + 1) & CONTROL_LONG_BLOCK_MASK;
             }
         }
 
@@ -652,7 +652,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     writeIdAndHash(slot, id, hash);
                     return;
                 }
-                blockIdx = (blockIdx + 1) & CONTROL_BLOCK_MASK;
+                blockIdx = (blockIdx + 1) & CONTROL_LONG_BLOCK_MASK;
             }
         }
 
