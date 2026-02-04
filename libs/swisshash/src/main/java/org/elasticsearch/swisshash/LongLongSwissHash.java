@@ -574,35 +574,34 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          * by {@link #rehash} because we know all keys are unique.
          */
         private void insert(final int hash, final byte control, final int id) {
-            int startSlot = hash & mask;
+            int slot = hash & mask;
 
-            // Try Vector first for the 'One-Hit' claim
-            ByteVector vec = ByteVector.fromArray(BS, controlData, startSlot);
+            // STAGE 1: Vector Burst (The same, but widened)
+            // Check 16 slots. This handles 90% of cases in < 2ns.
+            ByteVector vec = ByteVector.fromArray(BS, controlData, slot);
             long empty = vec.eq(EMPTY).toLong();
             if (empty != 0) {
-                int bit = Long.numberOfTrailingZeros(empty);
-                int slot = (startSlot + bit) & mask;
-
-                // Metadata Write
+                slot = (slot + Long.numberOfTrailingZeros(empty)) & mask;
                 insertAtSlot(slot, control);
-                // Payload Write (Paged)
                 writeIdAndHash(slot, id, hash);
                 return;
             }
 
-            // Fallback to SWAR probe for the hole
-            int blockIdx = ((startSlot + 16) & mask) >>> 3;
+            // STAGE 2: The "Streaming" Fallback
+            // If the Vector misses, we stop jumping blocks and start "Streaming"
+            // through memory. This is easier on the L1 cache.
+            slot = (slot + BYTE_VECTOR_LANES) & mask;
             for (;;) {
-                long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
-                long e = block & 0x8080808080808080L;
-                if (e != 0) {
-                    int slot = (blockIdx << 3) + (Long.numberOfTrailingZeros(e) >>> 3);
-                    slot &= mask;
+                // Use a simple byte check here.
+                // Why not SWAR? Because we've already checked 16 slots.
+                // If we are still searching, we are likely in a high-fill area.
+                // A simple linear scan of bytes is often faster for the JIT to unroll.
+                if (controlData[slot] == EMPTY) {
                     insertAtSlot(slot, control);
                     writeIdAndHash(slot, id, hash);
                     return;
                 }
-                blockIdx = (blockIdx + 1) & CONTROL_LONG_BLOCK_MASK;
+                slot = (slot + 1) & mask;
             }
         }
 
