@@ -12,8 +12,6 @@ package org.elasticsearch.swisshash;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 
-import net.jpountz.util.UnsafeUtils;
-
 import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.RamUsageEstimator;
@@ -488,7 +486,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
             for (;;) {
                 // Use a PLAIN get to avoid memory barriers
-                final long block = UnsafeUtils.readLong(controlData, blockIdx << 3);
+                long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
+
                 // Match bits
                 long m = (block ^ pattern);
                 m = (m - 0x0101010101010101L) & ~m & 0x8080808080808080L;
@@ -582,7 +581,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     continue;
                 }
                 final long oldIdOffset = idOffset(oldSlot);
-                final long packed = UnsafeUtils.readLong(oldIdPages[(int) (oldIdOffset >> PAGE_SHIFT)], (int) (oldIdOffset & PAGE_MASK));
+                final long packed = (long) LONG_HANDLE.get(oldIdPages[(int) (oldIdOffset >> PAGE_SHIFT)], (int) (oldIdOffset & PAGE_MASK));
                 final int h32 = (int) packed;
                 int newSlot = h32 & mask;
                 while (controlData[newSlot] != EMPTY) {
@@ -689,7 +688,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final long idOffset = idOffset(slot);
             final int pageIndex = (int) (idOffset >> PAGE_SHIFT);
             final int indexInPage = (int) (idOffset & PAGE_MASK);
-            return UnsafeUtils.readLong(idPages[pageIndex], indexInPage);
+            return (long) LONG_HANDLE.get(idPages[pageIndex], indexInPage);
         }
 
         private static int id(long idAndHash) {
