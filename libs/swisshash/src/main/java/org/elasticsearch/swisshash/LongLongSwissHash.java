@@ -155,7 +155,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             return;
         }
         if (size + length >= nextGrowSize) {
-            bigCore.grow();
+            bigCore.grow(size + length);
         }
         bigCore.addBatch(firstKeys, secondKeys, ids, length);
     }
@@ -195,16 +195,18 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         toClose.clear();
     }
 
-    private int growTracking() {
+    private int growTracking(int minSize) {
         // Juggle constants for the new page size
         growCount++;
         int oldCapacity = capacity;
-        capacity <<= 1;
-        if (capacity < 0) {
-            throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
+        while (nextGrowSize < minSize) {
+            capacity <<= 1;
+            if (capacity < 0) {
+                throw new IllegalArgumentException("overflow: oldCapacity=" + oldCapacity + ", new capacity=" + capacity);
+            }
+            nextGrowSize = (int) (capacity * LongSwissHash.BigCore.FILL_FACTOR);
         }
         mask = capacity - 1;
-        nextGrowSize = (int) (capacity * LongSwissHash.BigCore.FILL_FACTOR);
         return oldCapacity;
     }
 
@@ -274,7 +276,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         void transitionToBigCore() {
-            growTracking();
+            growTracking(INITIAL_CAPACITY * 2);
             try {
                 bigCore = new BigCore();
                 rehash();
@@ -411,39 +413,104 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
-            final int BATCH_SIZE = 128;
-            int[] batchHashes = new int[BATCH_SIZE];
+        final int BATCH_SIZE = 128;
+        final int[] batchHashes = new int[BATCH_SIZE];
 
+        void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
+            // 128 is the sweet spot
             for (int offset = 0; offset < length; offset += BATCH_SIZE) {
                 int limit = Math.min(BATCH_SIZE, length - offset);
 
-                // PHASE 1: Compute Hashes
+                // PHASE 1: Compute Hashes (CPU Bound)
                 for (int i = 0; i < limit; i++) {
                     batchHashes[i] = hash(firstKeys[offset + i], secondKeys[offset + i]);
                 }
 
-                // PHASE 2: Prefetch Control Bytes (Memory Bound)
-                // We touch the first byte of the probing group.
-                // The CPU fetches the entire 64-byte cache line, which covers
-                // the 16 bytes needed by the Vector load in Phase 3.
-                byte accumulator = 0;
+                // PHASE 2: Prefetch (Memory Bound)
+                // Prevents Dead Code Elimination via 'prefetchSink'
+                int accumulator = 0;
                 for (int i = 0; i < limit; i++) {
                     int group = batchHashes[i] & mask;
                     accumulator ^= controlData[group];
                 }
                 this.prefetchSink = accumulator;
 
-                // PHASE 3: Vector Insert (L1 Cache Hit)
-                // Now that data is in L1, the Vector instructions execute instantly.
+                // PHASE 3: Claim Slots (L1 Cache / Metadata Bound)
+                // We allocate the IDs and update Control bytes, but we DO NOT write the heavy keys yet.
                 for (int i = 0; i < limit; i++) {
                     long k1 = firstKeys[offset + i];
                     long k2 = secondKeys[offset + i];
                     int hash = batchHashes[i];
 
-                    long id = addImpl(k1, k2, hash);
-                    ids[offset + i] = (int) (id < 0 ? -1 - id : id);
+                    // Calls the specialized 'claim' method
+                    ids[offset + i] = claimSlotImpl(k1, k2, hash);
                 }
+
+                // PHASE 4: Store Keys (Sequential Write Bound)
+                // Now we blast the key data into the Key Pages linearly.
+                // The CPU Write-Combining buffers love this.
+                for (int i = 0; i < limit; i++) {
+                    int resultId = ids[offset + i];
+
+                    // If ID is positive, it means it's a NEW insertion.
+                    // If negative, it was existing (keys already there), so skip.
+                    if (resultId >= 0) {
+                        setKeys(resultId, firstKeys[offset + i], secondKeys[offset + i]);
+                    } else {
+                        // Fix the ID for the output array (-1 - id -> id)
+                        ids[offset + i] = -1 - resultId;
+                    }
+                }
+            }
+        }
+
+        /**
+         * Specialized version of addImpl that CLAIMS the slot but skips setKeys().
+         */
+        private int claimSlotImpl(final long key1, final long key2, final int hash) {
+            final byte control = control(hash);
+            int group = hash & mask;
+
+            for (;;) {
+                // Vector Load (Hot L1)
+                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+
+                // 1. Check Matches
+                long matches = vec.eq(control).toLong();
+                while (matches != 0) {
+                    final int checkSlot = slot(group + Long.numberOfTrailingZeros(matches));
+                    final long idAndHash = idAndHash(checkSlot);
+                    if ((int) idAndHash == hash) {
+                        final int id = id(idAndHash);
+                        // WARNING: This check reads 'keyPages'.
+                        // If we are checking against a key added IN THIS BATCH,
+                        // the data is not written yet! (See constraint above).
+                        if (checkKeys(id, key1, key2)) {
+                            return -1 - id; // Return negative ID for existing
+                        }
+                    }
+                    matches &= matches - 1;
+                }
+
+                // 2. Check Empty
+                long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    final int insertSlot = slot(group + Long.numberOfTrailingZeros(empty));
+                    final int id = size; // Claim the next ID
+
+                    // SKIP KEY WRITE (Moved to Phase 4)
+                    // setKeys(id, key1, key2); <-- Removed
+
+                    // Write Metadata
+                    final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
+                    insertAtSlot(insertSlot, control, idAndHash);
+
+                    size++;
+                    return id; // Return positive ID for new
+                }
+
+                // Linear Probe
+                group = (group + BYTE_VECTOR_LANES) & mask;
             }
         }
 
@@ -475,7 +542,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final int id = size;
                     setKeys(id, key1, key2);
                     final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
-                    bigCore.insertAtSlot(insertSlot, control, idAndHash);
+                    insertAtSlot(insertSlot, control, idAndHash);
                     size++;
                     return id;
                 }
@@ -526,12 +593,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void maybeGrow() {
             if (size >= nextGrowSize) {
                 assert size == nextGrowSize;
-                grow();
+                grow(size + 1);
             }
         }
 
-        private void grow() {
-            growTracking();
+        private void grow(int minSize) {
+            growTracking(minSize);
             bigCore = null;
             try {
                 var newBigCore = new BigCore();
