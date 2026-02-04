@@ -573,29 +573,36 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(byte[] oldControlData, byte[][] oldIdPages) {
+            long startTime = System.nanoTime();
             int length = oldControlData.length - BYTE_VECTOR_LANES;
-            for (int slot = 0; slot < length; slot++) {
-                byte ctrl = oldControlData[slot];
+            for (int oldSlot = 0; oldSlot < length; oldSlot++) {
+                byte ctrl = oldControlData[oldSlot];
                 if (ctrl == EMPTY) {
                     continue;
                 }
-                final long idOffset = idOffset(slot);
-                final int pageIndex = (int) (idOffset >> PAGE_SHIFT);
-                final int indexInPage = (int) (idOffset & PAGE_MASK);
-                final long packed = (long) LONG_HANDLE.get(oldIdPages[pageIndex], indexInPage);
+                final long oldIdOffset = idOffset(oldSlot);
+                final long packed = (long) LONG_HANDLE.get(oldIdPages[(int) (oldIdOffset >> PAGE_SHIFT)], (int) (oldIdOffset & PAGE_MASK));
                 final int h32 = (int) packed;
                 int newSlot = h32 & mask;
-                while (controlData[newSlot] != EMPTY) {
-                    newSlot = (newSlot + 1) & mask;
+                for (; ; ) {
+                    ByteVector vec = ByteVector.fromArray(BS, controlData, newSlot);
+                    final long empty = vec.eq(EMPTY).toLong();
+                    if (empty != 0) {
+                        int bit = Long.numberOfTrailingZeros(empty);
+                        int finalSlot = (oldSlot + bit) & mask;
+                        insertAtSlot(finalSlot, ctrl);
+                        final long newOffset = (long) finalSlot << 3;
+                        LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
+                        break;
+                    }
+                    newSlot = (newSlot + BYTE_VECTOR_LANES) & mask;
                 }
-                insertAtSlot(newSlot, ctrl);
-
-                final long newOffset = (long) newSlot << 3;
-                LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
             }
+            long endTime = System.nanoTime();
+            System.err.println("--> rehashing " + length + " took " + (endTime - startTime) + " ns");
         }
 
-        /**
+        /*
          * Inserts the key into the first empty slot that allows it. Used
          * by {@link #rehash} because we know all keys are unique.
          */
