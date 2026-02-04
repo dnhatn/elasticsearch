@@ -13,9 +13,9 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.breaker.CircuitBreaker;
-import org.elasticsearch.common.recycler.Recycler;
 import org.elasticsearch.common.util.LongLongHashTable;
 import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.core.Releasable;
@@ -75,6 +75,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
      * select the appropriate page and keys never span multiple pages.
      */
     private byte[][] keyPages;
+    private long usedBytes = 0;
+
     private SmallCore smallCore;
     private BigCore bigCore;
     private final List<Releasable> toClose = new ArrayList<>();
@@ -84,7 +86,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         boolean success = false;
         try {
             smallCore = new SmallCore();
-            keyPages = new byte[][] { grabKeyPage() };
+            keyPages = new byte[0][];
+            growKeyPages(capacity);
             success = true;
         } finally {
             if (success == false) {
@@ -93,12 +96,23 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
     }
 
-    private byte[] grabKeyPage() {
-        breaker.addEstimateBytesAndMaybeBreak(PageCacheRecycler.PAGE_SIZE_IN_BYTES, "LongLongSwissHash-keyPage");
-        toClose.add(() -> breaker.addWithoutBreaking(-PageCacheRecycler.PAGE_SIZE_IN_BYTES));
-        Recycler.V<byte[]> page = recycler.bytePage(false);
-        toClose.add(page);
-        return page.v();
+    private static int requiredPages(int capacity, int entrySize) {
+        final long requiresBytes = (long) capacity * entrySize;
+        return Math.toIntExact(requiresBytes + PageCacheRecycler.BYTE_PAGE_SIZE - 1) >> PAGE_SHIFT;
+    }
+
+    void growKeyPages(int newSize) {
+        final int requiredPages = requiredPages(newSize, KEY_SIZE);
+        final int currentPages = keyPages.length;
+        final int extraPages = requiredPages - currentPages;
+        breaker.addEstimateBytesAndMaybeBreak((long) extraPages * PageCacheRecycler.PAGE_SIZE_IN_BYTES, "LongLongSwissHash");
+        usedBytes += (long) extraPages * PageCacheRecycler.PAGE_SIZE_IN_BYTES;
+        keyPages = ArrayUtil.growExact(keyPages, requiredPages);
+        for (int i = currentPages; i < keyPages.length; i++) {
+            var page = recycler.bytePage(false);
+            toClose.add(page);
+            keyPages[i] = page.v();
+        }
     }
 
     /**
@@ -265,6 +279,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 close();
                 smallCore = null;
             }
+            growKeyPages(nextGrowSize);
         }
 
         @Override
@@ -354,19 +369,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
             boolean success = false;
             try {
-                int keyPagesNeeded = (capacity * KEY_SIZE - 1) >> PAGE_SHIFT;
-                keyPagesNeeded++;
-                var initialKeyPages = keyPages;
-                keyPages = new byte[keyPagesNeeded][];
-                for (int i = 0; i < keyPagesNeeded; i++) {
-                    keyPages[i] = (i < initialKeyPages.length) ? initialKeyPages[i] : grabKeyPage();
-                }
-                assert keyPages[Math.toIntExact(keyOffset(mask) >> PAGE_SHIFT)] != null
-                    && Arrays.stream(keyPages).mapToInt(b -> b.length).distinct().count() == 1L
-                    && keyPagesNeeded > initialKeyPages.length;
-
-                int idPagesNeeded = (capacity * ID_SIZE - 1) >> PAGE_SHIFT;
-                idPagesNeeded++;
+                int idPagesNeeded = requiredPages(capacity, ID_SIZE);
                 idPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
                     idPages[i] = grabPage();
@@ -495,6 +498,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private void grow() {
             growTracking();
+            bigCore = null;
             try {
                 var newBigCore = new BigCore();
                 rehash(newBigCore);
@@ -502,6 +506,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             } finally {
                 close();
             }
+            growKeyPages(nextGrowSize);
         }
 
         private void rehash(BigCore newBigCore) {
