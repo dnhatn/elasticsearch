@@ -154,6 +154,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
             return;
         }
+        if (size + length >= nextGrowSize) {
+            bigCore.grow();
+        }
         bigCore.addBatch(firstKeys, secondKeys, ids, length);
     }
 
