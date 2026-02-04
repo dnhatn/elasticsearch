@@ -612,7 +612,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             // Stage 1: Prefetch the new control blocks
             long prefetchAccumulator = 0;
             for (int i = 0; i < count; i++) {
-                prefetchAccumulator ^= controlData[hashes[i] & newBigCore.CONTROL_HASH];
+                prefetchAccumulator ^= bigCore.controlData[hashes[i] & newBigCore.CONTROL_HASH];
             }
             if (prefetchAccumulator == -1) System.err.print("");
 
