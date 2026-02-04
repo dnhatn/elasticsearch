@@ -293,7 +293,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 close();
                 smallCore = null;
             }
-            growKeyPages(nextGrowSize);
+            growKeyPages(nextGrowSize + 1);
         }
 
         @Override
@@ -621,7 +621,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             } finally {
                 close();
             }
-            growKeyPages(nextGrowSize);
+            growKeyPages(nextGrowSize +1);
         }
 
         private void rehash(BigCore newBigCore) {
