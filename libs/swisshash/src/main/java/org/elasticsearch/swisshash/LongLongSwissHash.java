@@ -422,9 +422,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        final int BATCH_SIZE = 128;
-        final int[] batchHashes = new int[BATCH_SIZE];
-        final int[] pendingKeyIndices = new int[BATCH_SIZE];
+        private static final int BATCH_SIZE = 64;
+        private final int[] batchHashes = new int[BATCH_SIZE];
+        private final int[] pendingKeyIndices = new int[BATCH_SIZE];
+
+        // NEW: Buffers to hold metadata so we don't write to cold RAM in the hot loop
+        private final int[] batchInsertSlots = new int[BATCH_SIZE];
+        private final long[] batchIdAndHashes = new long[BATCH_SIZE];
 
         void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
             for (int offset = 0; offset < length; offset += BATCH_SIZE) {
@@ -434,21 +438,24 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         /**
-         * The hot loop. Stateless and pure.
-         * Takes arrays as arguments to ensure data integrity.
+         * The "Phase 5" Loop.
+         * Separates L1 Cache operations (Probing) from Cold RAM operations (Writing).
          */
         private void processChunk(long[] firstKeys, long[] secondKeys, int[] ids, int offset, int limit) {
             final int batchStartSize = size;
-
             int accumulator = 0;
+
+            // --- PHASES 1 & 2: HASH & PREFETCH ---
             for (int i = 0; i < limit; i++) {
                 final int hash = hash(firstKeys[offset + i], secondKeys[offset + i]);
-                accumulator ^= controlData[hash & mask];
                 batchHashes[i] = hash;
+                // Prefetch Control Byte (L1 Hint)
+                accumulator ^= controlData[hash & mask];
             }
             this.prefetchSink = accumulator;
 
-            // --- PHASE 3: CLAIM & RESOLVE ---
+            // --- PHASE 3: PROBE & CLAIM (PURE L1 EXECUTION) ---
+            // Goal: Do NOT touch idPages or keyPages here unless absolutely necessary.
             for (int i = 0; i < limit; i++) {
                 final long k1 = firstKeys[offset + i];
                 final long k2 = secondKeys[offset + i];
@@ -456,8 +463,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final byte control = control(hash);
                 int group = hash & mask;
 
-                // Restart label for probing
-                search_loop: for (;;) {
+                search_loop:
+                for (;;) {
+                    // Vector Load (Hot L1)
                     ByteVector vec = ByteVector.fromArray(BS, controlData, group);
 
                     // A. Match Check
@@ -465,26 +473,29 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     while (matches != 0) {
                         final int bit = Long.numberOfTrailingZeros(matches);
                         final int checkSlot = slot(group + bit);
+
+                        // COSTLY READ: Only happens on hash collision (rare)
+                        // We must read Cold RAM here to verify the ID.
                         final long idAndHash = idAndHash(checkSlot);
 
                         if ((int) idAndHash == hash) {
                             final int id = (int) (idAndHash >>> 32);
-                            final boolean isMatch;
+                            boolean isMatch;
 
-                            // HYBRID CHECK:
-                            // We use 'batchStartSize' to determine WHERE the key lives.
+                            // Hybrid Check
                             if (id < batchStartSize) {
-                                // ID is old -> Check 'keyPages' (Cold RAM)
+                                // Old Key (Cold RAM)
                                 isMatch = checkKeys(id, k1, k2);
                             } else {
-                                // ID is new (from this batch) -> Check 'firstKeys' (Hot Cache)
-                                // pendingKeyIndices maps: (ID - Start) -> Relative Batch Index
+                                // Pending Key (Hot Input Array)
                                 int keyIndex = offset + pendingKeyIndices[id - batchStartSize];
                                 isMatch = (firstKeys[keyIndex] == k1 && secondKeys[keyIndex] == k2);
                             }
 
                             if (isMatch) {
-                                ids[offset + i] = id; // Duplicate found
+                                ids[offset + i] = id; // Duplicate
+                                // Mark slot as -1 so Phase 4 knows to skip writing
+                                batchInsertSlots[i] = -1;
                                 break search_loop;
                             }
                         }
@@ -498,17 +509,24 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                         int insertSlot = slot(group + bit);
                         int id = size;
 
-                        // Register Pending Key: Map (NewID - Start) -> Relative Index (0..127)
-                        // We store 'i' (relative), not 'offset + i' (absolute), to keep the index small.
+                        // 1. Update Hot Metadata (Control) immediately so future items in batch see it
+                        // This stays in L1/L2 cache.
+                        controlData[insertSlot] = control;
+                        if (insertSlot < BYTE_VECTOR_LANES) {
+                            controlData[insertSlot + capacity] = control;
+                        }
+
+                        // 2. Buffer the Cold Data (DEFERRED WRITE)
+                        // We DO NOT write to idPages or keyPages yet.
+                        batchInsertSlots[i] = insertSlot;
+                        batchIdAndHashes[i] = ((long) id << 32) | Integer.toUnsignedLong(hash);
+
+                        // Register pending key for intra-batch collisions
                         pendingKeyIndices[id - batchStartSize] = i;
 
-                        // Write Metadata
-                        long val = ((long) id << 32) | Integer.toUnsignedLong(hash);
-                        insertAtSlot(insertSlot, control, val);
-
                         size++;
-                        ids[offset + i] = id; // New ID
-                        break;
+                        ids[offset + i] = id;
+                        break search_loop;
                     }
 
                     // C. Probe
@@ -516,15 +534,31 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 }
             }
 
-            // --- PHASE 4: WRITE KEYS ---
-            final int newCount = size - batchStartSize;
-            for (int i = 0; i < newCount; i++) {
-                // pIdx is the relative index (0..127) stored in Phase 3
-                int pIdx = pendingKeyIndices[i];
-                int absIndex = offset + pIdx;
+            // --- PHASE 4: BULK WRITE (SEQUENTIAL / BUFFERED) ---
+            // Now we flush the buffered data to Cold RAM.
+            // Doing this in a tight loop allows the CPU to use "Write Combining" buffers effectively.
 
-                // Sequential Write to Cold Storage
-                setKeys(batchStartSize + i, firstKeys[absIndex], secondKeys[absIndex]);
+            // We iterate 0..limit to map 'i' to the buffered data
+            for (int i = 0; i < limit; i++) {
+                final int slot = batchInsertSlots[i];
+
+                // If slot != -1, it was a new insertion
+                if (slot != -1) {
+                    final long idAndHash = batchIdAndHashes[i];
+                    final int id = (int) (idAndHash >>> 32);
+
+                    // 1. Write ID & Hash (Random Access to Paged RAM)
+                    long idOffset = (long) slot * ID_HASH_SIZE;
+                    LONG_HANDLE.set(
+                        idPages[(int) (idOffset >> PAGE_SHIFT)],
+                        (int) (idOffset & PAGE_MASK),
+                        idAndHash
+                    );
+
+                    // 2. Write Keys (Sequential Access to Paged RAM)
+                    int absIndex = offset + i;
+                    setKeys(id, firstKeys[absIndex], secondKeys[absIndex]);
+                }
             }
         }
 
