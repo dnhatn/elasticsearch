@@ -589,7 +589,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final long empty = vec.eq(EMPTY).toLong();
                     if (empty != 0) {
                         int bit = Long.numberOfTrailingZeros(empty);
-                        int finalSlot = (oldSlot + bit) & mask;
+                        int finalSlot = (newSlot + bit) & mask;
                         insertAtSlot(finalSlot, ctrl);
                         final long newOffset = (long) finalSlot << 3;
                         LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
