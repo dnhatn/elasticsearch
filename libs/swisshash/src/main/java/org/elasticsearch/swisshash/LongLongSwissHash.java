@@ -383,7 +383,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        final int CHUNK_LIMIT = 512;
+        final int CHUNK_LIMIT = 128;
         final long[] batchHash64s = new long[CHUNK_LIMIT];
 
         private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
