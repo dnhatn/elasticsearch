@@ -484,7 +484,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                             }
 
                             if (isMatch) {
-                                ids[offset + i] = -1 - id; // Duplicate found
+                                ids[offset + i] = id; // Duplicate found
                                 break search_loop;
                             }
                         }
@@ -508,7 +508,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
                         size++;
                         ids[offset + i] = id; // New ID
-                        break search_loop;
+                        break;
                     }
 
                     // C. Probe
