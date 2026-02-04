@@ -140,23 +140,8 @@ public final class LongLongHash extends AbstractHash implements LongLongHashTabl
     }
 
     @Override
-    public void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
-        for (int i = 0; i < length; i++) {
-            long key1 = firstKeys[i];
-            long key2 = secondKeys[i];
-            if (size >= maxSize) {
-                assert size == maxSize;
-                grow();
-                keys = bigArrays.resize(keys, maxSize * 2);
-            }
-            assert size < maxSize;
-            long id = set(key1, key2, size);
-            if (id < 0) {
-                ids[i] = (int) (-1 - id);
-            } else {
-                ids[i] = (int) id;
-            }
-        }
+    public int[] addBatch(long[] firstKeys, long[] secondKeys,int length) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

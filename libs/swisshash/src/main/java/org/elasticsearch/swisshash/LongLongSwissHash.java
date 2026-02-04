@@ -79,6 +79,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     private SmallCore smallCore;
     private BigCore bigCore;
     private final List<Releasable> toClose = new ArrayList<>();
+    private final BigCore.BatchWork batchWork = new BigCore.BatchWork();
+
 
     LongLongSwissHash(PageCacheRecycler recycler, CircuitBreaker breaker) {
         super(recycler, breaker, INITIAL_CAPACITY, LongSwissHash.SmallCore.FILL_FACTOR);
@@ -145,14 +147,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
     }
 
     @Override
-    public void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
+    public int[] addBatch(long[] firstKeys, long[] secondKeys, int length) {
+        if (batchWork.ids.length < length) {
+            batchWork.ids = new int[length];
+        }
         if (smallCore != null) {
-            for (int i = 0; i < length; i++) {
-                long id = add(firstKeys[i], secondKeys[i]);
-                id = id < 0 ? -1 - id : id;
-                ids[i] = (int) id;
-            }
-            return;
+            smallCore.transitionToBigCore();
         }
         if (size + length >= nextGrowSize) {
             // Juggle constants for the new page size
@@ -168,7 +168,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             mask = capacity - 1;
             bigCore.grow();
         }
-        bigCore.addBatch(firstKeys, secondKeys, ids, length);
+        bigCore.batchAdd(firstKeys, secondKeys, length);
+        return  batchWork.ids;
     }
 
     @Override
@@ -421,145 +422,116 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private static final int BATCH_SIZE = 64;
-        private final int[] batchHashes = new int[BATCH_SIZE];
-        private final int[] pendingKeyIndices = new int[BATCH_SIZE];
-
-        // NEW: Buffers to hold metadata so we don't write to cold RAM in the hot loop
-        private final int[] batchInsertSlots = new int[BATCH_SIZE];
-        private final long[] batchIdAndHashes = new long[BATCH_SIZE];
-
-        void addBatch(long[] firstKeys, long[] secondKeys, int[] ids, int length) {
-            for (int offset = 0; offset < length; offset += BATCH_SIZE) {
-                int limit = Math.min(BATCH_SIZE, length - offset);
-                processChunk(firstKeys, secondKeys, ids, offset, limit);
-            }
+        private static class BatchWork {
+            int[] ids = new int[256];
+            int[] hashes = new int[256];
         }
 
-        /**
-         * The "Phase 5" Loop.
-         * Separates L1 Cache operations (Probing) from Cold RAM operations (Writing).
-         */
-        private void processChunk(long[] firstKeys, long[] secondKeys, int[] ids, int offset, int limit) {
-            final int batchStartSize = size;
-            int accumulator = 0;
+        private int[] batchAdd(long[] key1s, long[] key2s, int length) {
+            // Ensure the global result array can hold all IDs
+            int offset = 0;
+            int keysAddedAtStart = size;
 
-            // --- PHASES 1 & 2: HASH & PREFETCH ---
-            for (int i = 0; i < limit; i++) {
-                final int hash = hash(firstKeys[offset + i], secondKeys[offset + i]);
-                batchHashes[i] = hash;
-                // Prefetch Control Byte (L1 Hint)
-                accumulator ^= controlData[hash & mask];
-            }
-            if (accumulator == -1) {
-                System.err.println("avoid dead code");
-            }
+            // Process in chunks that fit the internal BatchWork buffers
+            final int CHUNK_LIMIT = 256;
 
-            // --- PHASE 3: PROBE & CLAIM (PURE L1 EXECUTION) ---
-            // Goal: Do NOT touch idPages or keyPages here unless absolutely necessary.
-            for (int i = 0; i < limit; i++) {
-                final long k1 = firstKeys[offset + i];
-                final long k2 = secondKeys[offset + i];
-                final int hash = batchHashes[i];
-                final byte control = control(hash);
-                int group = hash & mask;
+            while (offset < length) {
+                final int batchSize = Math.min(length - offset, CHUNK_LIMIT);
+                int nextId = size;
 
-                search_loop:
-                for (;;) {
-                    // Vector Load (Hot L1)
-                    ByteVector vec = ByteVector.fromArray(BS, controlData, group);
-
-                    // A. Match Check
-                    long matches = vec.eq(control).toLong();
-                    while (matches != 0) {
-                        final int bit = Long.numberOfTrailingZeros(matches);
-                        final int checkSlot = slot(group + bit);
-
-                        // COSTLY READ: Only happens on hash collision (rare)
-                        // We must read Cold RAM here to verify the ID.
-                        final long idAndHash = idAndHash(checkSlot);
-
-                        if ((int) idAndHash == hash) {
-                            final int id = (int) (idAndHash >>> 32);
-                            boolean isMatch;
-
-                            // Hybrid Check
-                            if (id < batchStartSize) {
-                                // Old Key (Cold RAM)
-                                isMatch = checkKeys(id, k1, k2);
-                            } else {
-                                // Pending Key (Hot Input Array)
-                                int keyIndex = offset + pendingKeyIndices[id - batchStartSize];
-                                isMatch = (firstKeys[keyIndex] == k1 && secondKeys[keyIndex] == k2);
-                            }
-
-                            if (isMatch) {
-                                ids[offset + i] = id; // Duplicate
-                                // Mark slot as -1 so Phase 4 knows to skip writing
-                                batchInsertSlots[i] = -1;
-                                break search_loop;
-                            }
-                        }
-                        matches &= (matches - 1);
-                    }
-
-                    // B. Empty Check
-                    long empty = vec.eq(EMPTY).toLong();
-                    if (empty != 0) {
-                        int bit = Long.numberOfTrailingZeros(empty);
-                        int insertSlot = slot(group + bit);
-                        int id = size;
-
-                        // 1. Update Hot Metadata (Control) immediately so future items in batch see it
-                        // This stays in L1/L2 cache.
-                        controlData[insertSlot] = control;
-                        if (insertSlot < BYTE_VECTOR_LANES) {
-                            controlData[insertSlot + capacity] = control;
-                        }
-
-                        // 2. Buffer the Cold Data (DEFERRED WRITE)
-                        // We DO NOT write to idPages or keyPages yet.
-                        batchInsertSlots[i] = insertSlot;
-                        batchIdAndHashes[i] = ((long) id << 32) | Integer.toUnsignedLong(hash);
-
-                        // Register pending key for intra-batch collisions
-                        pendingKeyIndices[id - batchStartSize] = i;
-
-                        size++;
-                        ids[offset + i] = id;
-                        break search_loop;
-                    }
-
-                    // C. Probe
-                    group = (group + BYTE_VECTOR_LANES) & mask;
+                // PHASE 1: Hash & Prefetch (Relative Indexing)
+                long dummy = 0;
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    int h64 = hash(key1s[absIdx], key2s[absIdx]);
+                    batchWork.hashes[i] = h64; // Relative 0..255
+                    // SWAR Prefetch: Touch the 8-byte control block
+                    dummy ^= controlData[h64 & mask];
                 }
-            }
+                if (dummy == -1) System.err.print("");
 
-            // --- PHASE 4: BULK WRITE (SEQUENTIAL / BUFFERED) ---
-            // Now we flush the buffered data to Cold RAM.
-            // Doing this in a tight loop allows the CPU to use "Write Combining" buffers effectively.
-
-            // We iterate 0..limit to map 'i' to the buffered data
-            for (int i = 0; i < limit; i++) {
-                final int slot = batchInsertSlots[i];
-
-                // If slot != -1, it was a new insertion
-                if (slot != -1) {
-                    final long idAndHash = batchIdAndHashes[i];
-                    final int id = (int) (idAndHash >>> 32);
-
-                    // 1. Write ID & Hash (Random Access to Paged RAM)
-                    long idOffset = (long) slot * ID_HASH_SIZE;
-                    LONG_HANDLE.set(
-                        idPages[(int) (idOffset >> PAGE_SHIFT)],
-                        (int) (idOffset & PAGE_MASK),
-                        idAndHash
+                // PHASE 2: Reserve Slots
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    int h64 = batchWork.hashes[i];
+                    batchWork.ids[absIdx] = reserve(
+                        key1s[absIdx],
+                        key2s[absIdx],
+                        h64,
+                        control(h64),
+                        keysAddedAtStart
                     );
-
-                    // 2. Write Keys (Sequential Access to Paged RAM)
-                    int absIndex = offset + i;
-                    setKeys(id, firstKeys[absIndex], secondKeys[absIndex]);
                 }
+
+                // PHASE 3: Flush Metadata (ID & Hash)
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    int res = batchWork.ids[absIdx];
+                    if (res < 0) {
+                        final int slot = -1 - res;
+                        int id = nextId++;
+                        batchWork.ids[absIdx] = id; // Convert negative slot to actual ID
+
+                        int hash = batchWork.hashes[i];
+                        final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
+                        final long idOffset = idOffset(slot);
+                        LONG_HANDLE.set(idPages[(int)(idOffset >> PAGE_SHIFT)], (int)(idOffset & PAGE_MASK), idAndHash);
+                    }
+                }
+
+                // PHASE 4: Flush Keys (Sequential Writes)
+                // Crucial: Only flush keys for the current chunk to stay O(N)
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    int id = batchWork.ids[absIdx];
+                    if (id >= keysAddedAtStart) {
+                        setKeys(id, key1s[absIdx], key2s[absIdx]);
+                    }
+                }
+
+                size = nextId; // Commit the new IDs
+                offset += batchSize;
+            }
+            return batchWork.ids;
+        }
+
+        private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
+            int group = hash & mask;
+
+            for (;;) {
+                // Load 16 bytes at once
+                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+
+                // 1. Check for existing matches (SwissHash standard)
+                long matches = vec.eq(control).toLong();
+                while (matches != 0) {
+                    int bit = Long.numberOfTrailingZeros(matches);
+                    int checkSlot = slot(group + bit);
+                    long idAndHash = idAndHash(checkSlot);
+                    if ((int) idAndHash == hash) {
+                        int id = (int)(idAndHash >>> 32);
+                        // We only check against cold pages (ignoring intra-batch)
+                        if (checkKeys(id, key1, key2)) return id;
+                    }
+                    matches &= (matches - 1);
+                }
+
+                // 2. Check for empty slots and CLAIM IMMEDIATELY
+                long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    int bit = Long.numberOfTrailingZeros(empty);
+                    int insertSlot = slot(group + bit);
+
+                    // CRITICAL: Mark as occupied so next item in batch doesn't take it
+                    controlData[insertSlot] = control;
+                    if (insertSlot < BYTE_VECTOR_LANES) {
+                        controlData[insertSlot + capacity] = control;
+                    }
+
+                    return -1 - insertSlot;
+                }
+
+                group = (group + BYTE_VECTOR_LANES) & mask;
             }
         }
 
