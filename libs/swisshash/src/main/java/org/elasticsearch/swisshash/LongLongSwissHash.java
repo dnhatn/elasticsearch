@@ -590,17 +590,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
                     // When the buffer is full, perform a "Sequential Burst" into the new core
                     if (count == REHASH_BUFFER_SIZE) {
-                        flushRehashBuffer(newBigCore, bufferHashes, bufferIds, bufferControls, count);
+                        newBigCore.flushRehashBuffer(bufferHashes, bufferIds, bufferControls, count);
                         count = 0;
                     }
-
                     populated &= (populated - 1);
                 }
             }
 
             // Don't forget the final remainder
             if (count > 0) {
-                flushRehashBuffer(newBigCore, bufferHashes, bufferIds, bufferControls, count);
+                newBigCore.flushRehashBuffer(bufferHashes, bufferIds, bufferControls, count);
             }
         }
 
@@ -608,18 +607,18 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          * Performs a blind insert into the new core.
          * Since we are rehashing, we know there are no duplicates.
          */
-        private void flushRehashBuffer(BigCore newBigCore, int[] hashes, int[] ids, byte[] controls, int count) {
+        private void flushRehashBuffer(int[] hashes, int[] ids, byte[] controls, int count) {
             // Stage 1: Prefetch the new control blocks
             long prefetchAccumulator = 0;
             for (int i = 0; i < count; i++) {
-                prefetchAccumulator ^= bigCore.controlData[hashes[i] & newBigCore.CONTROL_HASH];
+                prefetchAccumulator ^= controlData[hashes[i] & CONTROL_HASH];
             }
             if (prefetchAccumulator == -1) System.err.print("");
 
             // Stage 2: Blind Insert
             // This uses the SWAR 'insert' logic but benefits from the data being hot in L1
             for (int i = 0; i < count; i++) {
-                newBigCore.insert(hashes[i], controls[i], ids[i]);
+                insert(hashes[i], controls[i], ids[i]);
             }
         }
 
