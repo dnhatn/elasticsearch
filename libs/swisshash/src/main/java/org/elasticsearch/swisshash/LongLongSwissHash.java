@@ -387,38 +387,71 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         final int CHUNK_LIMIT = 256;
         final long[] batchHash64s = new long[CHUNK_LIMIT];
-        private static final boolean NEVER_TRUE = System.getProperty("non.existent") != null;
-        private static int PREFETCH_SINK;
-
-        private void consume(int value) {
-            if (NEVER_TRUE) {
-                PREFETCH_SINK += value;
-            }
-        }
 
         private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
-            int currentSize = size;
+            // Ensure the global result array can hold all IDs
+            int offset = 0;
+            int keysAddedAtStart = size;
 
-            for (int i = 0; i < length; i++) {
-                long k1 = key1s[i];
-                long k2 = key2s[i];
-                long h64 = hash64(k1, k2);
+            // Process in chunks that fit the internal BatchWork buffers
 
-                // NO prefetch logic here. We keep the loop body as small as possible.
-                int res = reserve(k1, k2, h64, currentSize);
+            while (offset < length) {
+                final int batchSize = Math.min(length - offset, CHUNK_LIMIT);
+                int nextId = size;
 
-                if (res < 0) {
-                    int slot = -1 - res;
-                    int id = currentSize++;
-                    batchIds[i] = id;
-
-                    writeIdAndHash(slot, id, (int) h64);
-                    setKeys(id, k1, k2);
-                } else {
-                    batchIds[i] = res;
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    long h64 = hash64(key1s[absIdx], key2s[absIdx]);
+                    batchHash64s[i] = h64; // Relative 0..255
                 }
+
+                // PHASE 1: Hash & Prefetch (Relative Indexing)
+                long dummy = 0;
+                for (int i = 0; i < batchSize; i++) {
+                    dummy ^= controlData[(int) (batchHash64s[i] & mask)];
+                }
+                if (dummy == -1) System.err.print("");
+
+                // PHASE 2: Reserve Slots
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    long h64 = batchHash64s[i];
+                    batchIds[absIdx] = reserve(
+                        key1s[absIdx],
+                        key2s[absIdx],
+                        h64,
+                        keysAddedAtStart
+                    );
+                }
+
+                // PHASE 3: Flush Metadata (ID & Hash)
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    int res = batchIds[absIdx];
+                    if (res < 0) {
+                        final int slot = -1 - res;
+                        int id = nextId++;
+                        batchIds[absIdx] = id; // Convert negative slot to actual ID
+                        int hash = (int) batchHash64s[i];
+                        final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
+                        final long idOffset = idOffset(slot);
+                        LONG_HANDLE.set(idPages[(int)(idOffset >> PAGE_SHIFT)], (int)(idOffset & PAGE_MASK), idAndHash);
+                    }
+                }
+
+                // PHASE 4: Flush Keys (Sequential Writes)
+                // Crucial: Only flush keys for the current chunk to stay O(N)
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    int id = batchIds[absIdx];
+                    if (id >= keysAddedAtStart) {
+                        setKeys(id, key1s[absIdx], key2s[absIdx]);
+                    }
+                }
+
+                size = nextId; // Commit the new IDs
+                offset += batchSize;
             }
-            size = currentSize;
         }
 
         private static final long LSB_ONES = 0x0101010101010101L;
