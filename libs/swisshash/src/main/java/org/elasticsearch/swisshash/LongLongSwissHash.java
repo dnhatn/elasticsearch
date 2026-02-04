@@ -573,35 +573,37 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          * Inserts the key into the first empty slot that allows it. Used
          * by {@link #rehash} because we know all keys are unique.
          */
+        /**
+         * Optimized for Rehash: No duplicate checks, no scalar math stalls.
+         */
         private void insert(final int hash, final byte control, final int id) {
             int slot = hash & mask;
 
-            // STAGE 1: Vector Burst (The same, but widened)
-            // Check 16 slots. This handles 90% of cases in < 2ns.
-            ByteVector vec = ByteVector.fromArray(BS, controlData, slot);
-            long empty = vec.eq(EMPTY).toLong();
-            if (empty != 0) {
-                slot = (slot + Long.numberOfTrailingZeros(empty)) & mask;
-                insertAtSlot(slot, control);
-                writeIdAndHash(slot, id, hash);
-                return;
-            }
-
-            // STAGE 2: The "Streaming" Fallback
-            // If the Vector misses, we stop jumping blocks and start "Streaming"
-            // through memory. This is easier on the L1 cache.
-            slot = (slot + BYTE_VECTOR_LANES) & mask;
             for (;;) {
-                // Use a simple byte check here.
-                // Why not SWAR? Because we've already checked 16 slots.
-                // If we are still searching, we are likely in a high-fill area.
-                // A simple linear scan of bytes is often faster for the JIT to unroll.
-                if (controlData[slot] == EMPTY) {
-                    insertAtSlot(slot, control);
-                    writeIdAndHash(slot, id, hash);
+                // Check 16 bytes at once.
+                // The CPU can parallelize multiple Vector Loads.
+                ByteVector vec = ByteVector.fromArray(BS, controlData, slot);
+                long empty = vec.eq(EMPTY).toLong();
+
+                if (empty != 0) {
+                    // Found a hole!
+                    int bit = Long.numberOfTrailingZeros(empty);
+                    int finalSlot = (slot + bit) & mask;
+
+                    // Metadata Write (with Mirroring)
+                    controlData[finalSlot] = control;
+                    if (finalSlot < BYTE_VECTOR_LANES) {
+                        controlData[capacity + finalSlot] = control;
+                    }
+
+                    // Payload Write (Sequential-ish)
+                    writeIdAndHash(finalSlot, id, hash);
                     return;
                 }
-                slot = (slot + 1) & mask;
+
+                // Linear jump by vector width.
+                // Simple addition is much faster for the CPU than bit-shifting.
+                slot = (slot + BYTE_VECTOR_LANES) & mask;
             }
         }
 
