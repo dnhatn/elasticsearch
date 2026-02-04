@@ -357,18 +357,20 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private static final byte EMPTY = (byte) 0x80; // empty slot
 
-        private final byte[] controlData;
+        private final long[] controlData;
 
         private final byte[][] idPages;
 
         private int insertProbes;
+        private final int CONTROL_HASH;
 
         BigCore() {
-            int controlLength = capacity + BYTE_VECTOR_LANES;
+            int controlLength = (capacity >>> 3) + 1;
+            CONTROL_HASH = mask >>> 3;
             breaker.addEstimateBytesAndMaybeBreak(controlLength, "LongLongSwissHash-bigCore");
             toClose.add(() -> breaker.addWithoutBreaking(-controlLength));
-            controlData = new byte[controlLength];
-            Arrays.fill(controlData, EMPTY);
+            controlData = new long[controlLength];
+            Arrays.fill(controlData, 0x8080808080808080L); // fill with EMPTY
 
             boolean success = false;
             try {
@@ -410,7 +412,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     long h64 = hash64(key1s[absIdx], key2s[absIdx]);
                     batchWork.hash64s[i] = h64; // Relative 0..255
                     // SWAR Prefetch: Touch the 8-byte control block
-                    dummy ^= controlData[(int)h64 & mask];
+                    dummy ^= controlData[(int) (h64 & CONTROL_HASH)];
                 }
                 if (dummy == -1) System.err.print("");
 
@@ -459,54 +461,60 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             return batchWork.ids;
         }
 
+        private static final long LSB_ONES = 0x0101010101010101L;
+        private static final long MSB_ONES = 0x8080808080808080L;
+
         private int reserve(final long key1, final long key2, final int hash, final byte control, final int maxId) {
-            int group = hash & mask;
+            int blockIdx = hash & CONTROL_HASH;
+            final long pattern = (control & 0xFFL) * LSB_ONES;
 
             for (;;) {
-                // Load 16 bytes at once
-                ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                final long block = controlData[blockIdx];
 
-                // 1. Check for existing matches (SwissHash standard)
-                long matches = vec.eq(control).toLong();
-                while (matches != 0) {
-                    int bit = Long.numberOfTrailingZeros(matches);
-                    int checkSlot = slot(group + bit);
-                    long idAndHash = idAndHash(checkSlot);
+                long match = block ^ pattern;
+                match = (match - LSB_ONES) & ~match & MSB_ONES;
+                while (match != 0) {
+                    final int bitPos = Long.numberOfTrailingZeros(match);
+                    final int slot = (blockIdx << 3) + (bitPos >>> 3);
+                    final long idAndHash = idAndHash(slot);
                     if ((int) idAndHash == hash) {
-                        int id = (int)(idAndHash >>> 32);
-                        // We only check against cold pages (ignoring intra-batch)
-                        if (checkKeys(id, key1, key2)) return id;
+                        final int id = id(idAndHash);
+                        if (id != 0xFFFF_FFFF && id < maxId) {
+                            final long keyOffset = keyOffset(id);
+                            if (key1(keyOffset) == key1 && key2(keyOffset) == key2) {
+                                return id;
+                            }
+                        }
                     }
-                    matches &= (matches - 1);
+                    match &= (match - 1);
                 }
 
-                // 2. Check for empty slots and CLAIM IMMEDIATELY
-                long empty = vec.eq(EMPTY).toLong();
-                if (empty != 0) {
-                    int bit = Long.numberOfTrailingZeros(empty);
-                    int insertSlot = slot(group + bit);
-
-                    // CRITICAL: Mark as occupied so next item in batch doesn't take it
-                    controlData[insertSlot] = control;
-                    if (insertSlot < BYTE_VECTOR_LANES) {
-                        controlData[insertSlot + capacity] = control;
-                    }
-
-                    return -1 - insertSlot;
+                final long emptyMatches = block & MSB_ONES;
+                if (emptyMatches != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(emptyMatches);
+                    int subSlot = bitPos >>> 3;
+                    insertAtSlot(blockIdx, subSlot, control);
+                    int slot = (blockIdx << 3) + subSlot;
+                    return -1 - slot;
                 }
 
-                group = (group + BYTE_VECTOR_LANES) & mask;
+                insertProbes++;
+                blockIdx = (blockIdx + 1) & CONTROL_HASH;
             }
         }
 
+        private void insertAtSlot(final int slot, final int subSlot, final byte control) {
+            // Read-Modify-Write the specific byte
+            long shift = (long)subSlot << 3;
+            long longMask = 0xFFL << shift;
+            long longVal = (control & 0xFFL) << shift;
 
-        private void insertAtSlot(final int insertSlot, final byte control, final long idAndHash) {
-            final long idOffset = idOffset(insertSlot);
-            LONG_HANDLE.set(idPages[(int) (idOffset >> PAGE_SHIFT)], (int) (idOffset & PAGE_MASK), idAndHash);
-            controlData[insertSlot] = control;
-            // mirror only if slot is within the first group size, to handle wraparound loads
-            if (insertSlot < BYTE_VECTOR_LANES) {
-                controlData[insertSlot + capacity] = control;
+            long block = controlData[slot];
+            block = (block & ~longMask) | longVal;
+            controlData[slot] = block;
+
+            if (slot == 0) {
+                controlData[controlData.length - 1] = block;
             }
         }
 
@@ -561,10 +569,29 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(BigCore newBigCore) {
-            for (int i = 0; i < size; i++) {
-                final long keyOffset = keyOffset(i);
-                final long hash64 = hash64(key1(keyOffset), key2(keyOffset));
-                newBigCore.insert((int)hash64, control(hash64), i);
+            int limit = controlData.length - 1;
+
+            for (int i = 0; i < limit; i++) {
+                long block = controlData[i];
+                if (block == MSB_ONES) continue; // Skip empty blocks
+
+                // Invert so populated slots have 1s
+                long populated = (~block) & MSB_ONES;
+
+                while (populated != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(populated);
+                    int subSlot = bitPos >>> 3;
+                    int oldSlot = (i << 3) + subSlot;
+
+                    long packed = idAndHash(oldSlot);
+                    int hash = (int) packed;
+                    int id = (int) (packed >>> 32);
+                    byte control = (byte) (block >>> bitPos);
+
+                    newBigCore.insert(hash, control, id);
+
+                    populated &= (populated - 1);
+                }
             }
         }
 
@@ -573,19 +600,22 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
          * by {@link #rehash} because we know all keys are unique.
          */
         private void insert(final int hash, final byte control, final int id) {
-            int group = hash & mask;
-            for (;;) {
-                for (int j = 0; j < BYTE_VECTOR_LANES; j++) {
-                    int idx = group + j;
-                    if (controlData[idx] == EMPTY) {
-                        final int insertSlot = slot(group + j);
-                        final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
-                        insertAtSlot(insertSlot, control, idAndHash);
-                        return;
-                    }
+            int blockIdx = hash & CONTROL_HASH;
+            for (; ; ) {
+                long block = controlData[blockIdx];
+                final long emptyMatches = block & MSB_ONES;
+                if (emptyMatches != 0) {
+                    int bitPos = Long.numberOfTrailingZeros(emptyMatches);
+                    int subSlot = bitPos >>> 3;
+                    insertAtSlot(blockIdx, subSlot, control);
+
+                    final long idAndHash = ((long) id << 32) | Integer.toUnsignedLong(hash);
+                    int insertSlot = (blockIdx << 3) + subSlot;
+                    final long offset = idOffset(insertSlot);
+                    LONG_HANDLE.set(idPages[(int)(offset >> PAGE_SHIFT)], (int)(offset & PAGE_MASK), idAndHash);
+                    return;
                 }
-                group = (group + BYTE_VECTOR_LANES) & mask;
-                insertProbes++;
+                blockIdx = (blockIdx + 1) & CONTROL_HASH;
             }
         }
 
