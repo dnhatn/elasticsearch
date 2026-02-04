@@ -588,7 +588,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(BigCore newBigCore) {
-            final int blocks = capacity >>> 3;
+            final int blocks = (controlData.length - BYTE_VECTOR_LANES) >>> 3;
 
             for (int i = 0; i < blocks; i++) {
                 // Load 8 control bytes at once
