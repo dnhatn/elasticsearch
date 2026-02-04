@@ -387,14 +387,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         final int CHUNK_LIMIT = 256;
         final long[] batchHash64s = new long[CHUNK_LIMIT];
-        volatile long times;
+        private static final boolean NEVER_TRUE = System.getProperty("non.existent") != null;
+        private static int PREFETCH_SINK;
 
-        private void blackhole(byte value) {
+        private void consume(int value) {
+            // Zero-overhead on x86 because the branch is perfectly predicted
             if (NEVER_TRUE) {
-                times += value;
+                PREFETCH_SINK += value;
             }
         }
-
         private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
             // Ensure the global result array can hold all IDs
             int offset = 0;
@@ -414,7 +415,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
                 // PHASE 1: Hash & Prefetch (Relative Indexing)
                 for (int i = 0; i < batchSize; i++) {
-                    blackhole( controlData[(int) (batchHash64s[i] & mask)]);
+                    consume( controlData[(int) (batchHash64s[i] & mask)]);
                 }
                 // PHASE 2: Reserve Slots
                 for (int i = 0; i < batchSize; i++) {
