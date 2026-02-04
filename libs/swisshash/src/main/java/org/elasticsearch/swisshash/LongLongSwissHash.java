@@ -585,15 +585,15 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final int h32 = (int) packed;
                 int newSlot = h32 & mask;
                 while (controlData[newSlot] != EMPTY) {
-                    int finalSlot = newSlot & mask;
-                    // mirror once at the end
-                    controlData[finalSlot] = ctrl;
-                    final long newOffset = (long) finalSlot << 3;
-                    LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
                     newSlot = (newSlot + 1) & mask;
                 }
+                int finalSlot = newSlot & mask;
+                // mirror once at the end
+                controlData[finalSlot] = ctrl;
+                final long newOffset = (long) finalSlot << 3;
+                LONG_HANDLE.set(idPages[(int) (newOffset >>> PAGE_SHIFT)], (int) (newOffset & PAGE_MASK), packed);
             }
-            System.arraycopy(controlData, 0, controlData, controlData.length - BYTE_VECTOR_LANES, BYTE_VECTOR_LANES);
+            System.arraycopy(controlData, 0, controlData, capacity, BYTE_VECTOR_LANES);
             long endTime = System.nanoTime();
             System.err.println("--> rehashing " + length + " took " + (endTime - startTime) + " ns");
         }
