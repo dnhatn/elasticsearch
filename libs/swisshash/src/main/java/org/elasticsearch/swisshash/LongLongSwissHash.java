@@ -564,7 +564,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             bigCore = null;
             try {
                 var newBigCore = new BigCore();
-                rehash(controlData, idPages);
+                newBigCore.rehash(controlData, idPages);
                 bigCore = newBigCore;
             } finally {
                 close();
