@@ -513,6 +513,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     if (insertSlot < BYTE_VECTOR_LANES) {
                         controlData[mask + 1 + insertSlot] = ctrl;
                     }
+                    return -1 - insertSlot;
                 }
                 blockIdx = (blockIdx + 1) & CONTROL_LONG_BLOCK_MASK;
             }
