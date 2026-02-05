@@ -413,7 +413,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
                     long h64 = batchHash64s[i];
-                    batchIds[absIdx] = reserveVector(
+                    batchIds[absIdx] = reserve(
                         key1s[absIdx],
                         key2s[absIdx],
                         h64,
@@ -481,7 +481,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             final long pattern = (ctrl & 0xFFL) * 0x0101010101010101L;
 
             // Start with a single 8-byte SWAR block
-            // blockIdx = startSlot >>> 3
             int blockIdx = startSlot >>> 3;
 
             for (;;) {
@@ -489,28 +488,32 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
 
                 // Match bits
-                long m = (block ^ pattern);
-                m = (m - 0x0101010101010101L) & ~m & 0x8080808080808080L;
+                long matches = (block ^ pattern);
+                matches = (matches - 0x0101010101010101L) & ~matches & 0x8080808080808080L;
 
-                while (m != 0) {
-                    int slot = (blockIdx << 3) + (Long.numberOfTrailingZeros(m) >>> 3);
-                    long packed = idAndHash(slot & mask);
-                    if ((int) packed == (int)h64) {
+                final long emptyBlock = block & 0x8080808080808080L;
+                final int emptyPos = (emptyBlock == 0) ? 64 : Long.numberOfTrailingZeros(emptyBlock);
+
+                while (matches != 0) {
+                    int matchPos = Long.numberOfTrailingZeros(matches);
+                    if (matchPos > emptyPos) {
+                        break;
+                    }
+                    final int slot = (blockIdx << 3) + (matchPos >>> 3);
+                    final long packed = idAndHash(slot & mask);
+                    if ((int) packed == (int) h64) {
                         int id = (int) (packed >>> 32);
                         if (id < maxId && checkKeys(id, k1, k2)) return id;
                     }
-                    m &= (m - 1);
+                    matches &= (matches - 1);
                 }
-
-                // Empty check
-                long e = block & 0x8080808080808080L;
-                if (e != 0) {
-                    int insertSlot = (blockIdx << 3) + (Long.numberOfTrailingZeros(e) >>> 3);
-                    insertSlot &= mask;
-                    insertAtSlot(insertSlot, ctrl);
-                    return -1 - insertSlot;
+                if (emptyPos != 64) {
+                    int insertSlot = ((blockIdx << 3) + (emptyPos >>> 3)) & mask;
+                    controlData[insertSlot] = ctrl;
+                    if (insertSlot < BYTE_VECTOR_LANES) {
+                        controlData[mask + 1 + insertSlot] = ctrl;
+                    }
                 }
-
                 blockIdx = (blockIdx + 1) & CONTROL_LONG_BLOCK_MASK;
             }
         }
