@@ -499,7 +499,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private int reserve(final long k1, final long k2, final long h64, int maxIdToCheck) {
+        private int reserve(final long k1, final long k2, final long h64, final int maxId) {
             int startSlot = (int) (h64 & mask);
             final byte control = control(h64);
 
@@ -507,26 +507,29 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
             for (; ; ) {
                 final long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
-                // Match bits
-                long matches = Swar.matchClean(block, control);
-                // final int emptyPos = (empties == 0) ? 64 : Long.numberOfTrailingZeros(empties);
-                while (matches != 0) {
-                    int matchPos = Long.numberOfTrailingZeros(matches);
-//                    if (matchPos > emptyPos) {
-//                        break;
-//                    }
-                    final int slot = (blockIdx << 3) + (matchPos >>> 3);
-                    final long packed = idAndHash(slot & mask);
-                    if ((int) packed == (int) h64) {
-                        int id = (int) (packed >>> 32);
-                        //  final int maxId
-                        if (id < maxIdToCheck && checkKeys(id, k1, k2)) return id;
-                    }
-                    matches &= (matches - 1);
+                final long empties = Swar.findEmpty(block);
+                long matches = Swar.findMatches(block, control);
+                if (matches != 0) {
+                    final int firstEmptyBit = (empties == 0) ? 64 : Long.numberOfTrailingZeros(empties);
+                    do {
+                        final int matchBit = Long.numberOfTrailingZeros(matches);
+                        if (empties != 0 && matchBit > firstEmptyBit) {
+                            break;
+                        }
+                        final int slot = (blockIdx << 3) + (matchBit >>> 3);
+                        final long packed = idAndHash(slot & mask);
+                        if ((int) packed == (int) h64) {
+                            int id = (int) (packed >>> 32);
+                            if (id < maxId && checkKeys(id, k1, k2)) {
+                                return id;
+                            }
+                        }
+                        matches &= (matches - 1);
+                    } while (matches != 0);
                 }
-                final long empties = Swar.empty(block);
-                if (empties != 64) {
-                    int insertSlot = ((blockIdx << 3) + (Long.numberOfTrailingZeros(empties) >>> 3)) & mask;
+                if (empties != 0) {
+                    int emptyBit = Long.numberOfTrailingZeros(empties);
+                    int insertSlot = ((blockIdx << 3) + (emptyBit >>> 3)) & mask;
                     controlData[insertSlot] = control;
                     if (insertSlot < BYTE_VECTOR_LANES) {
                         controlData[mask + 1 + insertSlot] = control;

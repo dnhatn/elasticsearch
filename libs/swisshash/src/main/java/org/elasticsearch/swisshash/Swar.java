@@ -14,11 +14,11 @@ final class Swar {
     /**
      * Finds the first empty byte (0x80) in the block
      */
-    static long empty(final long block) {
+    static long findEmpty(final long block) {
         return block & 0x8080808080808080L;
     }
 
-    public static long matchClean(final long block, final byte control) {
+    public static long findMatches(final long block, final byte control) {
         final long pattern = (control & 0xFFL) * 0x0101010101010101L;
         final long xor = block ^ pattern;
 

@@ -56,7 +56,7 @@ public class SwarTests extends ESTestCase {
 
     private void assertSwarMatchesVector(long block, byte control) {
         // SWAR Result
-        long cleanSar = Swar.matchClean(block, control);
+        long cleanSar = Swar.findMatches(block, control);
         // Vector Result (The Gold Standard)
         // Assuming BS is your ByteVector species
         LONG_HANDLE.set(buffer, 0, block);
