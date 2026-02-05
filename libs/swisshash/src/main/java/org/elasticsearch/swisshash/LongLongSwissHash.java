@@ -420,8 +420,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     batchIds[absIdx] = reserve(
                         key1s[absIdx],
                         key2s[absIdx],
-                        h64
-                        // , keysAddedAtStart
+                        h64,
+                        keysAddedAtStart
                     );
                 }
 
@@ -480,7 +480,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final long k1 = key1s[absIdx];
                     final long k2 = key2s[absIdx];
                     final long h64 = batchHash64s[i];
-                    final int res = reserve(k1, k2, h64);
+                    final int res = reserve(k1, k2, h64, Integer.MAX_VALUE);
                     if (res < 0) {
                         final int slot = -1 - res;
                         final int id = size++;
@@ -499,7 +499,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        private int reserve(final long k1, final long k2, final long h64) {
+        private int reserve(final long k1, final long k2, final long h64, int maxIdToCheck) {
             int startSlot = (int) (h64 & mask);
             final byte control = control(h64);
 
@@ -509,25 +509,24 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
                 // Match bits
                 long matches = Swar.matchClean(block, control);
-                final long empties = Swar.empty(block);
-                final int emptyPos = (empties == 0) ? 64 : Long.numberOfTrailingZeros(empties);
-
+                // final int emptyPos = (empties == 0) ? 64 : Long.numberOfTrailingZeros(empties);
                 while (matches != 0) {
                     int matchPos = Long.numberOfTrailingZeros(matches);
-                    if (matchPos > emptyPos) {
-                        break;
-                    }
+//                    if (matchPos > emptyPos) {
+//                        break;
+//                    }
                     final int slot = (blockIdx << 3) + (matchPos >>> 3);
                     final long packed = idAndHash(slot & mask);
                     if ((int) packed == (int) h64) {
                         int id = (int) (packed >>> 32);
                         //  final int maxId
-                        if (checkKeys(id, k1, k2)) return id;
+                        if (id < maxIdToCheck && checkKeys(id, k1, k2)) return id;
                     }
                     matches &= (matches - 1);
                 }
-                if (emptyPos != 64) {
-                    int insertSlot = ((blockIdx << 3) + (emptyPos >>> 3)) & mask;
+                final long empties = Swar.empty(block);
+                if (empties != 64) {
+                    int insertSlot = ((blockIdx << 3) + (Long.numberOfTrailingZeros(empties) >>> 3)) & mask;
                     controlData[insertSlot] = control;
                     if (insertSlot < BYTE_VECTOR_LANES) {
                         controlData[mask + 1 + insertSlot] = control;
