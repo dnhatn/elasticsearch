@@ -153,7 +153,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             mask = capacity - 1;
             bigCore.grow();
         }
-        bigCore.batchAddUniques(firstKeys, secondKeys, ids, length);
+        bigCore.batchAdd(firstKeys, secondKeys, ids, length);
+        // bigCore.batchAddUniques(firstKeys, secondKeys, ids, length);
     }
 
     @Override
@@ -388,7 +389,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public void close() {
             super.close();
-            System.err.println("--> size= " + size + " skip with empties " + skipWithEmpties);
+            System.err.println("--> added= " + added + " skip with empties " + skipWithEmpties);
         }
 
         final int CHUNK_LIMIT = 256;
@@ -461,31 +462,56 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
-            for (int i = 0; i < length; i++) {
-                final long k1 = key1s[i];
-                final long k2 = key2s[i];
-                final long h64 = hash64(k1, k2);
-                final int res = reserve(k1, k2, h64, size);
-                if (res < 0) {
-                    final int slot = -1 - res;
-                    final int id = size++;
-                    batchIds[i] = id;
-                    writeIdAndHash(slot, id, (int) h64);
-                    setKeys(id, k1, k2);
-                } else {
-                    batchIds[i] = res;
+            // Process in chunks that fit the internal BatchWork buffers
+            int offset = 0;
+            long sink = 0;
+            while (offset < length) {
+                final int batchSize = Math.min(length - offset, 128);
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    long h64 = hash64(key1s[absIdx], key2s[absIdx]);
+                    batchHash64s[i] = h64; // Relative 0..255
                 }
+
+                // PHASE 1: Hash & Prefetch (Relative Indexing)
+                for (int i = 0; i < batchSize; i++) {
+                    sink ^= controlData[(int) (batchHash64s[i] & mask)];
+                }
+
+                for (int i = 0; i < batchSize; i++) {
+                    int absIdx = offset + i;
+                    final long k1 = key1s[absIdx];
+                    final long k2 = key2s[absIdx];
+                    final long h64 = batchHash64s[i];
+                    final int res = reserve(k1, k2, h64, size);
+                    if (res < 0) {
+                        final int slot = -1 - res;
+                        final int id = size++;
+                        batchIds[absIdx] = id;
+                        writeIdAndHash(slot, id, (int) h64);
+                        setKeys(id, k1, k2);
+                    } else {
+                        batchIds[absIdx] = res;
+                    }
+                }
+                offset += batchSize;
+            }
+            // we need this to make sure sink is used and not optimized away
+            if (sink == 0xEFEF_EFEF_EFEF_EFEFL) {
+                throw new IllegalStateException("should neve happen");
             }
         }
 
         private static final long LSB_ONES = 0x0101010101010101L;
         private static final long MSB_ONES = 0x8080808080808080L;
         private long skipWithEmpties = 0;
+        private long added = 0;
 
         private int reserve(final long k1, final long k2, final long h64, final int maxId) {
             int startSlot = (int)(h64 & mask);
             final byte ctrl = control(h64);
             final long pattern = (ctrl & 0xFFL) * 0x0101010101010101L;
+            ++added;
 
             // Start with a single 8-byte SWAR block
             int blockIdx = startSlot >>> 3;
