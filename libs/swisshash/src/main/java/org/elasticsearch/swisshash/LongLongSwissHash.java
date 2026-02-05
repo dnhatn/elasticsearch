@@ -385,6 +385,12 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
+        @Override
+        public void close() {
+            super.close();
+            System.err.println("--> size= " + size + " skip with empties " + skipWithEmpties);
+        }
+
         final int CHUNK_LIMIT = 256;
         final long[] batchHash64s = new long[CHUNK_LIMIT];
 
@@ -474,6 +480,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
 
         private static final long LSB_ONES = 0x0101010101010101L;
         private static final long MSB_ONES = 0x8080808080808080L;
+        private long skipWithEmpties = 0;
 
         private int reserve(final long k1, final long k2, final long h64, final int maxId) {
             int startSlot = (int)(h64 & mask);
@@ -497,7 +504,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 while (matches != 0) {
                     int matchPos = Long.numberOfTrailingZeros(matches);
                     if (matchPos > emptyPos) {
-                        break;
+                        skipWithEmpties++;
                     }
                     final int slot = (blockIdx << 3) + (matchPos >>> 3);
                     final long packed = idAndHash(slot & mask);
