@@ -751,10 +751,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private long idAndHash(final int slot) {
-            final long idOffset = idOffset(slot);
-            final int pageIndex = (int) (idOffset >> PAGE_SHIFT);
-            final int indexInPage = (int) (idOffset & PAGE_MASK);
-            return (long) LONG_HANDLE.get(idPages[pageIndex], indexInPage);
+            return idPages[slot >>> 11][slot & 2047];
         }
 
         private static int id(long idAndHash) {
