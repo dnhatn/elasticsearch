@@ -483,7 +483,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final long k1 = key1s[absIdx];
                     final long k2 = key2s[absIdx];
                     final long h64 = batchHash64s[i];
-                    final int res = reserve(k1, k2, h64, size);
+                    final int res = reserve(k1, k2, h64, Integer.MAX_VALUE);
                     if (res < 0) {
                         final int slot = -1 - res;
                         final int id = size++;
