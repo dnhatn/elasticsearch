@@ -29,6 +29,13 @@ tasks.named('compileJava').configure {
   options.compilerArgs -= '-Werror'
 }
 
+
+tasks.named('compileTestJava').configure {
+  options.compilerArgs << '--add-modules=jdk.incubator.vector'
+  options.compilerArgs << '--add-reads=org.elasticsearch.swisshash=jdk.incubator.vector'
+  options.compilerArgs -= '-Werror'
+}
+
 tasks.named('javadoc').configure {
   options.addStringOption("-add-modules", "jdk.incubator.vector")
   options.addStringOption("-add-reads", "org.elasticsearch.swisshash=jdk.incubator.vector")

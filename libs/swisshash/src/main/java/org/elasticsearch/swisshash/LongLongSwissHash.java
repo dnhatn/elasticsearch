@@ -10,8 +10,6 @@
 package org.elasticsearch.swisshash;
 
 import jdk.incubator.vector.ByteVector;
-import jdk.incubator.vector.VectorMask;
-import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
 import org.apache.lucene.util.Accountable;
@@ -389,7 +387,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         @Override
         public void close() {
             super.close();
-            System.err.println("--> added= " + added + " skip with empties " + skipWithEmpties);
         }
 
         final int CHUNK_LIMIT = 256;
@@ -497,40 +494,28 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 offset += batchSize;
                 // we need this to make sure sink is used and not optimized away
                 if (sink == 0xEFEF_EFEF_EFEF_EFEFL) {
-                    throw new IllegalStateException("should neve happen");
+                    throw new IllegalStateException("should never happen");
                 }
             }
         }
 
-        private static final long LSB_ONES = 0x0101010101010101L;
-        private static final long MSB_ONES = 0x8080808080808080L;
-        private long skipWithEmpties = 0;
-        private long added = 0;
-
         private int reserve(final long k1, final long k2, final long h64) {
-            int startSlot = (int)(h64 & mask);
-            final byte ctrl = control(h64);
-            final long pattern = (ctrl & 0xFFL) * 0x0101010101010101L;
-            ++added;
+            int startSlot = (int) (h64 & mask);
+            final byte control = control(h64);
 
-            // Start with a single 8-byte SWAR block
             int blockIdx = startSlot >>> 3;
 
-            for (;;) {
-                // Use a PLAIN get to avoid memory barriers
-                long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
-
+            for (; ; ) {
+                final long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
                 // Match bits
-                long matches = (block ^ pattern);
-                matches = (matches - 0x0101010101010101L) & ~matches & 0x8080808080808080L;
-
-                final long emptyBlock = block & 0x8080808080808080L;
-                final int emptyPos = (emptyBlock == 0) ? 64 : Long.numberOfTrailingZeros(emptyBlock);
+                long matches = Swar.matchClean(block, control);
+                final long empties = Swar.empty(block);
+                final int emptyPos = (empties == 0) ? 64 : Long.numberOfTrailingZeros(empties);
 
                 while (matches != 0) {
                     int matchPos = Long.numberOfTrailingZeros(matches);
                     if (matchPos > emptyPos) {
-                        skipWithEmpties++;
+                        break;
                     }
                     final int slot = (blockIdx << 3) + (matchPos >>> 3);
                     final long packed = idAndHash(slot & mask);
@@ -543,9 +528,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 }
                 if (emptyPos != 64) {
                     int insertSlot = ((blockIdx << 3) + (emptyPos >>> 3)) & mask;
-                    controlData[insertSlot] = ctrl;
+                    controlData[insertSlot] = control;
                     if (insertSlot < BYTE_VECTOR_LANES) {
-                        controlData[mask + 1 + insertSlot] = ctrl;
+                        controlData[mask + 1 + insertSlot] = control;
                     }
                     return -1 - insertSlot;
                 }
