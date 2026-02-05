@@ -509,23 +509,20 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 final long block = (long) LONG_HANDLE.get(controlData, blockIdx << 3);
                 final long empties = Swar.findEmpty(block);
                 long matches = Swar.findMatches(block, control);
-                if (matches != 0) {
-                    final int firstEmptyBit = (empties == 0) ? 64 : Long.numberOfTrailingZeros(empties);
-                    do {
-                        final int matchBit = Long.numberOfTrailingZeros(matches);
-                        if (empties != 0 && matchBit > firstEmptyBit) {
-                            break;
+                while (matches != 0) {
+                    final int matchBit = Long.numberOfTrailingZeros(matches);
+                    if (empties != 0 && matchBit > Long.numberOfTrailingZeros(empties)) {
+                        break;
+                    }
+                    final int slot = (blockIdx << 3) + (matchBit >>> 3);
+                    final long packed = idAndHash(slot & mask);
+                    if ((int) packed == (int) h64) {
+                        int id = (int) (packed >>> 32);
+                        if (id < maxId && checkKeys(id, k1, k2)) {
+                            return id;
                         }
-                        final int slot = (blockIdx << 3) + (matchBit >>> 3);
-                        final long packed = idAndHash(slot & mask);
-                        if ((int) packed == (int) h64) {
-                            int id = (int) (packed >>> 32);
-                            if (id < maxId && checkKeys(id, k1, k2)) {
-                                return id;
-                            }
-                        }
-                        matches &= (matches - 1);
-                    } while (matches != 0);
+                    }
+                    matches &= (matches - 1);
                 }
                 if (empties != 0) {
                     int emptyBit = Long.numberOfTrailingZeros(empties);
