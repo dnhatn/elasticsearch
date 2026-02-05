@@ -423,8 +423,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     batchIds[absIdx] = reserve(
                         key1s[absIdx],
                         key2s[absIdx],
-                        h64,
-                        keysAddedAtStart
+                        h64
+                        // , keysAddedAtStart
                     );
                 }
 
@@ -464,9 +464,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private void batchAdd(long[] key1s, long[] key2s, int[] batchIds, int length) {
             // Process in chunks that fit the internal BatchWork buffers
             int offset = 0;
-            long sink = 0;
             while (offset < length) {
-                final int batchSize = Math.min(length - offset, 128);
+                final int batchSize = Math.min(length - offset, CHUNK_LIMIT);
                 for (int i = 0; i < batchSize; i++) {
                     int absIdx = offset + i;
                     long h64 = hash64(key1s[absIdx], key2s[absIdx]);
@@ -474,6 +473,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                 }
 
                 // PHASE 1: Hash & Prefetch (Relative Indexing)
+                long sink = 0;
                 for (int i = 0; i < batchSize; i++) {
                     sink ^= controlData[(int) (batchHash64s[i] & mask)];
                 }
@@ -483,7 +483,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final long k1 = key1s[absIdx];
                     final long k2 = key2s[absIdx];
                     final long h64 = batchHash64s[i];
-                    final int res = reserve(k1, k2, h64, Integer.MAX_VALUE);
+                    final int res = reserve(k1, k2, h64);
                     if (res < 0) {
                         final int slot = -1 - res;
                         final int id = size++;
@@ -495,10 +495,10 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     }
                 }
                 offset += batchSize;
-            }
-            // we need this to make sure sink is used and not optimized away
-            if (sink == 0xEFEF_EFEF_EFEF_EFEFL) {
-                throw new IllegalStateException("should neve happen");
+                // we need this to make sure sink is used and not optimized away
+                if (sink == 0xEFEF_EFEF_EFEF_EFEFL) {
+                    throw new IllegalStateException("should neve happen");
+                }
             }
         }
 
@@ -507,7 +507,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         private long skipWithEmpties = 0;
         private long added = 0;
 
-        private int reserve(final long k1, final long k2, final long h64, final int maxId) {
+        private int reserve(final long k1, final long k2, final long h64) {
             int startSlot = (int)(h64 & mask);
             final byte ctrl = control(h64);
             final long pattern = (ctrl & 0xFFL) * 0x0101010101010101L;
@@ -536,7 +536,8 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
                     final long packed = idAndHash(slot & mask);
                     if ((int) packed == (int) h64) {
                         int id = (int) (packed >>> 32);
-                        if (id < maxId && checkKeys(id, k1, k2)) return id;
+                        //  final int maxId
+                        if (checkKeys(id, k1, k2)) return id;
                     }
                     matches &= (matches - 1);
                 }
