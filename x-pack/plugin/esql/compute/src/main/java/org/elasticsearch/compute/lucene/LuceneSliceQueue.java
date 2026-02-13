@@ -9,9 +9,13 @@ package org.elasticsearch.compute.lucene;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.ConstantScoreQuery;
+import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.QueryCache;
+import org.apache.lucene.search.QueryCachingPolicy;
 import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.Weight;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -29,6 +33,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Function;
 import java.util.function.IntFunction;
@@ -222,7 +227,7 @@ public final class LuceneSliceQueue {
                     PartitioningStrategy partitioning = PartitioningStrategy.pick(dataPartitioning, autoStrategy, ctx, query);
                     partitioningStrategies.put(ctx.shardIdentifier(), partitioning);
                     List<List<PartialLeafReaderContext>> groups = partitioning.groups(ctx.searcher(), taskConcurrency);
-                    Weight weight = weight(ctx, query, scoreMode);
+                    Weight weight = weight(ctx, query, scoreMode, partitioning);
                     boolean queryHead = true;
                     for (List<PartialLeafReaderContext> group : groups) {
                         if (group.isEmpty() == false) {
@@ -339,13 +344,70 @@ public final class LuceneSliceQueue {
         }
     }
 
-    static Weight weight(ShardContext ctx, Query query, ScoreMode scoreMode) {
-        var searcher = ctx.searcher();
+    static final class CacheOneWeight extends Weight {
+        private final QueryCache queryCache;
+        private final QueryCachingPolicy policy;
+        private final Weight weight;
+        private final Map<Object, Weight> cachedWeights = ConcurrentCollections.newConcurrentMap();
+
+        CacheOneWeight(Weight weight, QueryCache cache, QueryCachingPolicy policy) {
+            super(weight.getQuery());
+            this.weight = weight;
+            this.queryCache = cache;
+            this.policy = policy;
+        }
+
+        Weight getCachedWeight(LeafReaderContext context) {
+            return cachedWeights.computeIfAbsent(context.id(), unused -> {
+                final AtomicBoolean alreadyCached = new AtomicBoolean();
+                return queryCache.doCache(weight, new QueryCachingPolicy() {
+                    @Override
+                    public void onUse(Query query) {
+                        policy.onUse(query);
+                    }
+
+                    @Override
+                    public boolean shouldCache(Query query) throws IOException {
+                        return policy.shouldCache(query) && alreadyCached.compareAndSet(false, true);
+                    }
+                });
+            });
+        }
+
+        @Override
+        public Explanation explain(LeafReaderContext context, int doc) throws IOException {
+            return weight.explain(context, doc);
+        }
+
+        @Override
+        public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
+            return getCachedWeight(context).scorerSupplier(context);
+        }
+
+        @Override
+        public int count(LeafReaderContext context) throws IOException {
+            return getCachedWeight(context).count(context);
+        }
+
+        @Override
+        public boolean isCacheable(LeafReaderContext ctx) {
+            return weight.isCacheable(ctx);
+        }
+    }
+
+    static Weight weight(ShardContext ctx, Query query, ScoreMode scoreMode, PartitioningStrategy partitioning) {
+        final var searcher = ctx.searcher();
+        QueryCache cache = searcher.getQueryCache();
         try {
             Query actualQuery = scoreMode.needsScores() ? query : new ConstantScoreQuery(query);
+            if (partitioning == PartitioningStrategy.DOC) {
+                searcher.setQueryCache((weight, policy) -> new CacheOneWeight(weight, cache, policy));
+            }
             return searcher.createWeight(actualQuery, scoreMode, 1);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        } finally {
+            searcher.setQueryCache(cache);
         }
     }
 
