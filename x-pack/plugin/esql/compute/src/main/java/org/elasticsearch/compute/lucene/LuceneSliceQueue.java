@@ -347,12 +347,12 @@ public final class LuceneSliceQueue {
     static final class CacheOneWeight extends Weight {
         private final QueryCache queryCache;
         private final QueryCachingPolicy policy;
-        private final Weight weight;
+        private final Weight in;
         private final Map<Object, Weight> cachedWeights = ConcurrentCollections.newConcurrentMap();
 
-        CacheOneWeight(Weight weight, QueryCache cache, QueryCachingPolicy policy) {
-            super(weight.getQuery());
-            this.weight = weight;
+        CacheOneWeight(Weight in, QueryCache cache, QueryCachingPolicy policy) {
+            super(in.getQuery());
+            this.in = in;
             this.queryCache = cache;
             this.policy = policy;
         }
@@ -360,7 +360,7 @@ public final class LuceneSliceQueue {
         Weight getCachedWeight(LeafReaderContext context) {
             return cachedWeights.computeIfAbsent(context.id(), unused -> {
                 final AtomicBoolean alreadyCached = new AtomicBoolean();
-                return queryCache.doCache(weight, new QueryCachingPolicy() {
+                return queryCache.doCache(in, new QueryCachingPolicy() {
                     @Override
                     public void onUse(Query query) {
                         policy.onUse(query);
@@ -368,7 +368,7 @@ public final class LuceneSliceQueue {
 
                     @Override
                     public boolean shouldCache(Query query) throws IOException {
-                        return policy.shouldCache(query) && alreadyCached.compareAndSet(false, true);
+                        return policy.shouldCache(query);
                     }
                 });
             });
@@ -376,7 +376,7 @@ public final class LuceneSliceQueue {
 
         @Override
         public Explanation explain(LeafReaderContext context, int doc) throws IOException {
-            return weight.explain(context, doc);
+            return in.explain(context, doc);
         }
 
         @Override
@@ -391,7 +391,7 @@ public final class LuceneSliceQueue {
 
         @Override
         public boolean isCacheable(LeafReaderContext ctx) {
-            return weight.isCacheable(ctx);
+            return in.isCacheable(ctx);
         }
     }
 
