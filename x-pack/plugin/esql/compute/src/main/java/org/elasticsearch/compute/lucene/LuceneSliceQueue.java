@@ -350,7 +350,17 @@ public final class LuceneSliceQueue {
 
         CacheOnceWeight(Weight in, QueryCache cache, QueryCachingPolicy policy) {
             super(in.getQuery());
-            this.in = cache.doCache(in, policy);
+            this.in = cache.doCache(in, new QueryCachingPolicy() {
+                @Override
+                public void onUse(Query query) {
+                    policy.onUse(query);
+                }
+
+                @Override
+                public boolean shouldCache(Query query) throws IOException {
+                    return policy.shouldCache(query);
+                }
+            });
             this.queryCache = cache;
             this.policy = policy;
         }
