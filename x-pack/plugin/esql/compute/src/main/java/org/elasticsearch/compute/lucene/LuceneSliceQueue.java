@@ -33,7 +33,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Function;
 import java.util.function.IntFunction;
@@ -344,34 +343,20 @@ public final class LuceneSliceQueue {
         }
     }
 
-    static final class CacheOneWeight extends Weight {
+    static final class CacheOnceWeight extends Weight {
         private final QueryCache queryCache;
         private final QueryCachingPolicy policy;
         private final Weight in;
-        private final Map<Object, Weight> cachedWeights = ConcurrentCollections.newConcurrentMap();
-        final Object key = new Object();
-        CacheOneWeight(Weight in, QueryCache cache, QueryCachingPolicy policy) {
+
+        CacheOnceWeight(Weight in, QueryCache cache, QueryCachingPolicy policy) {
             super(in.getQuery());
-            this.in = in;
+            this.in = cache.doCache(in, policy);
             this.queryCache = cache;
             this.policy = policy;
         }
 
         Weight getCachedWeight(LeafReaderContext context) {
-            return cachedWeights.computeIfAbsent(key, unused -> {
-                final AtomicBoolean alreadyCached = new AtomicBoolean();
-                return queryCache.doCache(in, new QueryCachingPolicy() {
-                    @Override
-                    public void onUse(Query query) {
-                        policy.onUse(query);
-                    }
-
-                    @Override
-                    public boolean shouldCache(Query query) throws IOException {
-                        return policy.shouldCache(query);
-                    }
-                });
-            });
+            return in;
         }
 
         @Override
@@ -401,7 +386,12 @@ public final class LuceneSliceQueue {
         try {
             Query actualQuery = scoreMode.needsScores() ? query : new ConstantScoreQuery(query);
             if (partitioning == PartitioningStrategy.DOC) {
-                searcher.setQueryCache(cache::doCache);
+                searcher.setQueryCache(new QueryCache() {
+                    @Override
+                    public Weight doCache(Weight weight, QueryCachingPolicy policy) {
+                        return new CacheOnceWeight(weight, cache, searcher.getQueryCachingPolicy());
+                    }
+                });
             }
             return searcher.createWeight(actualQuery, scoreMode, 1);
         } catch (IOException e) {
