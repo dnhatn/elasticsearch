@@ -22,6 +22,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.lucene.search.ESQueryCachingPolicy;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -33,6 +34,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Function;
 import java.util.function.IntFunction;
@@ -343,63 +345,28 @@ public final class LuceneSliceQueue {
         }
     }
 
-    static final class CacheOnceWeight extends Weight {
-        private final QueryCache queryCache;
-        private final QueryCachingPolicy policy;
-        private final Weight in;
-
-        CacheOnceWeight(Weight in, QueryCache cache, QueryCachingPolicy policy) {
-            super(in.getQuery());
-            this.in = cache.doCache(in, new QueryCachingPolicy() {
-                @Override
-                public void onUse(Query query) {
-                    policy.onUse(query);
-                }
-
-                @Override
-                public boolean shouldCache(Query query) throws IOException {
-                    return policy.shouldCache(query);
-                }
-            });
-            this.queryCache = cache;
-            this.policy = policy;
-        }
-
-        Weight getCachedWeight(LeafReaderContext context) {
-            return in;
-        }
-
-        @Override
-        public Explanation explain(LeafReaderContext context, int doc) throws IOException {
-            return getCachedWeight(context).explain(context, doc);
-        }
-
-        @Override
-        public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
-            return getCachedWeight(context).scorerSupplier(context);
-        }
-
-        @Override
-        public int count(LeafReaderContext context) throws IOException {
-            return getCachedWeight(context).count(context);
-        }
-
-        @Override
-        public boolean isCacheable(LeafReaderContext ctx) {
-            return getCachedWeight(ctx).isCacheable(ctx);
-        }
-    }
-
     static Weight weight(ShardContext ctx, Query query, ScoreMode scoreMode, PartitioningStrategy partitioning) {
         final var searcher = ctx.searcher();
-        QueryCache cache = searcher.getQueryCache();
+        QueryCachingPolicy policy = searcher.getQueryCachingPolicy();
         try {
             Query actualQuery = scoreMode.needsScores() ? query : new ConstantScoreQuery(query);
             if (partitioning == PartitioningStrategy.DOC) {
-                searcher.setQueryCache(new QueryCache() {
+                searcher.setQueryCachingPolicy(new ESQueryCachingPolicy() {
+                    private final Set<Object> cached = ConcurrentCollections.newConcurrentSet();
+
                     @Override
-                    public Weight doCache(Weight weight, QueryCachingPolicy policy) {
-                        return new CacheOnceWeight(weight, cache, searcher.getQueryCachingPolicy());
+                    public void onUse(Query query) {
+                        policy.onUse(query);
+                    }
+
+                    @Override
+                    public boolean shouldCache(Query query, LeafReaderContext context) throws IOException {
+                        return policy.shouldCache(query) && cached.add(context.id());
+                    }
+
+                    @Override
+                    public boolean shouldCache(Query query) {
+                        throw new IllegalStateException("should not be called");
                     }
                 });
             }
@@ -407,7 +374,7 @@ public final class LuceneSliceQueue {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         } finally {
-            searcher.setQueryCache(cache);
+            searcher.setQueryCachingPolicy(policy);
         }
     }
 
