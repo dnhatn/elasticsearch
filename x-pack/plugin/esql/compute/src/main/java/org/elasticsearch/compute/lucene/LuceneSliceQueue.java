@@ -349,7 +349,7 @@ public final class LuceneSliceQueue {
         private final QueryCachingPolicy policy;
         private final Weight in;
         private final Map<Object, Weight> cachedWeights = ConcurrentCollections.newConcurrentMap();
-
+        final Object key = new Object();
         CacheOneWeight(Weight in, QueryCache cache, QueryCachingPolicy policy) {
             super(in.getQuery());
             this.in = in;
@@ -358,7 +358,7 @@ public final class LuceneSliceQueue {
         }
 
         Weight getCachedWeight(LeafReaderContext context) {
-            return cachedWeights.computeIfAbsent(context.id(), unused -> {
+            return cachedWeights.computeIfAbsent(key, unused -> {
                 final AtomicBoolean alreadyCached = new AtomicBoolean();
                 return queryCache.doCache(in, new QueryCachingPolicy() {
                     @Override
@@ -376,7 +376,7 @@ public final class LuceneSliceQueue {
 
         @Override
         public Explanation explain(LeafReaderContext context, int doc) throws IOException {
-            return in.explain(context, doc);
+            return getCachedWeight(context).explain(context, doc);
         }
 
         @Override
@@ -391,7 +391,7 @@ public final class LuceneSliceQueue {
 
         @Override
         public boolean isCacheable(LeafReaderContext ctx) {
-            return in.isCacheable(ctx);
+            return getCachedWeight(ctx).isCacheable(ctx);
         }
     }
 
