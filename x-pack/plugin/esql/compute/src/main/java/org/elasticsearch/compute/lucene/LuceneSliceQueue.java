@@ -401,7 +401,7 @@ public final class LuceneSliceQueue {
         try {
             Query actualQuery = scoreMode.needsScores() ? query : new ConstantScoreQuery(query);
             if (partitioning == PartitioningStrategy.DOC) {
-                searcher.setQueryCache((weight, policy) -> new CacheOneWeight(weight, cache, policy));
+                searcher.setQueryCache(cache::doCache);
             }
             return searcher.createWeight(actualQuery, scoreMode, 1);
         } catch (IOException e) {
