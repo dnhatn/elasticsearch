@@ -16,6 +16,7 @@ import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.Bits;
 import org.elasticsearch.TransportVersion;
+import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -25,6 +26,7 @@ import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.lucene.IndexedByShardId;
 import org.elasticsearch.compute.lucene.PartialLeafReaderContext;
 import org.elasticsearch.compute.lucene.ShardContext;
+import org.elasticsearch.compute.operator.IsBlockedResult;
 import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.RefCounted;
@@ -75,6 +77,8 @@ public abstract class LuceneOperator extends SourceOperator {
      * Count of rows this operator has emitted.
      */
     long rowsEmitted;
+
+    private IsBlockedResult blocked = Operator.NOT_BLOCKED;
 
     protected LuceneOperator(
         IndexedByShardId<? extends RefCounted> refCounteds,
@@ -185,10 +189,26 @@ public abstract class LuceneOperator extends SourceOperator {
             currentScorer.maxPosition = partialLeaf.maxDoc();
             currentScorer.position = Math.max(currentScorer.position, partialLeaf.minDoc());
         }
+
+        final SubscribableListener<Void> sliceBlocked = currentSlice.blockedOnCaching().apply(currentScorer.leafReaderContext());
+        if (sliceBlocked != null && sliceBlocked.isDone() == false) {
+            blocked = new IsBlockedResult(sliceBlocked, "segment is being cached");
+            currentScorer.executingThread = null; // force to use the cached iterator next time
+            return null;
+        }
+
         if (Thread.currentThread() != currentScorer.executingThread) {
             currentScorer.reinitialize();
         }
         return currentScorer;
+    }
+
+    @Override
+    public IsBlockedResult isBlocked() {
+        if (blocked.listener().isDone()) {
+            blocked = NOT_BLOCKED;
+        }
+        return blocked;
     }
 
     /**
