@@ -23,6 +23,7 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A query cache for doc partitioning that tries to prevent multiple threads from populating the cache for the same segment.
@@ -31,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 final class DocPartitioningQueryCache implements QueryCache {
     private final Map<Object, SubscribableListener<Void>> cachingListeners = ConcurrentCollections.newConcurrentMap();
+    private final ReentrantLock lock = new ReentrantLock();
     private final QueryCache actual;
 
     DocPartitioningQueryCache(QueryCache actual) {
@@ -85,16 +87,20 @@ final class DocPartitioningQueryCache implements QueryCache {
         public Releasable startCaching(LeafReaderContext leaf) {
             final SubscribableListener<Void> listener = new SubscribableListener<>();
             cachingListeners.compute(leaf.id(), (k, curr) -> curr == null || curr.isDone() ? listener : combine(curr, listener));
-            if (cached.add(leaf.id())) {
-                return () -> {
-                    listener.onResponse(null);
-                    maybeRemoveCachingListener(leaf);
-                };
-            } else {
-                listener.onResponse(null);
-                maybeRemoveCachingListener(leaf);
-                return null;
+            if (lock.tryLock()) {
+                if (cached.add(leaf.id())) {
+                    return () -> {
+                        listener.onResponse(null);
+                        maybeRemoveCachingListener(leaf);
+                        lock.unlock();
+                    };
+                } else {
+                    lock.unlock();
+                }
             }
+            listener.onResponse(null);
+            maybeRemoveCachingListener(leaf);
+            return null;
         }
     }
 
