@@ -87,12 +87,15 @@ final class DocPartitioningQueryCache implements QueryCache {
         public Releasable startCaching(LeafReaderContext leaf) {
             final SubscribableListener<Void> listener = new SubscribableListener<>();
             cachingListeners.compute(leaf.id(), (k, curr) -> curr == null || curr.isDone() ? listener : combine(curr, listener));
-            // note that we don't release the lock so that only one thread ever cache this Weight
-            if (lock.tryLock() && cached.add(leaf.id())) {
-                return () -> {
-                    listener.onResponse(null);
-                    maybeRemoveCachingListener(leaf);
-                };
+            if (lock.tryLock()) {
+                if (cached.add(leaf.id())) {
+                    return () -> {
+                        lock.unlock();
+                        listener.onResponse(null);
+                        maybeRemoveCachingListener(leaf);
+                    };
+                }
+                lock.unlock();
             }
             listener.onResponse(null);
             maybeRemoveCachingListener(leaf);
