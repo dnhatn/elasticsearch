@@ -8,6 +8,7 @@
 package org.elasticsearch.compute.lucene.query;
 
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.FilterWeight;
 import org.apache.lucene.search.QueryCache;
 import org.apache.lucene.search.QueryCachingPolicy;
 import org.apache.lucene.search.Weight;
@@ -17,6 +18,8 @@ import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.indices.IndicesQueryCache;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,7 +39,10 @@ final class DocPartitioningQueryCache implements QueryCache {
 
     @Override
     public Weight doCache(Weight weight, QueryCachingPolicy policy) {
-        return actual.doCache(new WrappedWeight(weight), policy);
+        if (weight instanceof AlreadyCachedWeight) {
+            return weight;
+        }
+        return new AlreadyCachedWeight(actual.doCache(new WrappedWeight(weight), policy));
     }
 
     /**
@@ -89,6 +95,12 @@ final class DocPartitioningQueryCache implements QueryCache {
                 maybeRemoveCachingListener(leaf);
                 return null;
             }
+        }
+    }
+
+    private static class AlreadyCachedWeight extends FilterWeight {
+        AlreadyCachedWeight(Weight weight) {
+            super(weight);
         }
     }
 }
