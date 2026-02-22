@@ -85,14 +85,11 @@ final class DocPartitioningQueryCache implements QueryCache {
         public Releasable startCaching(LeafReaderContext leaf) {
             final SubscribableListener<Void> listener = new SubscribableListener<>();
             cachingListeners.compute(leaf.id(), (k, curr) -> curr == null || curr.isDone() ? listener : combine(curr, listener));
-            final ReentrantLock lock = leaveLocks.computeIfAbsent(leaf.id(), k -> new ReentrantLock());
-            if (lock.tryLock()) {
-                if (cached.add(leaf.id())) {
-                    return () -> {
-                        listener.onResponse(null);
-                        maybeRemoveCachingListener(leaf);
-                    };
-                }
+            if (cached.add(leaf.id())) {
+                return () -> {
+                    listener.onResponse(null);
+                    maybeRemoveCachingListener(leaf);
+                };
             }
             listener.onResponse(null);
             maybeRemoveCachingListener(leaf);
