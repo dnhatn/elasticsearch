@@ -18,8 +18,6 @@ import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.indices.IndicesQueryCache;
 
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,8 +29,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * This is best-effort as other threads might also fall back to an uncached scorer.
  */
 final class DocPartitioningQueryCache implements QueryCache {
+    private final Map<Object, ReentrantLock> leaveLocks = ConcurrentCollections.newConcurrentMap();
     private final Map<Object, SubscribableListener<Void>> cachingListeners = ConcurrentCollections.newConcurrentMap();
-    private final ReentrantLock lock = new ReentrantLock();
     private final QueryCache actual;
 
     DocPartitioningQueryCache(QueryCache actual) {
@@ -87,6 +85,7 @@ final class DocPartitioningQueryCache implements QueryCache {
         public Releasable startCaching(LeafReaderContext leaf) {
             final SubscribableListener<Void> listener = new SubscribableListener<>();
             cachingListeners.compute(leaf.id(), (k, curr) -> curr == null || curr.isDone() ? listener : combine(curr, listener));
+            final ReentrantLock lock = leaveLocks.computeIfAbsent(leaf.id(), k -> new ReentrantLock());
             if (lock.tryLock()) {
                 if (cached.add(leaf.id())) {
                     return () -> {
