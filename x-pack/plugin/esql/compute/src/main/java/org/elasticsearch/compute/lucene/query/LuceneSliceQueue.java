@@ -8,6 +8,7 @@
 package org.elasticsearch.compute.lucene.query;
 
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
@@ -210,6 +211,7 @@ public final class LuceneSliceQueue {
                 for (QueryAndTags queryAndExtra : queryFunction.apply(ctx)) {
                     var scoreMode = scoreModeFunction.apply(ctx);
                     Query query = queryAndExtra.query;
+                    query = scoreMode.needsScores() ? query : new ConstantScoreQuery(query);
                     /*
                      * Rewrite the query on the local index so things like fully
                      * overlapping range queries become match all. It's important

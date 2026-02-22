@@ -21,7 +21,6 @@ import org.elasticsearch.indices.IndicesQueryCache;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A query cache for doc partitioning that tries to prevent multiple threads from populating the cache for the same segment.
@@ -29,7 +28,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * This is best-effort as other threads might also fall back to an uncached scorer.
  */
 final class DocPartitioningQueryCache implements QueryCache {
-    private final Map<Object, ReentrantLock> leaveLocks = ConcurrentCollections.newConcurrentMap();
     private final Map<Object, SubscribableListener<Void>> cachingListeners = ConcurrentCollections.newConcurrentMap();
     private final QueryCache actual;
 
@@ -97,6 +95,11 @@ final class DocPartitioningQueryCache implements QueryCache {
         }
     }
 
+    /**
+     * Marker to prevent double-wrapping a {@link Weight} that already passed through {@link #doCache}.
+     * Queries like {@link org.apache.lucene.search.ConstantScoreQuery} can invoke {@code doCache(doCache(w))};
+     * other QueryCache implementations also unwrap the incoming Weight before wrapping.
+     */
     private static class AlreadyCachedWeight extends FilterWeight {
         AlreadyCachedWeight(Weight weight) {
             super(weight);
