@@ -89,12 +89,10 @@ final class DocPartitioningQueryCache implements QueryCache {
             if (lock.tryLock()) {
                 if (cached.add(leaf.id())) {
                     return () -> {
-                        lock.unlock();
                         listener.onResponse(null);
                         maybeRemoveCachingListener(leaf);
                     };
                 }
-                lock.unlock();
             }
             listener.onResponse(null);
             maybeRemoveCachingListener(leaf);
