@@ -63,6 +63,7 @@ public abstract class LuceneOperator extends SourceOperator {
     int processedSlices;
     final int maxPageSize;
     private final LuceneSliceQueue sliceQueue;
+    private final LuceneSliceQueue.WorkerState sliceQueueState;
 
     final Set<Query> processedQueries = new HashSet<>();
     final Set<String> processedShards = new HashSet<>();
@@ -111,7 +112,7 @@ public abstract class LuceneOperator extends SourceOperator {
         this.blockFactory = blockFactory;
         this.maxPageSize = maxPageSize;
         this.sliceQueue = sliceQueue;
-
+        this.sliceQueueState = sliceQueue.newWorkerState();
         this.shardProcessNanos = new long[sliceQueue.maxShardIndex() + 1];
         this.shardRowsEmitted = new long[shardProcessNanos.length];
     }
@@ -191,7 +192,7 @@ public abstract class LuceneOperator extends SourceOperator {
         while (currentScorer == null || currentScorer.isDone()) {
             if (currentSlice == null || sliceIndex >= currentSlice.numLeaves()) {
                 sliceIndex = 0;
-                currentSlice = sliceQueue.nextSlice(currentSlice);
+                currentSlice = sliceQueue.nextSlice(sliceQueueState, currentSlice);
                 if (currentSlice == null) {
                     doneCollecting = true;
                     return null;
