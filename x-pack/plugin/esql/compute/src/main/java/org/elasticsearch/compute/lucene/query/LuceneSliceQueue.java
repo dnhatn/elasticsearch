@@ -106,7 +106,7 @@ public final class LuceneSliceQueue {
      */
     private final Queue<Integer> segmentHeads;
 
-    private final List<WorkerState> workers = new ArrayList<>();
+    private final List<Worker> workers = new ArrayList<>();
 
     LuceneSliceQueue(
         IntFunction<ShardContext> shardContexts,
@@ -157,7 +157,7 @@ public final class LuceneSliceQueue {
      * @return the next available {@link LuceneSlice}, or {@code null} if exhausted
      */
     @Nullable
-    LuceneSlice nextSlice(WorkerState worker, LuceneSlice prev) {
+    LuceneSlice nextSlice(Worker worker, LuceneSlice prev) {
         if (prev != null) {
             final int nextId = prev.slicePosition() + 1;
             if (nextId < totalSlices) {
@@ -180,11 +180,11 @@ public final class LuceneSliceQueue {
     }
 
     private static final int MAX_RETRIES = 5;
-    private synchronized LuceneSlice trySplitWork(WorkerState stealer) {
+    private synchronized LuceneSlice trySplitWork(Worker stealer) {
         for (int t = 0; t < MAX_RETRIES; t++) {
             WorkRange selected = null;
             int slices = 0;
-            for (WorkerState ws : workers) {
+            for (Worker ws : workers) {
                 if (ws == stealer) {
                     continue;
                 }
@@ -226,15 +226,15 @@ public final class LuceneSliceQueue {
         return totalSlices;
     }
 
-    static final class WorkerState {
+    static final class Worker {
         final Map<Integer, Integer> processedSegments = new HashMap<>();
         private WorkRange activeWork = null;
 
         // update the work range so the other worker won't steal slices too close to this worker
-        LuceneSlice onNewSlice(WorkRange range, LuceneSlice slice) {
-            if (range != null) {
-                processedSegments.merge(range.segmentId, slice.slicePosition(), Integer::max);
-                activeWork = range;
+        LuceneSlice onNewSlice(WorkRange work, LuceneSlice slice) {
+            if (work != null) {
+                processedSegments.merge(work.segmentId, slice.slicePosition(), Integer::max);
+                activeWork = work;
             }
             if (activeWork != null) {
                 activeWork.advanceNext(slice.slicePosition() + 1);
@@ -242,13 +242,13 @@ public final class LuceneSliceQueue {
             return slice;
         }
 
-        boolean canProcess(WorkRange segment, int candidateSlice) {
-            return processedSegments.getOrDefault(segment.segmentId, -1) < candidateSlice;
+        boolean canProcess(WorkRange work, int candidateSlice) {
+            return processedSegments.getOrDefault(work.segmentId, -1) < candidateSlice;
         }
     }
 
-    synchronized WorkerState newWorkerState() {
-        WorkerState worker = new WorkerState();
+    synchronized Worker newWorker() {
+        Worker worker = new Worker();
         workers.add(worker);
         return worker;
     }

@@ -87,12 +87,12 @@ public class DocPartitioningQueryCacheTests extends ComputeTestCase {
             2,
             s -> ScoreMode.COMPLETE_NO_SCORES
         );
-        LuceneSliceQueue.WorkerState worker1 = queue.newWorkerState();
+        LuceneSliceQueue.Worker worker1 = queue.newWorker();
         LuceneSlice slice1 = queue.nextSlice(worker1, null);
         assertThat(slice1.numLeaves(), equalTo(1));
         LeafReaderContext singleLeaf = slice1.getLeaf(0).leafReaderContext();
         assertNull(slice1.leafBlockedOnCaching(singleLeaf));
-        LuceneSliceQueue.WorkerState worker2 = queue.newWorkerState();
+        LuceneSliceQueue.Worker worker2 = queue.newWorker();
         LuceneSlice slice2 = queue.nextSlice(worker2, null);
         assertThat(slice2.numLeaves(), equalTo(1));
         assertNull(slice2.leafBlockedOnCaching(singleLeaf));

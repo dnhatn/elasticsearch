@@ -53,7 +53,7 @@ public enum DataPartitioning {
      *       than the desired size. See {@link org.apache.lucene.search.IndexSearcher#slices(List, int, int, boolean)}.</li>
      *   <li>For very large segments, multiple segments are not combined into a single slice. This allows
      *       one driver to process an entire large segment until other drivers steal the work after finishing
-     *       their own tasks. See {@link LuceneSliceQueue#nextSlice(LuceneSliceQueue.WorkerState, LuceneSlice)}.</li>
+     *       their own tasks. See {@link LuceneSliceQueue#nextSlice(LuceneSliceQueue.Worker, LuceneSlice)}.</li>
      * </ol>
      */
     DOC;
