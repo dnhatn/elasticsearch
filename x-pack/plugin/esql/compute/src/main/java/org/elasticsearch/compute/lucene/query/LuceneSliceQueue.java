@@ -82,7 +82,6 @@ public final class LuceneSliceQueue {
 
     public static final int MAX_DOCS_PER_SLICE = 250_000; // copied from IndexSearcher
     public static final int MAX_SEGMENTS_PER_SLICE = 5; // copied from IndexSearcher
-    private static final int WORK_RANGE_LEVEL = 10;
 
     private final int maxShardIndex;
     private final IntFunction<ShardContext> shardContexts;
@@ -122,7 +121,7 @@ public final class LuceneSliceQueue {
         this.segmentHeads = ConcurrentCollections.newQueue();
         for (LuceneSlice slice : sliceList) {
             final int position = slice.slicePosition();
-            final WorkRange head = WorkRange.createWorkRange(sliceList, slice);
+            final SegmentRange head = SegmentRange.createWorkRange(sliceList, slice);
             sliceHolders.set(position, new SliceHolder(slice, head));
             if (slice.queryHead()) {
                 queryHeads.add(position);
@@ -163,7 +162,7 @@ public final class LuceneSliceQueue {
             if (nextId < totalSlices) {
                 var holder = sliceHolders.getAndSet(nextId, null);
                 if (holder != null) {
-                    return worker.onNewSlice(holder.head, holder.slice);
+                    return worker.onSliceClaimed(holder.range, holder.slice);
                 }
             }
         }
@@ -172,7 +171,7 @@ public final class LuceneSliceQueue {
             while ((nextId = ids.poll()) != null) {
                 var holder = sliceHolders.getAndSet(nextId, null);
                 if (holder != null) {
-                    return worker.onNewSlice(holder.head, holder.slice);
+                    return worker.onSliceClaimed(holder.range, holder.slice);
                 }
             }
         }
@@ -182,13 +181,13 @@ public final class LuceneSliceQueue {
     private static final int MAX_RETRIES = 5;
     private synchronized LuceneSlice trySplitWork(Worker stealer) {
         for (int t = 0; t < MAX_RETRIES; t++) {
-            WorkRange selected = null;
+            SegmentRange selected = null;
             int slices = 0;
             for (Worker ws : workers) {
                 if (ws == stealer) {
                     continue;
                 }
-                final WorkRange range = ws.activeWork;
+                final SegmentRange range = ws.activeRange;
                 if (range == null) {
                     continue;
                 }
@@ -196,7 +195,7 @@ public final class LuceneSliceQueue {
                 if (remaining < 2) {
                     continue;
                 }
-                if (stealer.canProcess(range, range.midPoint()) == false) {
+                if (stealer.canProcessSlice(range, range.midPoint()) == false) {
                     continue;
                 }
                 if (selected == null || slices < remaining) {
@@ -210,12 +209,12 @@ public final class LuceneSliceQueue {
             final int mid = selected.midPoint();
             var holder = sliceHolders.getAndSet(mid, null);
             if (holder != null) {
-                var newWork = new WorkRange(selected.segmentId, mid + 1, selected.endHint);
+                var newWork = new SegmentRange(selected.headId, mid + 1, selected.endHint);
                 selected.endHint = mid;
-                stealer.onNewSlice(newWork, holder.slice);
+                stealer.onSliceClaimed(newWork, holder.slice);
                 return holder.slice;
             } else {
-                selected.advanceNext(mid + 1);
+                selected.advanceStart(mid + 1);
             }
         }
         workers.remove(stealer);
@@ -227,23 +226,23 @@ public final class LuceneSliceQueue {
     }
 
     static final class Worker {
-        final Map<Integer, Integer> processedSegments = new HashMap<>();
-        private WorkRange activeWork = null;
+        final Map<Integer, Integer> maxSliceIdBySegment = new HashMap<>();
+        private SegmentRange activeRange = null;
 
         // update the work range so the other worker won't steal slices too close to this worker
-        LuceneSlice onNewSlice(WorkRange work, LuceneSlice slice) {
-            if (work != null) {
-                processedSegments.merge(work.segmentId, slice.slicePosition(), Integer::max);
-                activeWork = work;
+        LuceneSlice onSliceClaimed(SegmentRange range, LuceneSlice slice) {
+            if (range != null) {
+                maxSliceIdBySegment.merge(range.headId, slice.slicePosition(), Integer::max);
+                activeRange = range;
             }
-            if (activeWork != null) {
-                activeWork.advanceNext(slice.slicePosition() + 1);
+            if (activeRange != null) {
+                activeRange.advanceStart(slice.slicePosition() + 1);
             }
             return slice;
         }
 
-        boolean canProcess(WorkRange work, int candidateSlice) {
-            return processedSegments.getOrDefault(work.segmentId, -1) < candidateSlice;
+        boolean canProcessSlice(SegmentRange segment, int sliceId) {
+            return maxSliceIdBySegment.getOrDefault(segment.headId, -1) < sliceId;
         }
     }
 
@@ -253,16 +252,16 @@ public final class LuceneSliceQueue {
         return worker;
     }
 
-    private record SliceHolder(LuceneSlice slice, @Nullable WorkRange head) {
+    private record SliceHolder(LuceneSlice slice, @Nullable SegmentRange range) {
 
     }
 
-    static final class WorkRange {
-        final int segmentId;
+    static final class SegmentRange {
+        final int headId;
         private int start;
         private int endHint; // exclusive
 
-        static WorkRange createWorkRange(List<LuceneSlice> sliceList, LuceneSlice slice) {
+        static SegmentRange createWorkRange(List<LuceneSlice> sliceList, LuceneSlice slice) {
             if (slice.numLeaves() == 1 && slice.getLeaf(0).minDoc() == 0) {
                 LeafReaderContext leaf = slice.getLeaf(0).leafReaderContext();
                 int end = slice.slicePosition() + 1;
@@ -273,14 +272,14 @@ public final class LuceneSliceQueue {
                     }
                 }
                 if ((end - slice.slicePosition()) >= 2) {
-                    return new WorkRange(slice.slicePosition(), slice.slicePosition() + 1, end);
+                    return new SegmentRange(slice.slicePosition(), slice.slicePosition() + 1, end);
                 }
             }
             return null;
         }
 
-        WorkRange(int segmentId, int start, int endHint) {
-            this.segmentId = segmentId;
+        SegmentRange(int headId, int start, int endHint) {
+            this.headId = headId;
             this.start = start;
             this.endHint = endHint;
         }
@@ -298,7 +297,7 @@ public final class LuceneSliceQueue {
             return endHint - splitPoint;
         }
 
-        synchronized void advanceNext(int position) {
+        synchronized void advanceStart(int position) {
             // moving forward only
             if (start <= position && position <= endHint) {
                 start = position;
