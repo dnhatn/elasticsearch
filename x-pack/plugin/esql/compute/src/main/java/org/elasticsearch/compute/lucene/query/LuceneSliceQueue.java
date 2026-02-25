@@ -25,7 +25,6 @@ import org.elasticsearch.search.internal.ContextIndexSearcher;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -107,16 +106,7 @@ public final class LuceneSliceQueue {
      */
     private final Queue<Integer> segmentHeads;
 
-    /**
-     * A multi-level bucket queue of {@link WorkRange}s used for work stealing. Each level corresponds
-     * to a power-of-two size range: level 0 holds the largest ranges (up to 512+ slices), and level
-     * {@code WORK_RANGE_LEVEL - 1} holds the smallest splittable ranges (2 slices). When a worker
-     * exhausts tiers 1-3, {@link #trySplitWork} picks a range from the lowest-numbered (largest) level,
-     * splits it in half, assigns one half to the stealing worker, and re-queues both halves at their
-     * new levels. This ensures larger ranges are stolen first, maximizing the contiguous forward range
-     * a stealer receives.
-     */
-    private final List<Queue<WorkRange>> workRanges = new ArrayList<>(WORK_RANGE_LEVEL);
+    private final List<WorkerState> workers = new ArrayList<>();
 
     LuceneSliceQueue(
         IntFunction<ShardContext> shardContexts,
@@ -127,9 +117,6 @@ public final class LuceneSliceQueue {
         this.shardContexts = shardContexts;
         this.totalSlices = sliceList.size();
         this.sliceHolders = new AtomicReferenceArray<>(sliceList.size());
-        for (int i = 0; i < WORK_RANGE_LEVEL; i++) {
-            workRanges.add(new ArrayDeque<>());
-        }
         this.partitioningStrategies = partitioningStrategies;
         this.queryHeads = ConcurrentCollections.newQueue();
         this.segmentHeads = ConcurrentCollections.newQueue();
@@ -137,9 +124,6 @@ public final class LuceneSliceQueue {
             final int position = slice.slicePosition();
             final WorkRange head = WorkRange.createWorkRange(sliceList, slice);
             sliceHolders.set(position, new SliceHolder(slice, head));
-            if (head != null) {
-                addSegmentToQueue(head);
-            }
             if (slice.queryHead()) {
                 queryHeads.add(position);
             } else if (slice.getLeaf(0).minDoc() == 0) {
@@ -166,24 +150,20 @@ public final class LuceneSliceQueue {
      * a new query, allowing the calling Driver to work on a fresh query with a new set of segments.
      * 3. If the {@link #queryHeads} queue is exhausted, it returns a slice from the {@link #segmentHeads} queue of other queries,
      * which is an entry point for a new, independent group of segments, allowing the calling Driver to work on a fresh set of segments.
-     * 4. Work splitting: The stealing worker receives the far half and processes it forward,
-     * while the original range is reduced to the near half. Both halves are re-queued at their appropriate
-     * {@link #workRanges} level for further splitting. This ensures workers always iterate forward within
-     * their assigned range, maintaining Lucene iterator locality and page-cache friendliness.
      *
-     * @param workerState per-worker state tracking which segments this worker has processed,
+     * @param worker per-worker state tracking which segments this worker has processed,
      *                    used to prevent backward processing within a segment
      * @param prev the previously returned {@link LuceneSlice}, or {@code null} if starting
      * @return the next available {@link LuceneSlice}, or {@code null} if exhausted
      */
     @Nullable
-    LuceneSlice nextSlice(WorkerState workerState, LuceneSlice prev) {
+    LuceneSlice nextSlice(WorkerState worker, LuceneSlice prev) {
         if (prev != null) {
             final int nextId = prev.slicePosition() + 1;
             if (nextId < totalSlices) {
                 var holder = sliceHolders.getAndSet(nextId, null);
                 if (holder != null) {
-                    return workerState.onNewSlice(holder.head, holder.slice);
+                    return worker.onNewSlice(holder.head, holder.slice);
                 }
             }
         }
@@ -192,77 +172,54 @@ public final class LuceneSliceQueue {
             while ((nextId = ids.poll()) != null) {
                 var holder = sliceHolders.getAndSet(nextId, null);
                 if (holder != null) {
-                    return workerState.onNewSlice(holder.head, holder.slice);
+                    return worker.onNewSlice(holder.head, holder.slice);
                 }
             }
         }
-        return trySplitWork(workerState);
+        return trySplitWork(worker);
     }
 
-    private synchronized LuceneSlice trySplitWork(WorkerState workerState) {
-        List<WorkRange> skipped = new ArrayList<>();
-        LuceneSlice next = null;
-        for (int level = 0; next == null && level < WORK_RANGE_LEVEL; level++) {
-            WorkRange work;
-            while ((work = workRanges.get(level).poll()) != null) {
-                // outdated - put it back to the right level, then retry later
-                int newLevel = queueLevel(work);
-                if (newLevel != level) {
-                    addSegmentToQueue(work);
+    private static final int MAX_RETRIES = 5;
+    private synchronized LuceneSlice trySplitWork(WorkerState stealer) {
+        for (int t = 0; t < MAX_RETRIES; t++) {
+            WorkRange work = null;
+            int slices = 0;
+            for (WorkerState ws : workers) {
+                if (ws == stealer) {
                     continue;
                 }
-                WorkRange newWork = null;
-                synchronized (work) {
-                    if (work.remainingSlices() >= 2) {
-                        final int mid = work.midPoint();
-                        if (workerState.canProcess(work, mid) == false) {
-                            skipped.add(work);
-                            continue;
-                        }
-                        var holder = sliceHolders.getAndSet(mid, null);
-                        if (holder != null) {
-                            next = holder.slice;
-                            newWork = new WorkRange(work.segmentId, mid + 1, work.endHint);
-                            work.endHint = mid;
-                        } else {
-                            work.advanceNext(mid + 1);
-                        }
-                    }
+                final int remaining = ws.activeWork.remainingSlices();
+                if (remaining < 2) {
+                    continue;
                 }
-                addSegmentToQueue(work);
-                if (newWork != null) {
-                    addSegmentToQueue(newWork);
-                    workerState.onNewSlice(newWork, next);
-                    break;
+                if (stealer.canProcess(ws.activeWork, ws.activeWork.midPoint()) == false) {
+                    continue;
+                }
+                if (work == null || slices < remaining) {
+                    work = ws.activeWork;
+                    slices = remaining;
                 }
             }
+            if (work == null) {
+                return null;
+            }
+            final int mid = work.midPoint();
+            var holder = sliceHolders.getAndSet(mid, null);
+            if (holder != null) {
+                var newWork = new WorkRange(work.segmentId, mid + 1, work.endHint);
+                work.endHint = mid;
+                stealer.onNewSlice(newWork, holder.slice);
+                return holder.slice;
+            } else {
+                work.advanceNext(mid + 1);
+            }
         }
-        for (WorkRange q : skipped) {
-            addSegmentToQueue(q);
-        }
-        return next;
+        workers.remove(stealer);
+        return null;
     }
 
     public int totalSlices() {
         return totalSlices;
-    }
-
-    static int queueLevel(WorkRange segment) {
-        final int remaining = Math.min(segment.remainingSlices(), 1 << (WORK_RANGE_LEVEL - 1));
-        if (remaining < 2) {
-            return -1;
-        }
-        final int bitPos = 31 - Integer.numberOfLeadingZeros(remaining);
-        // Level 0 should be the largest segments.
-        int level = (WORK_RANGE_LEVEL - 1) - bitPos;
-        return Math.clamp(level, 0, WORK_RANGE_LEVEL - 1);
-    }
-
-    private void addSegmentToQueue(WorkRange segment) {
-        int level = queueLevel(segment);
-        if (level >= 0) {
-            workRanges.get(level).add(segment);
-        }
     }
 
     static final class WorkerState {
@@ -286,8 +243,10 @@ public final class LuceneSliceQueue {
         }
     }
 
-    WorkerState newWorkerState() {
-        return new WorkerState();
+    synchronized WorkerState newWorkerState() {
+        WorkerState worker = new WorkerState();
+        workers.add(worker);
+        return worker;
     }
 
     private record SliceHolder(LuceneSlice slice, @Nullable WorkRange head) {
