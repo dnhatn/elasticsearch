@@ -182,36 +182,40 @@ public final class LuceneSliceQueue {
     private static final int MAX_RETRIES = 5;
     private synchronized LuceneSlice trySplitWork(WorkerState stealer) {
         for (int t = 0; t < MAX_RETRIES; t++) {
-            WorkRange work = null;
+            WorkRange selected = null;
             int slices = 0;
             for (WorkerState ws : workers) {
                 if (ws == stealer) {
                     continue;
                 }
-                final int remaining = ws.activeWork.remainingSlices();
+                final WorkRange range = ws.activeWork;
+                if (range == null) {
+                    continue;
+                }
+                final int remaining = range.remainingSlices();
                 if (remaining < 2) {
                     continue;
                 }
-                if (stealer.canProcess(ws.activeWork, ws.activeWork.midPoint()) == false) {
+                if (stealer.canProcess(range, range.midPoint()) == false) {
                     continue;
                 }
-                if (work == null || slices < remaining) {
-                    work = ws.activeWork;
+                if (selected == null || slices < remaining) {
+                    selected = range;
                     slices = remaining;
                 }
             }
-            if (work == null) {
+            if (selected == null) {
                 return null;
             }
-            final int mid = work.midPoint();
+            final int mid = selected.midPoint();
             var holder = sliceHolders.getAndSet(mid, null);
             if (holder != null) {
-                var newWork = new WorkRange(work.segmentId, mid + 1, work.endHint);
-                work.endHint = mid;
+                var newWork = new WorkRange(selected.segmentId, mid + 1, selected.endHint);
+                selected.endHint = mid;
                 stealer.onNewSlice(newWork, holder.slice);
                 return holder.slice;
             } else {
-                work.advanceNext(mid + 1);
+                selected.advanceNext(mid + 1);
             }
         }
         workers.remove(stealer);
