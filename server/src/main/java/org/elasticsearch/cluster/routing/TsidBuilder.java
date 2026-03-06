@@ -31,7 +31,8 @@ import java.util.List;
  */
 public class TsidBuilder {
 
-    private static final int PREFIX_SIM_HASH_BITS = 8;
+    private static final int PREFIX_NAME_HASH_BITS = 4;
+    private static final int PREFIX_SIM_HASH_BITS = 12;
     private final BufferedMurmur3Hasher murmur3Hasher = new BufferedMurmur3Hasher(0L);
 
     private final List<Dimension> dimensions;
@@ -216,7 +217,7 @@ public class TsidBuilder {
      * The TSID is a hash that includes:
      * <ul>
      *     <li>
-     *         A single similarity byte (byte 0): 8-bit SimHash of all dimension values.
+     *         Two prefix bytes for naming and values for clustering
      *     </li>
      *     <li>
      *         A hash of all names and values combined (16 bytes).
@@ -229,11 +230,13 @@ public class TsidBuilder {
      */
     public BytesRef buildTsid() {
         throwIfEmpty();
-        byte[] hash = new byte[17];
+        byte[] hash = new byte[18];
         int index = 0;
 
         Collections.sort(dimensions);
-        hash[index++] = clusteringPrefixByte();
+        int prefix = clusteringPrefix();
+        hash[index++] = (byte) (prefix >>> 8);
+        hash[index++] = (byte) prefix;
 
         MurmurHash3.Hash128 hashBuffer = new MurmurHash3.Hash128();
         murmur3Hasher.reset();
@@ -252,7 +255,15 @@ public class TsidBuilder {
         }
     }
 
-    private byte clusteringPrefixByte() {
+    private int clusteringPrefix() {
+        // 4-bit name hash
+        murmur3Hasher.reset();
+        for (Dimension dim : dimensions) {
+            murmur3Hasher.addLong(dim.pathHash().h1 ^ dim.pathHash().h2);
+        }
+        int nameHash = (int) murmur3Hasher.digestHash().h1 & ((1 << PREFIX_NAME_HASH_BITS) - 1);
+
+        // 12-bit SimHash of all dimension values
         final int[] votes = new int[PREFIX_SIM_HASH_BITS];
         for (Dimension dim : dimensions) {
             int h = (int) (dim.valueHash().h1 ^ dim.valueHash().h2);
@@ -266,7 +277,7 @@ public class TsidBuilder {
                 simHash |= (1 << bit);
             }
         }
-        return (byte) simHash;
+        return (nameHash << PREFIX_SIM_HASH_BITS) | simHash;
     }
 
     private static int writeHash128(MurmurHash3.Hash128 hash128, byte[] buffer, int index) {
