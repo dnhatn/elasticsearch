@@ -8,8 +8,10 @@
 package org.elasticsearch.compute.operator;
 
 import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.util.BytesRefHashTable;
 import org.elasticsearch.common.util.IntArray;
 import org.elasticsearch.compute.Describable;
 import org.elasticsearch.compute.aggregation.AggregatorMode;
@@ -31,6 +33,9 @@ import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -187,12 +192,33 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
      * t2    | prod            | 2025-04-15T01:14:00Z   | 200           |
      * ```
      */
+
+    static final VarHandle BE_SHORT = MethodHandles.byteArrayViewVarHandle(short[].class, ByteOrder.BIG_ENDIAN);
+    private static int prefix(BytesRef term) {
+        if (term.length < 2) {
+            return term.length == 0 ? 0 : (term.bytes[term.offset] & 0xFF) << (13 - Byte.SIZE);
+        }
+        return ((short) BE_SHORT.get(term.bytes, term.offset) & 0xFFFF) >>> (Short.SIZE - 13);
+    }
+
     private void expandWindowBuckets() {
         if (aggregatorMode.isOutputPartial()) {
             return;
         }
         if (blockHash instanceof TimeSeriesBlockHash == false) {
             return;
+        }
+        int[] prefixes = new int[256 * 256];
+        BytesRefHashTable tsidHash = ((TimeSeriesBlockHash) blockHash).tsidHash;
+        BytesRef scratch = new BytesRef();
+        for (long i = 0; i < tsidHash.size(); i++) {
+            int prefix = prefix(tsidHash.get(i, scratch));
+            prefixes[prefix]++;
+        }
+        for (int i = 0; i < prefixes.length; i++) {
+            if (prefixes[i] > 0) {
+                System.err.println("--> prefix " + i + " count=" + prefixes[i]);
+            }
         }
         final long windowMillis = largestWindowMillis();
         if (windowMillis <= 0) {
