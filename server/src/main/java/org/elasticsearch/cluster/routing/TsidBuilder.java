@@ -31,6 +31,7 @@ import java.util.List;
  */
 public class TsidBuilder {
 
+    // 3 + 3 + 10
     private static final int NAME_HASH_BITS = 3;
     private static final int FIRST_VALUE_HASH_BITS = 3;
     private static final int SIM_HASH_BITS = 10;
