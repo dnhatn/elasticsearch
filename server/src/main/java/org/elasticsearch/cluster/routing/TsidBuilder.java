@@ -31,7 +31,9 @@ import java.util.List;
  */
 public class TsidBuilder {
 
-    private static final int[] BITS = { 2, 6 }; // name hash bits, first value hash bits = 8 bits = 1 byte
+    private static final int NAME_HASH_BITS = 3;
+    private static final int FIRST_VALUE_HASH_BITS = 3;
+    private static final int SIM_HASH_BITS = 10;
     private final BufferedMurmur3Hasher murmur3Hasher = new BufferedMurmur3Hasher(0L);
 
     private final List<Dimension> dimensions;
@@ -216,12 +218,13 @@ public class TsidBuilder {
      * The TSID is a hash that includes:
      * <ul>
      *     <li>
-     *         Byte 0 — clustering prefix: 2-bit name hash + 6-bit first dimension value hash.
-     *         The name hash separates different schemas, while the first value hash provides
-     *         clustering based on the first dimension (sorted alphabetically).
+     *         Bytes 0-1 — 16-bit clustering prefix: 3-bit name hash + 3-bit first dimension value hash
+     *         + 10-bit SimHash of remaining dimension values. The name hash separates different schemas,
+     *         the first value hash clusters by the first dimension (sorted alphabetically),
+     *         and the SimHash preserves locality for remaining dimensions.
      *     </li>
      *     <li>
-     *         Bytes 1-16 — a hash of all names and values combined (16 bytes) to avoid hash collisions.
+     *         Bytes 2-17 — a hash of all names and values combined (16 bytes) to avoid hash collisions.
      *     </li>
      * </ul>
      *
@@ -232,8 +235,10 @@ public class TsidBuilder {
         throwIfEmpty();
         Collections.sort(dimensions);
 
-        byte[] hash = new byte[1 + 16]; // 1 prefix byte + 16 uniqueness hash bytes
-        hash[0] = (byte) clusteringPrefix();
+        byte[] hash = new byte[2 + 16]; // 2 prefix bytes + 16 uniqueness hash bytes
+        int prefix = clusteringPrefix();
+        hash[0] = (byte) (prefix >>> 8);
+        hash[1] = (byte) prefix;
 
         MurmurHash3.Hash128 hashBuffer = new MurmurHash3.Hash128();
         murmur3Hasher.reset();
@@ -241,8 +246,8 @@ public class TsidBuilder {
             Dimension dim = dimensions.get(i);
             murmur3Hasher.addLongs(dim.pathHash.h1, dim.pathHash.h2, dim.valueHash.h1, dim.valueHash.h2);
         }
-        writeHash128(murmur3Hasher.digestHash(hashBuffer), hash, 1);
-        return new BytesRef(hash, 0, 17);
+        writeHash128(murmur3Hasher.digestHash(hashBuffer), hash, 2);
+        return new BytesRef(hash, 0, 18);
     }
 
     private void throwIfEmpty() {
@@ -251,22 +256,49 @@ public class TsidBuilder {
         }
     }
 
+    /**
+     * Computes a 16-bit clustering prefix: 3-bit name hash + 3-bit first value hash + 10-bit SimHash.
+     */
     private int clusteringPrefix() {
-        int nameHashBits = BITS[0];
-        int valueHashBits = BITS[1];
-
+        // name hash: hash of all dimension names
         murmur3Hasher.reset();
         for (Dimension dim : dimensions) {
             murmur3Hasher.addLong(dim.pathHash().h1 ^ dim.pathHash().h2);
         }
-        int nameHash = (int) murmur3Hasher.digestHash().h1 & ((1 << nameHashBits) - 1);
+        int nameHash = (int) murmur3Hasher.digestHash().h1 & ((1 << NAME_HASH_BITS) - 1);
 
+        // first value hash
         Dimension first = dimensions.getFirst();
         murmur3Hasher.reset();
         murmur3Hasher.addLong(first.valueHash().h1 ^ first.valueHash().h2);
-        int valueHash = (int) murmur3Hasher.digestHash().h1 & ((1 << valueHashBits) - 1);
+        int valueHash = (int) murmur3Hasher.digestHash().h1 & ((1 << FIRST_VALUE_HASH_BITS) - 1);
 
-        return (nameHash << valueHashBits) | valueHash;
+        // SimHash of remaining dimensions (2+)
+        int simHash = simHash();
+
+        return (nameHash << (FIRST_VALUE_HASH_BITS + SIM_HASH_BITS)) | (valueHash << SIM_HASH_BITS) | simHash;
+    }
+
+    /**
+     * SimHash (locality-sensitive hash) across dimensions 2+.
+     * Each dimension votes +1 or -1 per bit based on its value hash.
+     */
+    private int simHash() {
+        int[] votes = new int[SIM_HASH_BITS];
+        for (int d = 1; d < dimensions.size(); d++) {
+            Dimension dim = dimensions.get(d);
+            long h = dim.valueHash().h1 ^ dim.valueHash().h2;
+            for (int bit = 0; bit < SIM_HASH_BITS; bit++) {
+                votes[bit] += ((h >>> bit) & 1) == 1 ? 1 : -1;
+            }
+        }
+        int result = 0;
+        for (int bit = 0; bit < SIM_HASH_BITS; bit++) {
+            if (votes[bit] > 0) {
+                result |= (1 << bit);
+            }
+        }
+        return result;
     }
 
     private static int writeHash128(MurmurHash3.Hash128 hash128, byte[] buffer, int index) {
