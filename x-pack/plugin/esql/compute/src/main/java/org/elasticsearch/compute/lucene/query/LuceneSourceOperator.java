@@ -261,11 +261,12 @@ public class LuceneSourceOperator extends LuceneOperator {
 
 
     void before(LeafReaderContext leaf) {
-        if (firstDoc != -1) {
-            totalDistances += (lastDoc - firstDoc);
-        }
         if (lastLeaf != leaf) {
+            if (firstDoc != -1) {
+                totalDistances += (lastDoc - firstDoc);
+            }
             lastLeaf = leaf;
+            firstDoc = -1;
             lastDoc = -1;
         }
     }
@@ -280,9 +281,9 @@ public class LuceneSourceOperator extends LuceneOperator {
         public void collect(int doc) throws IOException {
             if (remainingDocs > 0) {
                 --remainingDocs;
-                if (lastDoc != -1 && lastDoc + 1 != doc) {
-                    System.err.println("--> gap from " + lastDoc + " to " + doc + " in " + lastLeaf.ord);
-                }
+//                if (lastDoc != -1 && lastDoc + 1 != doc) {
+//                    System.err.println("--> gap from " + lastDoc + " to " + doc + " in " + lastLeaf.ord);
+//                }
                 lastDoc = doc;
                 if (firstDoc == -1) {
                     firstDoc = doc;
