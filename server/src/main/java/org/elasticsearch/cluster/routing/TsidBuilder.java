@@ -31,7 +31,7 @@ import java.util.List;
  */
 public class TsidBuilder {
 
-    // V1 byte (8 bits) separates metrics, full hash (16 bytes) provides ordering and uniqueness
+    // V1 byte (8 bits) separates metrics, 120-bit hash provides ordering and uniqueness = 16 bytes total
     private final BufferedMurmur3Hasher murmur3Hasher = new BufferedMurmur3Hasher(0L);
 
     private final List<Dimension> dimensions;
@@ -220,7 +220,7 @@ public class TsidBuilder {
      *         This separates different metric types to prevent interleaving in sort order.
      *     </li>
      *     <li>
-     *         Bytes 1-16 — 128-bit hash of all dimension names and values combined to ensure
+     *         Bytes 1-15 — 120-bit hash of all dimension names and values combined to ensure
      *         uniqueness and provide within-metric ordering.
      *     </li>
      * </ul>
@@ -232,12 +232,7 @@ public class TsidBuilder {
         throwIfEmpty();
         Collections.sort(dimensions);
 
-        byte[] hash = new byte[1 + 16]; // 1 V1 byte + 16-byte hash
-        // Byte 0: hash of first dimension value (typically _metric_names_hash)
-        Dimension first = dimensions.getFirst();
-        murmur3Hasher.reset();
-        murmur3Hasher.addLong(first.valueHash().h1 ^ first.valueHash().h2);
-        hash[0] = (byte) murmur3Hasher.digestHash().h1;
+        byte[] hash = new byte[16];
         // 128-bit hash of all dimensions
         MurmurHash3.Hash128 hashBuffer = new MurmurHash3.Hash128();
         murmur3Hasher.reset();
@@ -245,8 +240,15 @@ public class TsidBuilder {
             Dimension dim = dimensions.get(i);
             murmur3Hasher.addLongs(dim.pathHash.h1, dim.pathHash.h2, dim.valueHash.h1, dim.valueHash.h2);
         }
-        writeHash128(murmur3Hasher.digestHash(hashBuffer), hash, 1);
-        return new BytesRef(hash, 0, 17);
+        MurmurHash3.Hash128 fullHash = murmur3Hasher.digestHash(hashBuffer);
+        ByteUtils.writeLongLE(fullHash.h1, hash, 0);
+        ByteUtils.writeLongLE(fullHash.h2, hash, 8);
+        // Override byte 0: hash of first dimension value (typically _metric_names_hash)
+        Dimension first = dimensions.getFirst();
+        murmur3Hasher.reset();
+        murmur3Hasher.addLong(first.valueHash().h1 ^ first.valueHash().h2);
+        hash[0] = (byte) murmur3Hasher.digestHash().h1;
+        return new BytesRef(hash, 0, 16);
     }
 
     private void throwIfEmpty() {
@@ -255,13 +257,6 @@ public class TsidBuilder {
         }
     }
 
-    private static int writeHash128(MurmurHash3.Hash128 hash128, byte[] buffer, int index) {
-        ByteUtils.writeLongLE(hash128.h2, buffer, index);
-        index += 8;
-        ByteUtils.writeLongLE(hash128.h1, buffer, index);
-        index += 8;
-        return index;
-    }
 
     public int size() {
         return dimensions.size();
