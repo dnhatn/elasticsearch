@@ -256,8 +256,14 @@ public class LuceneSourceOperator extends LuceneOperator {
 
     LeafReaderContext lastLeaf = null;
     int lastDoc = -1;
+    int firstDoc = -1;
+    long totalDistances = 0;
+
 
     void before(LeafReaderContext leaf) {
+        if (firstDoc != -1) {
+            totalDistances += (lastDoc - firstDoc);
+        }
         if (lastLeaf != leaf) {
             lastLeaf = leaf;
             lastDoc = -1;
@@ -278,6 +284,9 @@ public class LuceneSourceOperator extends LuceneOperator {
                     System.err.println("--> gap from " + lastDoc + " to " + doc + " in " + lastLeaf.ord);
                 }
                 lastDoc = doc;
+                if (firstDoc == -1) {
+                    firstDoc = doc;
+                }
                 docsBuilder.appendInt(doc);
                 currentPagePos++;
             } else {
@@ -428,6 +437,10 @@ public class LuceneSourceOperator extends LuceneOperator {
 
     @Override
     public void additionalClose() {
+        if (firstDoc != -1) {
+            totalDistances += (lastDoc - firstDoc);
+        }
+        System.err.println("--> total distances " + totalDistances);
         Releasables.close(docsBuilder, scoreBuilder);
     }
 
