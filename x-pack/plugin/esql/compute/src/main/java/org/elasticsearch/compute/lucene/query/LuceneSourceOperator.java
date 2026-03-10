@@ -276,8 +276,8 @@ public class LuceneSourceOperator extends LuceneOperator {
                 --remainingDocs;
                 if (lastDoc != -1 && lastDoc + 1 != doc) {
                     System.err.println("--> gap from " + lastDoc + " to " + doc + " in " + lastLeaf.ord);
-                    lastDoc = doc;
                 }
+                lastDoc = doc;
                 docsBuilder.appendInt(doc);
                 currentPagePos++;
             } else {
