@@ -7,6 +7,7 @@
 
 package org.elasticsearch.compute.lucene.query;
 
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BoostQuery;
@@ -21,6 +22,7 @@ import org.apache.lucene.search.PointInSetQuery;
 import org.apache.lucene.search.PointRangeQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorable;
+import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BlockUtils;
@@ -41,6 +43,9 @@ import org.elasticsearch.logging.Logger;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.apache.lucene.search.ScoreMode.COMPLETE;
@@ -83,7 +88,7 @@ public class LuceneSourceOperator extends LuceneOperator {
             super(
                 shardContexts,
                 queryFunction,
-                dataPartitioning,
+                DataPartitioning.SHARD,
                 dataPartitioning == DataPartitioning.AUTO ? autoStrategy.pickStrategy(limit) : q -> {
                     throw new UnsupportedOperationException("locked in " + dataPartitioning);
                 },
@@ -215,6 +220,7 @@ public class LuceneSourceOperator extends LuceneOperator {
         }
     }
 
+
     @SuppressWarnings("this-escape")
     public LuceneSourceOperator(
         IndexedByShardId<? extends RefCounted> refCounteds,
@@ -248,7 +254,19 @@ public class LuceneSourceOperator extends LuceneOperator {
         }
     }
 
+    LeafReaderContext lastLeaf = null;
+    int lastDoc = -1;
+
+    void before(LeafReaderContext leaf) {
+        if (lastLeaf != leaf) {
+            lastLeaf = leaf;
+            lastDoc = -1;
+        }
+    }
+
     class LimitingCollector implements LeafCollector {
+
+
         @Override
         public void setScorer(Scorable scorer) {}
 
@@ -256,12 +274,18 @@ public class LuceneSourceOperator extends LuceneOperator {
         public void collect(int doc) throws IOException {
             if (remainingDocs > 0) {
                 --remainingDocs;
+                if (lastDoc != -1 && lastDoc + 1 != doc) {
+                    System.err.println("--> gap from " + lastDoc + " to " + doc + " in " + lastLeaf.ord);
+                    lastDoc = doc;
+                }
                 docsBuilder.appendInt(doc);
                 currentPagePos++;
             } else {
                 throw new CollectionTerminatedException();
             }
         }
+
+
     }
 
     final class ScoringCollector extends LuceneSourceOperator.LimitingCollector {
@@ -297,9 +321,11 @@ public class LuceneSourceOperator extends LuceneOperator {
         long start = System.nanoTime();
         try {
             final LuceneScorer scorer = getCurrentOrLoadNextScorer();
+
             if (scorer == null) {
                 return null;
             }
+            before(scorer.leafReaderContext());
             final int remainingDocsStart = remainingDocs = limiter.remaining();
             try {
                 scorer.scoreNextRange(
