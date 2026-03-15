@@ -48,6 +48,7 @@ import org.elasticsearch.core.Assertions;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.codec.tsdb.BinaryDVCompressionMode;
+import org.elasticsearch.index.codec.tsdb.PartitionedDocValues;
 import org.elasticsearch.index.codec.tsdb.TSDBDocValuesEncoder;
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.blockloader.docvalues.BlockDocValuesReader;
@@ -1107,7 +1108,6 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
 
         final NumericDocValues ords = getNumeric(entry.ordsEntry, entry.termsDictEntry.termsDictSize);
         return new BaseSortedDocValues(entry) {
-
             @Override
             public int ordValue() throws IOException {
                 return (int) ords.longValue();
@@ -1141,6 +1141,14 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
             @Override
             public int docIDRunEnd() throws IOException {
                 return ords.docIDRunEnd();
+            }
+
+            @Override
+            SortedOrdinalReader sortedOrdinalReader() {
+                if (ords instanceof BaseDenseNumericValues denseOrds) {
+                    return denseOrds.sortedOrdinalReader();
+                }
+                return null;
             }
 
             @Override
@@ -1217,10 +1225,10 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         };
     }
 
-    abstract class BaseSortedDocValues extends SortedDocValues implements BlockLoader.OptionalColumnAtATimeReader {
+    abstract class BaseSortedDocValues extends SortedDocValues implements BlockLoader.OptionalColumnAtATimeReader, PartitionedDocValues {
 
         final SortedEntry entry;
-        final TermsEnum termsEnum;
+        final TermsDict termsEnum;
 
         BaseSortedDocValues(SortedEntry entry) throws IOException {
             this.entry = entry;
@@ -1248,8 +1256,112 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         @Override
-        public TermsEnum termsEnum() throws IOException {
+        public TermsDict termsEnum() throws IOException {
             return new TermsDict(entry.termsDictEntry, data, merging);
+        }
+
+        @Nullable
+        SortedOrdinalReader sortedOrdinalReader() {
+            return null;
+        }
+
+        @Override
+        public LeadingPartition leadingPartitions(int maxPartitions, int docsPerSlice) throws IOException {
+            int tsidCount = Math.toIntExact(entry.termsDictEntry.termsDictSize);
+            int estimatedPartitions = Math.clamp(maxDoc / docsPerSlice, 2, Math.min(maxPartitions, tsidCount));
+            int numBoundaries = estimatedPartitions - 1;
+            int[] leadingOrds = new int[numBoundaries];
+            SortedOrdinalReader ordinalReader = sortedOrdinalReader();
+            if (ordinalReader != null) {
+                for (int i = 1; i < estimatedPartitions; i++) {
+                    leadingOrds[i - 1] = (int) ((long) i * tsidCount / estimatedPartitions);
+                }
+                int[] sliceDocs = new int[estimatedPartitions];
+                sliceDocs[0] = 0;
+                for (int i = 0; i < numBoundaries; i++) {
+                    sliceDocs[i + 1] = Math.toIntExact(ordinalReader.startDocs.get(leadingOrds[i]));
+                }
+                convertStartDocsToNumDocs(sliceDocs, estimatedPartitions, maxDoc);
+                BytesRef[] keys = new BytesRef[numBoundaries];
+                for (int i = 0; i < numBoundaries; i++) {
+                    keys[i] = BytesRef.deepCopyOf(lookupOrd(leadingOrds[i]));
+                }
+                return new LeadingPartition(keys, sliceDocs, estimatedPartitions);
+            }
+            int lastOrd = -1;
+            int foundBoundaries = 0;
+            for (int i = 1; i < estimatedPartitions; i++) {
+                int doc = (int) ((long) i * maxDoc / estimatedPartitions);
+                boolean b = advanceExact(doc);
+                assert b;
+                int ord = ordValue();
+                if (ord == lastOrd) {
+                    int nextStart = searchStartDoc(lastOrd + 1, doc, maxDoc);
+                    if (nextStart >= maxDoc) {
+                        break;
+                    }
+                    advanceExact(nextStart);
+                    ord = ordValue();
+                }
+                lastOrd = ord;
+                leadingOrds[foundBoundaries++] = ord;
+            }
+            int numPartitions = foundBoundaries + 1;
+            int[] sliceDocs = new int[numPartitions];
+            sliceDocs[0] = 0;
+            for (int i = 0; i < foundBoundaries; i++) {
+                sliceDocs[i + 1] = searchStartDoc(leadingOrds[i], sliceDocs[i], maxDoc);
+            }
+            convertStartDocsToNumDocs(sliceDocs, numPartitions, maxDoc);
+            BytesRef[] keys = new BytesRef[foundBoundaries];
+            for (int i = 0; i < foundBoundaries; i++) {
+                keys[i] = BytesRef.deepCopyOf(lookupOrd(leadingOrds[i]));
+            }
+            return new LeadingPartition(keys, sliceDocs, numPartitions);
+        }
+
+        static void convertStartDocsToNumDocs(int[] sliceDocs, int length, int maxDoc) {
+            int nextStart = maxDoc;
+            for (int i = length - 1; i >= 0; i--) {
+                int start = sliceDocs[i];
+                sliceDocs[i] = nextStart - start;
+                nextStart = start;
+            }
+        }
+
+        @Override
+        public void partitionDocCounts(BytesRef[] leadKeys, int[] sliceDocs, int[] ords) throws IOException {
+            // leadKeys has numPartitions-1 entries; partition 0 always starts at doc 0
+            int numPartitions = leadKeys.length + 1;
+            sliceDocs[0] = 0;
+            int numBoundaries = 0;
+            for (BytesRef key : leadKeys) {
+                TermsEnum.SeekStatus status = termsEnum.seekCeilForward(key);
+                if (status == TermsEnum.SeekStatus.END) {
+                    break;
+                }
+                ords[numBoundaries++] = (int) termsEnum.ord;
+            }
+            for (int i = 0; i < numBoundaries; i++) {
+                sliceDocs[i + 1] = searchStartDoc(ords[i], sliceDocs[i], maxDoc);
+            }
+            Arrays.fill(sliceDocs, numBoundaries + 1, numPartitions, maxDoc);
+            convertStartDocsToNumDocs(sliceDocs, numPartitions, maxDoc);
+        }
+
+        private int searchStartDoc(int targetOrd, int lo, int maxDoc) throws IOException {
+            SortedOrdinalReader ordinalReader = sortedOrdinalReader();
+            if (ordinalReader != null) {
+                return Math.toIntExact(ordinalReader.startDocs.get(targetOrd));
+            }
+            int hi = maxDoc;
+            while (lo < hi) {
+                int mid = (lo + hi) >>> 1;
+                advanceExact(mid);
+                if (ordValue() < targetOrd) lo = mid + 1;
+                else hi = mid;
+            }
+            return lo;
         }
 
         @Override
@@ -1412,8 +1524,13 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
 
         @Override
         public TermsEnum termsEnum() throws IOException {
+            return termsDict();
+        }
+
+        TermsDict termsDict() throws IOException {
             return new TermsDict(entry.termsDictEntry, data, merging);
         }
+
     }
 
     private static class TermsDict extends BaseTermsEnum {
@@ -1427,6 +1544,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         final RandomAccessInput indexBytes;
         final BytesRef term;
         long ord = -1;
+        long lastSeekIndexBlock = 0L;
 
         BytesRef blockBuffer = null;
         ByteArrayDataInput blockInput = null;
@@ -1507,7 +1625,10 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         private long seekTermsIndex(BytesRef text) throws IOException {
-            long lo = 0L;
+            return seekTermsIndex(text, 0L);
+        }
+
+        private long seekTermsIndex(BytesRef text, long lo) throws IOException {
             long hi = (entry.termsDictSize - 1) >> entry.termsDictIndexShift;
             while (lo <= hi) {
                 final long mid = (lo + hi) >>> 1;
@@ -1536,10 +1657,15 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         private long seekBlock(BytesRef text) throws IOException {
-            long index = seekTermsIndex(text);
+            return seekBlock(text, 0L);
+        }
+
+        private long seekBlock(BytesRef text, long indexLo) throws IOException {
+            long index = seekTermsIndex(text, indexLo);
             if (index == -1L) {
                 return -1L;
             }
+            lastSeekIndexBlock = index;
 
             long ordLo = index << entry.termsDictIndexShift;
             long ordHi = Math.min(entry.termsDictSize, ordLo + (1L << entry.termsDictIndexShift)) - 1L;
@@ -1565,9 +1691,11 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
             return blockHi;
         }
 
-        @Override
-        public SeekStatus seekCeil(BytesRef text) throws IOException {
-            final long block = seekBlock(text);
+        SeekStatus seekCeilForward(BytesRef text) throws IOException {
+            return applyBlock(text, seekBlock(text, lastSeekIndexBlock));
+        }
+
+        private SeekStatus applyBlock(BytesRef text, long block) throws IOException {
             if (block == -1) {
                 // before the first term, or empty terms dict
                 if (entry.termsDictSize == 0) {
@@ -1594,6 +1722,11 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                     return SeekStatus.END;
                 }
             }
+        }
+
+        @Override
+        public SeekStatus seekCeil(BytesRef text) throws IOException {
+            return applyBlock(text, seekBlock(text));
         }
 
         private void decompressBlock() throws IOException {

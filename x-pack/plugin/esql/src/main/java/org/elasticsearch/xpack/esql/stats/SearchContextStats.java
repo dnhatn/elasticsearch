@@ -22,6 +22,7 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.NumericUtils;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.util.Maps;
+import org.elasticsearch.index.codec.tsdb.PartitionedDocValues;
 import org.elasticsearch.index.mapper.ConstantFieldType;
 import org.elasticsearch.index.mapper.DocCountFieldMapper.DocCountFieldType;
 import org.elasticsearch.index.mapper.IdFieldMapper;
@@ -37,6 +38,7 @@ import org.elasticsearch.xpack.esql.core.expression.FieldAttribute;
 import org.elasticsearch.xpack.esql.core.expression.FieldAttribute.FieldName;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +57,7 @@ import static org.elasticsearch.index.mapper.KeywordFieldMapper.KeywordFieldType
 public class SearchContextStats implements SearchStats {
 
     private final List<SearchExecutionContext> contexts;
+    private Boolean canPartitionByTsid;
 
     private record FieldConfig(boolean exists, boolean hasExactSubfield, boolean indexed, boolean hasDocValues, MappedFieldType fieldType) {
         FieldConfig(boolean exists, boolean hasExactSubfield, boolean indexed, boolean hasDocValues) {
@@ -534,5 +537,24 @@ public class SearchContextStats implements SearchStats {
             shards.putIfAbsent(shardId, indexMetadata);
         }
         return shards;
+    }
+
+    @Override
+    public boolean canPartitionByTsidPrefix() {
+        if (canPartitionByTsid == null) {
+            try {
+                for (SearchExecutionContext context : contexts) {
+                    // TODO: expose this at the planner setting
+                    if (PartitionedDocValues.canPartitionByTsid(context.searcher(), 250_00) == false) {
+                        canPartitionByTsid = false;
+                        return false;
+                    }
+                }
+            } catch (IOException ex) {
+                throw new UncheckedIOException("failed to read time-series partition", ex);
+            }
+            canPartitionByTsid = true;
+        }
+        return canPartitionByTsid;
     }
 }
