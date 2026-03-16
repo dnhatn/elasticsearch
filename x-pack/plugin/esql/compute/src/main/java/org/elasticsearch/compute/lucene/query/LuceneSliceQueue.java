@@ -339,6 +339,7 @@ public final class LuceneSliceQueue {
 
             @Override
             List<List<PartialLeafReaderContext>> groups(IndexSearcher searcher, int taskConcurrency) throws IOException {
+                long startTimeInNanos = System.nanoTime();
                 List<LeafReaderContext> leaves = new ArrayList<>(searcher.getLeafContexts());
                 leaves.sort((o1, o2) -> Integer.compare(o2.reader().maxDoc(), o1.reader().maxDoc()));
                 int totalDocs = searcher.getIndexReader().maxDoc();
@@ -348,10 +349,8 @@ public final class LuceneSliceQueue {
                     return List.of(leaves.stream().map(l -> new PartialLeafReaderContext(l, 0, l.reader().maxDoc())).toList());
                 }
                 PartitionedDocValues firstPartition = (PartitionedDocValues) firstDV;
-                PartitionedDocValues.LeadingPartition leading = firstPartition.leadingPartitions(
-                    Math.clamp(totalDocs / MAX_DOCS_PER_SLICE, 2, 256),
-                    MAX_DOCS_PER_SLICE
-                );
+                PartitionedDocValues.LeadingPartition leading = firstPartition.leadingPartitions(MAX_DOCS_PER_SLICE);
+                System.err.println("--> leading took " + (System.nanoTime() - startTimeInNanos) + " ns");
                 int numPartitions = leading.numPartitions();
                 List<Slice> slices = new ArrayList<>(numPartitions);
                 // add first leaf to slices
@@ -388,33 +387,8 @@ public final class LuceneSliceQueue {
                         }
                     }
                 }
-                return combineSlices(slices.stream().filter(s -> s.numDocs > 0).toList(), MAX_DOCS_PER_SLICE);
-            }
-
-            private List<List<PartialLeafReaderContext>> combineSlices(List<Slice> slices, int docsPerSlice) {
-                Map<LeafReaderContext, PartialLeafReaderContext> current = new IdentityHashMap<>();
-                List<List<PartialLeafReaderContext>> results = new ArrayList<>(slices.size());
-                final int minDocsPerSlice = Math.max(docsPerSlice * 2 / 3, 1);
-                int pendingDocs = 0;
-                for (Slice slice : slices) {
-                    if (pendingDocs >= docsPerSlice
-                        || (pendingDocs > minDocsPerSlice && (pendingDocs + slice.numDocs) > (docsPerSlice * 3 / 2))) {
-                        results.add(current.values().stream().toList());
-                        current.clear();
-                        pendingDocs = 0;
-                    }
-                    for (PartialLeafReaderContext leaf : slice.leaves) {
-                        final LeafReaderContext ctx = leaf.leafReaderContext();
-                        current.merge(ctx, leaf, (k, curr) -> {
-                            assert curr.maxDoc() == leaf.minDoc() : "current=" + curr + "; next=" + leaf;
-                            return new PartialLeafReaderContext(ctx, curr.minDoc(), leaf.maxDoc());
-                        });
-                    }
-                    pendingDocs += slice.numDocs;
-                }
-                if (current.isEmpty() == false) {
-                    results.add(current.values().stream().toList());
-                }
+                List<List<PartialLeafReaderContext>> results = slices.stream().map(s -> s.leaves).toList();
+                System.err.println("--> partition took " + (System.nanoTime() - startTimeInNanos) + " ns");
                 return results;
             }
         };

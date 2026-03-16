@@ -341,8 +341,9 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
                     }
                     // prefer partitioning by tsid prefixes
                     var partitioning = ctx.configuration().pragmas().dataPartitioning(ctx.plannerSettings().defaultDataPartitioning());
-                    if (partitioning != DataPartitioning.SHARD && ctx.searchStats().canPartitionByTsidPrefix()) {
-                        System.err.println("--> skip doc-partitioning");
+                    System.err.println("--> data-partitioning " + partitioning);
+                    if (partitioning == DataPartitioning.AUTO && ctx.searchStats().canPartitionByTsidPrefix()) {
+                        System.err.println("--> skip rewrite " + partitioning + " to enable time-series partitioning");
                         return evalExec;
                     }
                 }

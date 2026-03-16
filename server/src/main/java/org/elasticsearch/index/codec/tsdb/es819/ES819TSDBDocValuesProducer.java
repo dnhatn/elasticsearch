@@ -1266,9 +1266,9 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         @Override
-        public LeadingPartition leadingPartitions(int maxPartitions, int docsPerSlice) throws IOException {
+        public LeadingPartition leadingPartitions(int docsPerSlice) throws IOException {
             int tsidCount = Math.toIntExact(entry.termsDictEntry.termsDictSize);
-            int estimatedPartitions = Math.clamp(maxDoc / docsPerSlice, 2, Math.min(maxPartitions, tsidCount));
+            int estimatedPartitions = Math.clamp(maxDoc / docsPerSlice, 2, tsidCount);
             int numBoundaries = estimatedPartitions - 1;
             int[] leadingOrds = new int[numBoundaries];
             SortedOrdinalReader ordinalReader = sortedOrdinalReader();
@@ -1335,6 +1335,7 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
             int numPartitions = leadKeys.length + 1;
             sliceDocs[0] = 0;
             int numBoundaries = 0;
+            long startTime = System.nanoTime();
             for (BytesRef key : leadKeys) {
                 TermsEnum.SeekStatus status = termsEnum.seekCeilForward(key);
                 if (status == TermsEnum.SeekStatus.END) {
@@ -1342,11 +1343,13 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
                 }
                 ords[numBoundaries++] = (int) termsEnum.ord;
             }
+            System.err.println("--> find ords max-doc=" +  maxDoc + " took " + (System.nanoTime() - startTime) + " ns");
             for (int i = 0; i < numBoundaries; i++) {
                 sliceDocs[i + 1] = searchStartDoc(ords[i], sliceDocs[i], maxDoc);
             }
             Arrays.fill(sliceDocs, numBoundaries + 1, numPartitions, maxDoc);
             convertStartDocsToNumDocs(sliceDocs, numPartitions, maxDoc);
+            System.err.println("--> doc-count max-doc=" +  maxDoc + " took " + (System.nanoTime() - startTime) + " ns");
         }
 
         private int searchStartDoc(int targetOrd, int lo, int maxDoc) throws IOException {

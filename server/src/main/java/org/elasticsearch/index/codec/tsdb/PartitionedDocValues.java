@@ -20,7 +20,7 @@ import java.io.IOException;
 public interface PartitionedDocValues {
     record LeadingPartition(BytesRef[] keys, int[] sliceDocs, int numPartitions) {}
 
-    LeadingPartition leadingPartitions(int numPartitions, int docsPerSlice) throws IOException;
+    LeadingPartition leadingPartitions(int docsPerSlice) throws IOException;
 
     void partitionDocCounts(BytesRef[] leadKeys, int[] sliceDocs, int[] scratch) throws IOException;
 
