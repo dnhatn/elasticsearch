@@ -1334,30 +1334,33 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
             // leadKeys has numPartitions-1 entries; partition 0 always starts at doc 0
             int numPartitions = leadKeys.length + 1;
             sliceDocs[0] = 0;
-            int numBoundaries = 0;
-            long startTime = System.nanoTime();
-            for (BytesRef key : leadKeys) {
-                TermsEnum.SeekStatus status = termsEnum.seekCeilForward(key);
-                if (status == TermsEnum.SeekStatus.END) {
-                    break;
-                }
-                ords[numBoundaries++] = (int) termsEnum.ord;
-            }
-            System.err.println("--> find ords max-doc=" +  maxDoc + " took " + (System.nanoTime() - startTime) + " ns");
-            for (int i = 0; i < numBoundaries; i++) {
-                sliceDocs[i + 1] = searchStartDoc(ords[i], sliceDocs[i], maxDoc);
-            }
+            int numBoundaries = termsEnum.seekCeilForwardAll(leadKeys, leadKeys.length, ords);
+            searchStartDocBatch(ords, 0, numBoundaries, 0, maxDoc, sliceDocs);
             Arrays.fill(sliceDocs, numBoundaries + 1, numPartitions, maxDoc);
             convertStartDocsToNumDocs(sliceDocs, numPartitions, maxDoc);
-            System.err.println("--> doc-count max-doc=" +  maxDoc + " took " + (System.nanoTime() - startTime) + " ns");
         }
 
-        private int searchStartDoc(int targetOrd, int lo, int maxDoc) throws IOException {
+        /**
+         * Divide-and-conquer batch binary search for start docs.
+         * Fills sliceDocs[from+1..to] for ords[from..to-1].
+         * Exploits monotonicity: startDoc(ords[i]) <= startDoc(ords[i+1]).
+         * Total advanceExact calls: O(N * log(maxDoc/N)) vs O(N * log(maxDoc)) sequential.
+         */
+        private void searchStartDocBatch(int[] ords, int from, int to, int lo, int hi, int[] sliceDocs)
+            throws IOException {
+            if (from >= to) return;
+            int mid = (from + to) >>> 1;
+            int startDoc = searchStartDoc(ords[mid], lo, hi);
+            sliceDocs[mid + 1] = startDoc;
+            searchStartDocBatch(ords, from, mid, lo, startDoc, sliceDocs);
+            searchStartDocBatch(ords, mid + 1, to, startDoc, hi, sliceDocs);
+        }
+
+        private int searchStartDoc(int targetOrd, int lo, int hi) throws IOException {
             SortedOrdinalReader ordinalReader = sortedOrdinalReader();
             if (ordinalReader != null) {
                 return Math.toIntExact(ordinalReader.startDocs.get(targetOrd));
             }
-            int hi = maxDoc;
             while (lo < hi) {
                 int mid = (lo + hi) >>> 1;
                 advanceExact(mid);
@@ -1696,6 +1699,53 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
 
         SeekStatus seekCeilForward(BytesRef text) throws IOException {
             return applyBlock(text, seekBlock(text, lastSeekIndexBlock));
+        }
+
+        /**
+         * Batch version of seekCeilForward for a sorted array of keys.
+         * Phase 1: binary-search each key's block (no LZ4 decompression).
+         * Phase 2: decompress each distinct block once, scanning forward continuously
+         * for all keys in that block instead of restarting from block start per key.
+         *
+         * @return number of keys found (may be less than numKeys if END is reached)
+         */
+        int seekCeilForwardAll(BytesRef[] keys, int numKeys, int[] resultOrds) throws IOException {
+            if (numKeys == 0) return 0;
+
+            // Phase 1: find block for each key via binary search, no decompression.
+            // Keys are sorted ascending, so lastSeekIndexBlock grows monotonically.
+            long[] blocks = new long[numKeys];
+            for (int i = 0; i < numKeys; i++) {
+                long block = seekBlock(keys[i], lastSeekIndexBlock);
+                blocks[i] = (block < 0) ? 0 : block;
+            }
+
+            // Phase 2: decompress each distinct block once, scan forward for all its keys.
+            int numFound = 0;
+            int ki = 0;
+            while (ki < numKeys) {
+                long block = blocks[ki];
+                this.ord = block << TERMS_DICT_BLOCK_LZ4_SHIFT;
+                bytes.seek(blockAddresses.get(block));
+                decompressBlock();
+                // Scan forward for all keys whose binary-search block is this block.
+                // After finding key[ki] at position P, continue from P for key[ki+1]
+                // rather than restarting from block start.
+                while (ki < numKeys && blocks[ki] == block) {
+                    while (true) {
+                        int cmp = term.compareTo(keys[ki]);
+                        if (cmp >= 0) {
+                            resultOrds[numFound++] = (int) ord;
+                            ki++;
+                            break;
+                        }
+                        if (next() == null) {
+                            return numFound;
+                        }
+                    }
+                }
+            }
+            return numFound;
         }
 
         private SeekStatus applyBlock(BytesRef text, long block) throws IOException {
