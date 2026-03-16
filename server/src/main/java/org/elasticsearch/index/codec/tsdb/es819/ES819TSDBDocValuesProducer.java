@@ -1340,12 +1340,6 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
             convertStartDocsToNumDocs(sliceDocs, numPartitions, maxDoc);
         }
 
-        /**
-         * Divide-and-conquer batch binary search for start docs.
-         * Fills sliceDocs[from+1..to] for ords[from..to-1].
-         * Exploits monotonicity: startDoc(ords[i]) <= startDoc(ords[i+1]).
-         * Total advanceExact calls: O(N * log(maxDoc/N)) vs O(N * log(maxDoc)) sequential.
-         */
         private void searchStartDocBatch(int[] ords, int from, int to, int lo, int hi, int[] sliceDocs)
             throws IOException {
             if (from >= to) return;
