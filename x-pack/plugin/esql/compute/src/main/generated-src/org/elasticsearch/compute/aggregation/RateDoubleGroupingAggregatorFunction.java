@@ -129,6 +129,17 @@ public final class RateDoubleGroupingAggregatorFunction extends AbstractRateGrou
     }
 
     @Override
+    public boolean canEmit(AggregatorMode mode, Page nextInputPage) {
+        if (mode.isInputPartial()) {
+            return true;
+        }
+        IntVector sliceIndices = ((IntBlock) nextInputPage.getBlock(channels.get(2))).asVector();
+        assert sliceIndices != null : "expected slice indices vector in time-series aggregation";
+        final int sliceIndex = sliceIndices.getInt(0);
+        return sliceIndex != lastSliceIndex;
+    }
+
+    @Override
     public AddInput prepareProcessRawInputPage(SeenGroupIds seenGroupIds, Page page) {
         DoubleBlock valuesBlock = page.getBlock(channels.get(0));
         if (valuesBlock.areAllValuesNull()) {

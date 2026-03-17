@@ -158,4 +158,16 @@ public interface GroupingAggregatorFunction extends Releasable {
 
     /** The number of blocks used by intermediate state. */
     int intermediateBlockCount();
+
+    /**
+     * Whether this aggregator is ready to emit partial results for the current accumulated state.
+     * Called before periodic partial emission to allow aggregators to defer emission until
+     * their internal state is complete. For example, rate aggregators buffer raw data points
+     * per slice and must wait until a slice boundary is reached before emitting.
+     *
+     * @return {@code true} if partial results can be emitted, {@code false} to defer
+     */
+    default boolean canEmit(AggregatorMode mode, Page newInputPage) {
+        return true;
+    }
 }

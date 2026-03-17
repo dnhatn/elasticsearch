@@ -267,7 +267,9 @@ public class HashAggregationOperator implements Operator {
     @Override
     public void addInput(Page page) {
         try {
-            maybeReinitializeAfterPeriodicallyEmitted();
+            if (shouldEmitPartialResultsPeriodically(page)) {
+                emitPartialResultsPeriodically();
+            }
             GroupingAggregatorFunction.AddInput[] prepared = new GroupingAggregatorFunction.AddInput[aggregators.size()];
             class AddInput implements GroupingAggregatorFunction.AddInput {
                 long hashStart = System.nanoTime();
@@ -327,9 +329,6 @@ public class HashAggregationOperator implements Operator {
                 hashNanos += System.nanoTime() - add.hashStart;
             }
             rowsAddedInCurrentBatch += page.getPositionCount();
-            if (shouldEmitPartialResultsPeriodically()) {
-                emit();
-            }
         } finally {
             page.releaseBlocks();
             pagesProcessed++;
@@ -361,17 +360,6 @@ public class HashAggregationOperator implements Operator {
         emit();
     }
 
-    private void maybeReinitializeAfterPeriodicallyEmitted() {
-        if (rowsReceived > 0 && rowsAddedInCurrentBatch == 0) {
-            blockHash.close();
-            blockHash = null;
-            blockHash = blockHashSupplier.get();
-            for (int i = 0; i < aggregators.size(); i++) {
-                Releasables.close(aggregators.set(i, aggregatorFactories.get(i).apply(driverContext)));
-            }
-        }
-    }
-
     protected void emit() {
         if (rowsAddedInCurrentBatch == 0) {
             return;
@@ -395,7 +383,17 @@ public class HashAggregationOperator implements Operator {
         }
     }
 
-    protected boolean shouldEmitPartialResultsPeriodically() {
+    final void emitPartialResultsPeriodically() {
+        emit();
+        blockHash.close();
+        blockHash = null;
+        blockHash = blockHashSupplier.get();
+        for (int i = 0; i < aggregators.size(); i++) {
+            Releasables.close(aggregators.set(i, aggregatorFactories.get(i).apply(driverContext)));
+        }
+    }
+
+    final boolean shouldEmitPartialResultsPeriodically(Page nextInputPage) {
         if (aggregatorMode.isOutputPartial() == false) {
             return false;
         }
@@ -406,7 +404,15 @@ public class HashAggregationOperator implements Operator {
         if (numKeys < partialEmitKeysThreshold) {
             return false;
         }
-        return rowsAddedInCurrentBatch * partialEmitUniquenessThreshold <= numKeys;
+        if (rowsAddedInCurrentBatch * partialEmitUniquenessThreshold > numKeys) {
+            return false;
+        }
+        for (GroupingAggregator aggregator : aggregators) {
+            if (aggregator.aggregatorFunction().canEmit(aggregatorMode, nextInputPage) == false) {
+                return false;
+            }
+        }
+        return true;
     }
 
     protected void evaluateAggregator(
