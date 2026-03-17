@@ -267,7 +267,9 @@ public class HashAggregationOperator implements Operator {
     @Override
     public void addInput(Page page) {
         try {
-            maybeReinitializeAfterPeriodicallyEmitted();
+            if (shouldEmitPartialResultsPeriodically()) {
+                emitPartialResultsPeriodically(page);
+            }
             GroupingAggregatorFunction.AddInput[] prepared = new GroupingAggregatorFunction.AddInput[aggregators.size()];
             class AddInput implements GroupingAggregatorFunction.AddInput {
                 long hashStart = System.nanoTime();
@@ -316,7 +318,6 @@ public class HashAggregationOperator implements Operator {
                 }
             }
             try (AddInput add = new AddInput()) {
-                checkState(needsInput(), "Operator is already finishing");
                 requireNonNull(page, "page is null");
 
                 for (int i = 0; i < prepared.length; i++) {
@@ -327,9 +328,6 @@ public class HashAggregationOperator implements Operator {
                 hashNanos += System.nanoTime() - add.hashStart;
             }
             rowsAddedInCurrentBatch += page.getPositionCount();
-            if (shouldEmitPartialResultsPeriodically()) {
-                emit();
-            }
         } finally {
             page.releaseBlocks();
             pagesProcessed++;
@@ -361,17 +359,6 @@ public class HashAggregationOperator implements Operator {
         emit();
     }
 
-    private void maybeReinitializeAfterPeriodicallyEmitted() {
-        if (rowsReceived > 0 && rowsAddedInCurrentBatch == 0) {
-            blockHash.close();
-            blockHash = null;
-            blockHash = blockHashSupplier.get();
-            for (int i = 0; i < aggregators.size(); i++) {
-                Releasables.close(aggregators.set(i, aggregatorFactories.get(i).apply(driverContext)));
-            }
-        }
-    }
-
     protected void emit() {
         if (rowsAddedInCurrentBatch == 0) {
             return;
@@ -382,10 +369,19 @@ public class HashAggregationOperator implements Operator {
         try {
             selected = blockHash.nonEmpty();
             if (selected.getPositionCount() <= maxPageSize) {
-                output = ReleasableIterator.single(addAggResults(selected, aggBlockCounts));
+                output = ReleasableIterator.single(addAggResults(blockHash, aggregators, selected, aggBlockCounts));
+                Releasables.close(() -> {
+                    blockHash.close();
+                    blockHash = null;
+                    Releasables.close(aggregators);
+                    aggregators.clear();
+                });
             } else {
-                output = new MultiPageResult(selected, aggBlockCounts);
-                selected = null; // Selected has moved into the output
+                output = new MultiPageResult(blockHash, List.copyOf(aggregators), selected, aggBlockCounts);
+                // moved into the output
+                blockHash = null;
+                aggregators.clear();
+                selected = null;
             }
         } finally {
             rowsAddedInCurrentBatch = 0;
@@ -395,7 +391,19 @@ public class HashAggregationOperator implements Operator {
         }
     }
 
+    protected void emitPartialResultsPeriodically(Page newInputPage) {
+        emit();
+        assert blockHash == null;
+        blockHash = blockHashSupplier.get();
+        for (int i = 0; i < aggregators.size(); i++) {
+            aggregators.set(i, aggregatorFactories.get(i).apply(driverContext));
+        }
+    }
+
     protected boolean shouldEmitPartialResultsPeriodically() {
+        if (output != null) {
+            return false;
+        }
         if (aggregatorMode.isOutputPartial() == false) {
             return false;
         }
@@ -410,6 +418,7 @@ public class HashAggregationOperator implements Operator {
     }
 
     protected void evaluateAggregator(
+        BlockHash blockHash,
         GroupingAggregator aggregator,
         Block[] blocks,
         int offset,
@@ -441,12 +450,6 @@ public class HashAggregationOperator implements Operator {
     @Override
     public Operator.Status status() {
         return new Status(hashNanos, aggregationNanos, pagesProcessed, rowsReceived, rowsEmitted, emitNanos, emitCount);
-    }
-
-    protected static void checkState(boolean condition, String msg) {
-        if (condition == false) {
-            throw new IllegalArgumentException(msg);
-        }
     }
 
     @Override
@@ -683,10 +686,14 @@ public class HashAggregationOperator implements Operator {
     class MultiPageResult implements ReleasableIterator<Page> {
         private final IntVector selected;
         private final int[] aggBlockCounts;
+        private final BlockHash blockHash;
+        private final List<GroupingAggregator> aggregators;
 
         private int rowOffset = 0;
 
-        MultiPageResult(IntVector selected, int[] aggBlockCounts) {
+        MultiPageResult(BlockHash blockHash, List<GroupingAggregator> aggregators, IntVector selected, int[] aggBlockCounts) {
+            this.blockHash = blockHash;
+            this.aggregators = aggregators;
             this.selected = selected;
             this.aggBlockCounts = aggBlockCounts;
         }
@@ -709,7 +716,7 @@ public class HashAggregationOperator implements Operator {
                     selectedInThisPage = selectedInThisPageBuilder.build().asVector();
                 }
 
-                Page output = addAggResults(selectedInThisPage, aggBlockCounts);
+                Page output = addAggResults(blockHash, aggregators, selectedInThisPage, aggBlockCounts);
                 rowOffset = endOffset;
                 return output;
             } finally {
@@ -720,11 +727,11 @@ public class HashAggregationOperator implements Operator {
 
         @Override
         public void close() {
-            Releasables.close(selected);
+            Releasables.close(blockHash, Releasables.wrap(aggregators), selected);
         }
     }
 
-    private Page addAggResults(IntVector selected, int[] aggBlockCounts) {
+    private Page addAggResults(BlockHash blockHash, List<GroupingAggregator> aggregators, IntVector selected, int[] aggBlockCounts) {
         Block[] keys = blockHash.getKeys(selected);
         Block[] blocks = new Block[keys.length + Arrays.stream(aggBlockCounts).sum()];
         System.arraycopy(keys, 0, blocks, 0, keys.length);
@@ -733,7 +740,7 @@ public class HashAggregationOperator implements Operator {
             try (GroupingAggregatorEvaluationContext evaluationContext = evaluationContext(blockHash, keys)) {
                 for (int i = 0; i < aggregators.size(); i++) {
                     var aggregator = aggregators.get(i);
-                    evaluateAggregator(aggregator, blocks, blockOffset, selected, evaluationContext);
+                    evaluateAggregator(blockHash, aggregator, blocks, blockOffset, selected, evaluationContext);
                     blockOffset += aggBlockCounts[i];
                 }
             }

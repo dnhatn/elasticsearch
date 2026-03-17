@@ -12,10 +12,19 @@ import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.IntArray;
 import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.common.util.PageCacheRecycler;
+import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 
-class AbstractRateGroupingFunction {
+public abstract class AbstractRateGroupingFunction {
+
+    /**
+     * Whether we can flush the current pending buffer if the page contain a new state
+     * This serves two purposes: reduce the raw buffer and allow the hash emit partial results periodically
+     * @return true if the internal was flushed and no pending changes.
+     */
+    public abstract boolean flushIfSliceChanged(AggregatorMode mode, Page page);
+
     /**
      * Buffers data points in two arrays: one for timestamps and one for values, partitioned into multiple slices.
      * Each slice is sorted in descending order of timestamp. A new slice is created when a data point has a

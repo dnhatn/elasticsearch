@@ -12,6 +12,7 @@ import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.IntArray;
 import org.elasticsearch.compute.Describable;
+import org.elasticsearch.compute.aggregation.AbstractRateGroupingFunction;
 import org.elasticsearch.compute.aggregation.AggregatorMode;
 import org.elasticsearch.compute.aggregation.FirstDocIdGroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.GroupingAggregator;
@@ -26,6 +27,7 @@ import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.LongBlock;
+import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.core.AbstractRefCounted;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
@@ -53,7 +55,8 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         List<BlockHash.GroupSpec> groups,
         AggregatorMode aggregatorMode,
         List<GroupingAggregator.Factory> aggregators,
-        int aggregationBatchSize
+        int aggregationBatchSize,
+        int partialEmitKeysThreshold
     ) implements OperatorFactory {
         @Override
         public Operator get(DriverContext driverContext) {
@@ -76,7 +79,8 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
                     // Broken optimizations are allowed as the inputs are vectors.
                     return BlockHash.build(groups, driverContext.blockFactory(), aggregationBatchSize, true);
                 },
-                driverContext
+                driverContext,
+                partialEmitKeysThreshold
             );
         }
 
@@ -98,24 +102,34 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         Rounding.Prepared timeBucket,
         DateFieldMapper.Resolution timeResolution,
         AggregatorMode aggregatorMode,
-        List<GroupingAggregator.Factory> aggregators,
+        List<GroupingAggregator.Factory> aggregatorFactories,
         Supplier<BlockHash> blockHash,
-        DriverContext driverContext
+        DriverContext driverContext,
+        int partialEmitKeysThreshold
     ) {
-        super(aggregatorMode, aggregators, blockHash, Integer.MAX_VALUE, 1.0, Integer.MAX_VALUE, driverContext);
+        super(aggregatorMode, aggregatorFactories, blockHash, partialEmitKeysThreshold, 0.0, Integer.MAX_VALUE, driverContext);
         this.timeBucket = timeBucket;
         this.timeResolution = timeResolution;
+
     }
 
     @Override
     public void finish() {
-        expandWindowBuckets();
+        expandWindowBuckets(blockHash);
         super.finish();
     }
 
     @Override
-    protected boolean shouldEmitPartialResultsPeriodically() {
-        return false;
+    protected void emitPartialResultsPeriodically(Page newInputPage) {
+        boolean readyToEmit = true;
+        for (GroupingAggregator aggregator : aggregators) {
+            if (aggregator.aggregatorFunction() instanceof AbstractRateGroupingFunction rate) {
+                readyToEmit &= rate.flushIfSliceChanged(aggregatorMode, newInputPage);
+            }
+        }
+        if (readyToEmit) {
+            super.emitPartialResultsPeriodically(newInputPage);
+        }
     }
 
     private long largestWindowMillis() {
@@ -187,7 +201,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
      * t2    | prod            | 2025-04-15T01:14:00Z   | 200           |
      * ```
      */
-    private void expandWindowBuckets() {
+    private void expandWindowBuckets(BlockHash blockHash) {
         if (aggregatorMode.isOutputPartial()) {
             return;
         }
@@ -222,6 +236,7 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
 
     @Override
     protected void evaluateAggregator(
+        BlockHash blockHash,
         GroupingAggregator aggregator,
         Block[] blocks,
         int offset,
@@ -230,15 +245,15 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
     ) {
         if (expandingGroups != null && expandingGroups.count > 0 && isValuesAggregator(aggregator.aggregatorFunction())) {
             try (var valuesSelected = selectedForValuesAggregator(driverContext.blockFactory(), selected, expandingGroups)) {
-                super.evaluateAggregator(aggregator, blocks, offset, valuesSelected, evaluationContext);
+                super.evaluateAggregator(blockHash, aggregator, blocks, offset, valuesSelected, evaluationContext);
             }
         } else {
             if (aggregator.aggregatorFunction() instanceof FirstDocIdGroupingAggregatorFunction) {
                 try (IntVector dedup = selectedForDocIdsAggregator(evaluationContext.blockFactory(), selected)) {
-                    super.evaluateAggregator(aggregator, blocks, offset, dedup, evaluationContext);
+                    super.evaluateAggregator(blockHash, aggregator, blocks, offset, dedup, evaluationContext);
                 }
             } else {
-                super.evaluateAggregator(aggregator, blocks, offset, selected, evaluationContext);
+                super.evaluateAggregator(blockHash, aggregator, blocks, offset, selected, evaluationContext);
             }
         }
     }
