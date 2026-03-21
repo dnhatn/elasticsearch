@@ -1,0 +1,43 @@
+/*
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
+ */
+
+package org.elasticsearch.index.codec.tsdb;
+
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.IndexSearcher;
+import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
+
+import java.io.IOException;
+
+public interface PartitionedDocValues {
+    record PrefixPartitions(int[] prefixes, int[] startDocs) {
+        public int size() {
+            return prefixes.length;
+        }
+    }
+
+    PrefixPartitions prefixPartitions() throws IOException;
+
+    boolean hasPrefixPartitions();
+
+    static boolean canPartitionByTsidPrefix(IndexSearcher searcher) throws IOException {
+        for (LeafReaderContext leafContext : searcher.getLeafContexts()) {
+            var sortedDV = leafContext.reader().getSortedDocValues(TimeSeriesIdFieldMapper.NAME);
+            // empty segment
+            if (sortedDV == null) {
+                continue;
+            }
+            if (sortedDV instanceof PartitionedDocValues partition && partition.hasPrefixPartitions()) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+}

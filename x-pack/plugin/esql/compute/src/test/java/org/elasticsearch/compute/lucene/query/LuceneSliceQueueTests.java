@@ -27,11 +27,14 @@ import org.apache.lucene.search.AcceptDocs;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.compute.lucene.IndexedByShardIdFromList;
 import org.elasticsearch.compute.lucene.PartialLeafReaderContext;
 import org.elasticsearch.compute.lucene.ShardContext;
+import org.elasticsearch.index.codec.tsdb.PartitionedDocValues;
+import org.elasticsearch.index.fielddata.AbstractSortedDocValues;
 import org.elasticsearch.test.ESTestCase;
 import org.hamcrest.Matchers;
 
@@ -390,9 +393,16 @@ public class LuceneSliceQueueTests extends ESTestCase {
 
     static class MockLeafReader extends LeafReader {
         private final int maxDoc;
+        private final PartitionedDocValues.PrefixPartitions prefixPartitions;
 
         MockLeafReader(int maxDoc) {
             this.maxDoc = maxDoc;
+            this.prefixPartitions = null;
+        }
+
+        MockLeafReader(int maxDoc, PartitionedDocValues.PrefixPartitions prefixPartitions) {
+            this.maxDoc = maxDoc;
+            this.prefixPartitions = prefixPartitions;
         }
 
         @Override
@@ -417,7 +427,10 @@ public class LuceneSliceQueueTests extends ESTestCase {
 
         @Override
         public SortedDocValues getSortedDocValues(String field) throws IOException {
-            throw new UnsupportedOperationException();
+            if (field.equals("_tsid") == false || prefixPartitions == null) {
+                return null;
+            }
+            return new PartitionedSortedDocValues(prefixPartitions);
         }
 
         @Override
@@ -514,6 +527,49 @@ public class LuceneSliceQueueTests extends ESTestCase {
         @Override
         public CacheHelper getReaderCacheHelper() {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    static class PartitionedSortedDocValues extends AbstractSortedDocValues implements PartitionedDocValues {
+        final PartitionedDocValues.PrefixPartitions prefixPartitions;
+
+        PartitionedSortedDocValues(PrefixPartitions prefixPartitions) {
+            this.prefixPartitions = prefixPartitions;
+        }
+
+        @Override
+        public int ordValue() throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public BytesRef lookupOrd(int ord) throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getValueCount() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean advanceExact(int target) throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int docID() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public PrefixPartitions prefixPartitions() throws IOException {
+            return prefixPartitions;
+        }
+
+        @Override
+        public boolean hasPrefixPartitions() {
+            return prefixPartitions != null;
         }
     }
 }

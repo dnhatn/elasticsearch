@@ -54,7 +54,8 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
     static final int VERSION_START = 0;
     static final int VERSION_BINARY_DV_COMPRESSION = 1;
     static final int VERSION_NUMERIC_LARGE_BLOCKS = 2;
-    static final int VERSION_CURRENT = VERSION_NUMERIC_LARGE_BLOCKS;
+    static final int VERSION_TSID_PARTITIONING_POINTS = 3;
+    static final int VERSION_CURRENT = VERSION_TSID_PARTITIONING_POINTS;
 
     static final int TERMS_DICT_BLOCK_LZ4_SHIFT = 6;
     static final int TERMS_DICT_BLOCK_LZ4_SIZE = 1 << TERMS_DICT_BLOCK_LZ4_SHIFT;
@@ -132,6 +133,12 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
      * The block shift used in DirectMonotonicWriter when encoding the start docs of each ordinal with ordinal range encoding.
      */
     public static final int ORDINAL_RANGE_ENCODING_BLOCK_SHIFT = 12;
+
+    /**
+     * The first byte for the groups of time-series, and subsequent bytes for time-series in that groups, so this would give us
+     * 256 partitions for each query. Eventually we will group tiny partitions to a decent one.
+     */
+    static final int PARTITION_PREFIX_BITS = 16;
 
     final int numericBlockShift;
     final int skipIndexIntervalSize;

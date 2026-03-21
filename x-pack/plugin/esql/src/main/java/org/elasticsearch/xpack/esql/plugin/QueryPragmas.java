@@ -50,6 +50,8 @@ public final class QueryPragmas implements Writeable {
      */
     public static final Setting<String> DATA_PARTITIONING = Setting.simpleString("data_partitioning");
 
+    public static final Setting<Integer> AUTO_PARTITIONING_DOC_THRESHOLD = Setting.intSetting("auto_partitioning_doc_threshold", 250_000);
+
     /**
      * Size of a page in entries with {@code 0} being a special value asking
      * to adaptively size based on the number of columns in the page.
