@@ -732,7 +732,7 @@ final class ES819TSDBDocValuesConsumer extends XDocValuesConsumer {
     }
 
     private static class PrefixedPartitions {
-        private static final VarHandle BE_SHORT = MethodHandles.byteArrayViewVarHandle(short[].class, ByteOrder.BIG_ENDIAN);
+        private static final VarHandle BE_INT = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.BIG_ENDIAN);
 
         private int nextOrd = -1;
         private final int[] ords = new int[1 << PARTITION_PREFIX_BITS];
@@ -747,10 +747,10 @@ final class ES819TSDBDocValuesConsumer extends XDocValuesConsumer {
         }
 
         private static int prefix(BytesRef term) {
-            if (term.length < 2) {
+            if (term.length < 4) {
                 return term.length == 0 ? 0 : (term.bytes[term.offset] & 0xFF) << (PARTITION_PREFIX_BITS - Byte.SIZE);
             }
-            return ((short) BE_SHORT.get(term.bytes, term.offset) & 0xFFFF) >>> (Short.SIZE - PARTITION_PREFIX_BITS);
+            return ((int) BE_INT.get(term.bytes, term.offset)) >>> (Integer.SIZE - PARTITION_PREFIX_BITS);
         }
 
         void trackTerm(BytesRef term, long ord) {

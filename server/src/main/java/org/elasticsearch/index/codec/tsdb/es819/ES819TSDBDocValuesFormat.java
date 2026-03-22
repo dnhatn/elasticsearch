@@ -138,7 +138,7 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
      * The first byte for the groups of time-series, and subsequent bytes for time-series in that groups, so this would give us
      * 256 partitions for each query. Eventually we will group tiny partitions to a decent one.
      */
-    static final int PARTITION_PREFIX_BITS = 16;
+    static final int PARTITION_PREFIX_BITS = 18;
 
     final int numericBlockShift;
     final int skipIndexIntervalSize;
