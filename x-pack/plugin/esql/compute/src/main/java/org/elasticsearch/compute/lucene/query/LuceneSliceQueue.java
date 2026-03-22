@@ -488,18 +488,20 @@ public final class LuceneSliceQueue {
 
         List<List<PartialLeafReaderContext>> partition(List<LeafReaderContext> leaves, int docsPerSlice) throws IOException {
             final Map<Integer, PrefixGroup> groups = new TreeMap<>(); // ordered by prefixes
+            PartitionedDocValues.PrefixPartitions prefixPartitions = null;
             for (LeafReaderContext leaf : leaves) {
                 var tsid = leaf.reader().getSortedDocValues(TimeSeriesIdFieldMapper.NAME);
                 if (tsid == null) {
                     continue; // empty
                 }
-                PartitionedDocValues.PrefixPartitions prefixedDocs = ((PartitionedDocValues) tsid).prefixPartitions();
+                prefixPartitions = ((PartitionedDocValues) tsid).prefixPartitions(prefixPartitions);
+                assert prefixPartitions != null;
                 int pendingPrefix = -1;
                 int pendingStartDoc = -1;
-                int length = prefixedDocs.size();
-                for (int i = 0; i < length; i++) {
-                    int startDoc = prefixedDocs.startDocs()[i];
-                    int prefix = prefixedDocs.prefixes()[i];
+                int numPartitions = prefixPartitions.numPartitions();
+                for (int i = 0; i < numPartitions; i++) {
+                    int startDoc = prefixPartitions.startDocs()[i];
+                    int prefix = prefixPartitions.prefixes()[i];
                     if (pendingPrefix != -1) {
                         groups.computeIfAbsent(pendingPrefix, k -> new PrefixGroup(leaves.size())).add(leaf, pendingStartDoc, startDoc);
                     }

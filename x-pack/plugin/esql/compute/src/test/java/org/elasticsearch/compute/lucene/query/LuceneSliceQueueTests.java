@@ -563,13 +563,13 @@ public class LuceneSliceQueueTests extends ESTestCase {
         }
 
         @Override
-        public PrefixPartitions prefixPartitions() throws IOException {
+        public PrefixPartitions prefixPartitions(PrefixPartitions reuse) throws IOException {
             return prefixPartitions;
         }
 
         @Override
-        public boolean hasPrefixPartitions() {
-            return prefixPartitions != null;
+        public int prefixPartitionBits() {
+            return 1;
         }
     }
 }
