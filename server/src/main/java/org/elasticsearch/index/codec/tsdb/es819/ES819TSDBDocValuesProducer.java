@@ -1349,34 +1349,20 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         }
 
         @Override
-        public boolean hasPrefixPartitions() {
-            return entry instanceof SortedPartitionedEntry;
+        public int prefixPartitionBits() {
+            if (entry instanceof PrefixPartitionedEntry partition) {
+                return partition.partitionNumBits;
+            }
+            return 0;
         }
 
         @Override
-        public PrefixPartitions prefixPartitions() throws IOException {
-            if (entry instanceof SortedPartitionedEntry partitioned) {
-                var slice = data.slice("partitioning", partitioned.partitioningStartPointer, partitioned.partitioningLength);
-                final int size = slice.readVInt();
-                int[] prefixes = new int[size];
-                int[] startDocs = new int[size];
-                int last = 0;
-                for (int i = 0; i < size; i++) {
-                    final int diff = slice.readVInt();
-                    final int prefix = last + diff;
-                    prefixes[i] = prefix;
-                    last = prefix;
-                }
-                last = 0;
-                for (int i = 0; i < size; i++) {
-                    final int diff = slice.readVInt();
-                    final int doc = last + diff;
-                    startDocs[i] = doc;
-                    last = doc;
-                }
-                return new PrefixPartitions(prefixes, startDocs);
+        public PrefixPartitions prefixPartitions(PrefixPartitions reused) throws IOException {
+            if (entry instanceof PrefixPartitionedEntry partitioned) {
+                var slice = data.slice("partitioning", partitioned.partitionStartPointer, partitioned.partitionDataLength);
+                return PrefixedPartitionsReader.prefixPartitions(slice, reused);
             } else {
-                throw new IllegalStateException("should have checked partitionStartDocsAvailable");
+                return null;
             }
         }
     }
@@ -2118,15 +2104,16 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         SortedEntry entry = new SortedEntry();
         entry.ordsEntry = new NumericEntry();
         entry.termsDictEntry = new TermsDictEntry();
-        if (version >= ES819TSDBDocValuesFormat.VERSION_TSID_PARTITIONING_POINTS) {
+        if (version >= ES819TSDBDocValuesFormat.VERSION_PREFIX_PARTITIONS) {
             readTermDict(meta, entry.termsDictEntry);
             readNumeric(meta, entry.ordsEntry, numericBlockShift);
-            if (primarySorted) {
-                SortedPartitionedEntry partitioned = new SortedPartitionedEntry();
+            if (primarySorted && meta.readByte() == 1) {
+                PrefixPartitionedEntry partitioned = new PrefixPartitionedEntry();
                 partitioned.ordsEntry = entry.ordsEntry;
                 partitioned.termsDictEntry = entry.termsDictEntry;
-                partitioned.partitioningStartPointer = meta.readLong();
-                partitioned.partitioningLength = meta.readVLong();
+                partitioned.partitionNumBits = meta.readByte();
+                partitioned.partitionStartPointer = meta.readLong();
+                partitioned.partitionDataLength = meta.readVLong();
                 return partitioned;
             }
         } else {
@@ -2828,9 +2815,10 @@ final class ES819TSDBDocValuesProducer extends DocValuesProducer {
         TermsDictEntry termsDictEntry;
     }
 
-    static class SortedPartitionedEntry extends SortedEntry {
-        long partitioningStartPointer;
-        long partitioningLength;
+    static class PrefixPartitionedEntry extends SortedEntry {
+        int partitionNumBits;
+        long partitionStartPointer;
+        long partitionDataLength;
     }
 
     static class SortedSetEntry {

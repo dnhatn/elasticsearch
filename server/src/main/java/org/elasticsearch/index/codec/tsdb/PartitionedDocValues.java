@@ -11,21 +11,44 @@ package org.elasticsearch.index.codec.tsdb;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.IndexSearcher;
+import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
 
 import java.io.IOException;
 
+/**
+ * An extension for doc-values which is the primary sort key, and values are grouped by some prefix bytes. One example is `_tsid` in
+ * time-series, where time-series can be grouped by the first few bytes, and the query engine can process a slice of time-series
+ * containing all "continuous" time-series sharing the same prefix. This is necessary instead of querying a slice of docs because some
+ * aggregations such as rate require all data points from a single time-series to be processed by the same operator.
+ */
 public interface PartitionedDocValues {
-    record PrefixPartitions(int[] prefixes, int[] startDocs) {
-        public int size() {
-            return prefixes.length;
-        }
+    /**
+     * @param prefixes the prefix keys
+     * @param startDocs the startDocs of corresponding prefix keys
+     * @param numPartitions the actual number of prefixes available in the partition
+     */
+    record PrefixPartitions(int[] prefixes, int[] startDocs, int numPartitions) {
+
     }
 
-    PrefixPartitions prefixPartitions() throws IOException;
+    /**
+     * Returns the prefixed partition from the doc-values of this field if exists.
+     * @param reused an existing prefix partitions can be reused to avoid allocating memory
+     */
+    @Nullable
+    PrefixPartitions prefixPartitions(PrefixPartitions reused) throws IOException;
 
-    boolean hasPrefixPartitions();
+    /**
+     * The number of bits used in prefix partitions
+     */
+    int prefixPartitionBits();
 
+    /**
+     * Check if the given index searcher can be partitioned by tsid prefix.
+     * @param searcher the index searcher to check
+     * @return true if all non-empty segments support tsid prefix partitioning
+     */
     static boolean canPartitionByTsidPrefix(IndexSearcher searcher) throws IOException {
         for (LeafReaderContext leafContext : searcher.getLeafContexts()) {
             var sortedDV = leafContext.reader().getSortedDocValues(TimeSeriesIdFieldMapper.NAME);
@@ -33,7 +56,7 @@ public interface PartitionedDocValues {
             if (sortedDV == null) {
                 continue;
             }
-            if (sortedDV instanceof PartitionedDocValues partition && partition.hasPrefixPartitions()) {
+            if (sortedDV instanceof PartitionedDocValues partition && partition.prefixPartitionBits() > 0) {
                 continue;
             }
             return false;

@@ -54,8 +54,8 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
     static final int VERSION_START = 0;
     static final int VERSION_BINARY_DV_COMPRESSION = 1;
     static final int VERSION_NUMERIC_LARGE_BLOCKS = 2;
-    static final int VERSION_TSID_PARTITIONING_POINTS = 3;
-    static final int VERSION_CURRENT = VERSION_TSID_PARTITIONING_POINTS;
+    static final int VERSION_PREFIX_PARTITIONS = 3;
+    static final int VERSION_CURRENT = VERSION_PREFIX_PARTITIONS;
 
     static final int TERMS_DICT_BLOCK_LZ4_SHIFT = 6;
     static final int TERMS_DICT_BLOCK_LZ4_SIZE = 1 << TERMS_DICT_BLOCK_LZ4_SHIFT;
@@ -134,12 +134,6 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
      */
     public static final int ORDINAL_RANGE_ENCODING_BLOCK_SHIFT = 12;
 
-    /**
-     * The first byte for the groups of time-series, and subsequent bytes for time-series in that groups, so this would give us
-     * 256 partitions for each query. Eventually we will group tiny partitions to a decent one.
-     */
-    static final int PARTITION_PREFIX_BITS = 18;
-
     final int numericBlockShift;
     final int skipIndexIntervalSize;
     final int minDocsPerOrdinalForRangeEncoding;
@@ -149,6 +143,7 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
     final DocOffsetsCodec docOffsetsCodec;
     final int blockBytesThreshold;
     final int blockCountThreshold;
+    final boolean writePrefixPartitions;
 
     public static ES819TSDBDocValuesFormat getInstance(boolean useLargeNumericBlock) {
         return useLargeNumericBlock ? new ES819TSDBDocValuesFormat(NUMERIC_LARGE_BLOCK_SHIFT) : new ES819TSDBDocValuesFormat();
@@ -225,7 +220,8 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
             binaryDVCompressionMode,
             enablePerBlockCompression,
             numericBlockShift,
-            DocOffsetsCodec.GROUPED_VINT
+            DocOffsetsCodec.GROUPED_VINT,
+            false
         );
     }
 
@@ -237,7 +233,8 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
         BinaryDVCompressionMode binaryDVCompressionMode,
         final boolean enablePerBlockCompression,
         final int numericBlockShift,
-        DocOffsetsCodec docOffsetsCodec
+        DocOffsetsCodec docOffsetsCodec,
+        boolean writePrefixPartitions
     ) {
         this(
             codecName,
@@ -249,7 +246,8 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
             numericBlockShift,
             docOffsetsCodec,
             BINARY_DV_BLOCK_BYTES_THRESHOLD_DEFAULT,
-            BINARY_DV_BLOCK_COUNT_THRESHOLD_DEFAULT
+            BINARY_DV_BLOCK_COUNT_THRESHOLD_DEFAULT,
+            writePrefixPartitions
         );
     }
 
@@ -263,7 +261,8 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
         final int numericBlockShift,
         DocOffsetsCodec docOffsetsCodec,
         int blockBytesThreshold,
-        int blockCountThreshold
+        int blockCountThreshold,
+        boolean writePrefixPartitions
     ) {
         super(codecName);
         assert numericBlockShift == NUMERIC_BLOCK_SHIFT || numericBlockShift == NUMERIC_LARGE_BLOCK_SHIFT : numericBlockShift;
@@ -279,6 +278,7 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
         this.docOffsetsCodec = docOffsetsCodec;
         this.blockBytesThreshold = blockBytesThreshold;
         this.blockCountThreshold = blockCountThreshold;
+        this.writePrefixPartitions = writePrefixPartitions;
     }
 
     @Override
@@ -297,7 +297,8 @@ public class ES819TSDBDocValuesFormat extends org.apache.lucene.codecs.DocValues
             DATA_CODEC,
             DATA_EXTENSION,
             META_CODEC,
-            META_EXTENSION
+            META_EXTENSION,
+            writePrefixPartitions
         );
     }
 
