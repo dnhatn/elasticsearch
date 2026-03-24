@@ -44,9 +44,7 @@ class RoundToDouble {
              * Break point of 10 experimentally derived on Nik's laptop (13th Gen Intel(R) Core(TM) i7-1370P)
              * on 2025-05-22.
              */
-            default -> {
-                yield new RoundToDoubleBinarySearchEvaluator.Factory(source, field, f);
-            }
+            default -> new RoundToDoubleBinarySearchEvaluator.Factory(source, field, f);
         };
     };
 
