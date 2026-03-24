@@ -530,9 +530,9 @@ public final class LuceneSliceQueue {
                 }
                 for (PartialLeafReaderContext leaf : slice.leaves) {
                     final LeafReaderContext ctx = leaf.leafReaderContext();
-                    current.merge(ctx, leaf, (k, curr) -> {
+                    current.merge(ctx, leaf, (curr, next) -> {
                         assert curr.maxDoc() == leaf.minDoc() : "current=" + curr + "; next=" + leaf;
-                        return new PartialLeafReaderContext(ctx, curr.minDoc(), leaf.maxDoc());
+                        return new PartialLeafReaderContext(ctx, curr.minDoc(), next.maxDoc());
                     });
                 }
                 pendingDocs += slice.numDocs;
