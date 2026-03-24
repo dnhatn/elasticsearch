@@ -14,7 +14,6 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Weight;
 import org.elasticsearch.TransportVersion;
-import org.elasticsearch.common.Randomness;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -31,7 +30,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -320,7 +318,8 @@ public final class LuceneSliceQueue {
             @Override
             List<List<PartialLeafReaderContext>> groups(IndexSearcher searcher, int taskConcurrency) {
                 final int totalDocCount = searcher.getIndexReader().maxDoc();
-                final int docsPerSlice = Math.clamp(Math.ceilDiv(totalDocCount, taskConcurrency), 1, MAX_DOCS_PER_SLICE);
+                final int numLeaves = searcher.getIndexReader().leaves().size();
+                final int docsPerSlice = Math.clamp(Math.ceilDiv(totalDocCount, taskConcurrency), 1, MAX_DOCS_PER_SLICE * numLeaves);
                 try {
                     return new TimeSeriesPartitioner().partition(searcher.getLeafContexts(), docsPerSlice);
                 } catch (IOException e) {
@@ -524,7 +523,7 @@ public final class LuceneSliceQueue {
             for (PrefixGroup slice : slices) {
                 if (pendingDocs >= docsPerSlice
                     || (pendingDocs > minDocsPerSlice && (pendingDocs + slice.numDocs) > (docsPerSlice * 3 / 2))) {
-                    results.add(shuffle(current.values()));
+                    results.add(current.values().stream().toList());
                     current.clear();
                     pendingDocs = 0;
                 }
@@ -538,15 +537,9 @@ public final class LuceneSliceQueue {
                 pendingDocs += slice.numDocs;
             }
             if (current.isEmpty() == false) {
-                results.add(shuffle(current.values()));
+                results.add(current.values().stream().toList());
             }
             return results;
-        }
-
-        private List<PartialLeafReaderContext> shuffle(Collection<PartialLeafReaderContext> leaves) {
-            List<PartialLeafReaderContext> shuffled = new ArrayList<>(leaves);
-            Randomness.shuffle(shuffled);
-            return shuffled;
         }
     }
 }
