@@ -66,6 +66,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
     @Override
     public void close() {
+        System.err.println("--> adding constants=" + constants + " ordinal-constants=" + ordinalsConstants + " ordinals-loop=" + ordinalsLoop + " vectors=" + vectors);
         Releasables.close(tsidHash, finalHash);
     }
 
@@ -82,6 +83,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
             throw new IllegalStateException("Expected a vector for timestamp");
         }
         if (tsidVector.isConstant()) {
+            constants++;
             addConstant(tsidVector, timestampVector, addInput);
             return;
         }
@@ -90,8 +92,14 @@ public final class TimeSeriesBlockHash extends BlockHash {
             addOrdinals(tsidOrdinals, timestampVector, addInput);
             return;
         }
+        vectors++;
         addVector(tsidVector, timestampVector, addInput);
     }
+
+    private int constants = 0;
+    private int ordinalsConstants = 0;
+    private int ordinalsLoop = 0;
+    private int vectors = 0;
 
     private void addConstant(BytesRefVector tsidVector, LongVector timestamps, GroupingAggregatorFunction.AddInput addInput) {
         final int tsid = Math.toIntExact(hashOrdToGroup(tsidHash.add(tsidVector.getBytesRef(0, scratch))));
@@ -143,8 +151,10 @@ public final class TimeSeriesBlockHash extends BlockHash {
         try (var tsidOrds = ordsForTsidDict(tsidVector)) {
             final long firstTimestamp = timestamps.getLong(0);
             if (timestamps.isConstant() || constantTimestamp(timestamps, firstTimestamp, positionCount)) {
+                ordinalsConstants++;
                 groupIds = groupIdsForOrdinalsWithConstantTimestamp(positionCount, tsidOrds, firstTimestamp);
             } else {
+                ordinalsLoop++;
                 groupIds = groupIdsForOrdinals(positionCount, tsidOrds, timestamps);
             }
         }
