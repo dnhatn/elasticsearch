@@ -521,7 +521,7 @@ public final class LuceneSliceQueue {
             List<List<PartialLeafReaderContext>> results = new ArrayList<>();
             for (Map<Integer, PrefixGroup> prefixGroups : firstByteGroups.values()) {
                 int totalDocs = prefixGroups.values().stream().mapToInt(g -> g.numDocs).sum();
-                int docsPerSlice = Math.max(Math.ceilDiv(totalDocs, taskConcurrency), 1);
+                int docsPerSlice = Math.max(Math.ceilDiv(totalDocs, taskConcurrency), MAX_DOCS_PER_SLICE);
                 results.addAll(combineSlices(prefixGroups.values().stream().toList(), docsPerSlice));
             }
             return results;
