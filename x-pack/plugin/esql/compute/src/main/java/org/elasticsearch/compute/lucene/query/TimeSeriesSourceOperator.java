@@ -42,6 +42,7 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
         ) {
             super(
                 contexts,
+
                 queryFunction,
                 dataPartitioning(dataPartitioning),
                 partitioningStrategy(contexts),

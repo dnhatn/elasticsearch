@@ -66,7 +66,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
 
     @Override
     public void close() {
-        System.err.println("--> adding constants=" + constants + " ordinal-constants=" + ordinalsConstants + " ordinals-loop=" + ordinalsLoop + " vectors=" + vectors);
+        System.err.println("--> adding constants=" + constants + " ordinal-constants=" + ordinalsConstants + " ordinals-loop=" + ordinalsLoop + " vectors=" + vectors + " call final " + callFinalHash);
         Releasables.close(tsidHash, finalHash);
     }
 
@@ -93,7 +93,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
             return;
         }
         vectors++;
-        System.err.println("--> vector with size " + tsidVector.getPositionCount());
         addVector(tsidVector, timestampVector, addInput);
     }
 
@@ -164,18 +163,22 @@ public final class TimeSeriesBlockHash extends BlockHash {
         }
     }
 
+    int callFinalHash = 0;
+
     private IntVector groupIdsForOrdinals(int positionCount, IntVector tsidOrds, LongVector timestamps) {
         try (var groupIds = blockFactory.newIntVectorFixedBuilder(positionCount)) {
             int prevTsid = tsidOrds.getInt(0);
             long prevTimestamp = timestamps.getLong(0);
             trackTimestamp(prevTimestamp);
             int prevGroupId = Math.toIntExact(hashOrdToGroup(finalHash.add(prevTsid, prevTimestamp)));
+            callFinalHash++;
             groupIds.appendInt(0, prevGroupId);
             for (int p = 1; p < positionCount; p++) {
                 final long timestamp = timestamps.getLong(p);
                 int tsid = tsidOrds.getInt(p);
                 if (tsid != prevTsid || timestamp != prevTimestamp) {
                     prevGroupId = Math.toIntExact(hashOrdToGroup(finalHash.add(tsid, prevTimestamp)));
+                    callFinalHash++;
                     prevTsid = tsid;
                     prevTimestamp = timestamp;
                     trackTimestamp(timestamp);
