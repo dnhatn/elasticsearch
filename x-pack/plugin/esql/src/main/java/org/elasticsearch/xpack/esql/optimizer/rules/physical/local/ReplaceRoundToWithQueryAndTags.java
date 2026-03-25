@@ -339,11 +339,11 @@ public class ReplaceRoundToWithQueryAndTags extends PhysicalOptimizerRules.Param
                     if (queryExec.indexMode() != IndexMode.TIME_SERIES) {
                         return evalExec;
                     }
-                    // prefer partitioning by tsid prefixes
-                    var partitioning = ctx.configuration().pragmas().dataPartitioning(ctx.plannerSettings().defaultDataPartitioning());
-                    if (partitioning != DataPartitioning.SHARD && ctx.searchStats().canPartitionByTsidPrefix()) {
-                        return evalExec;
-                    }
+//                    // prefer partitioning by tsid prefixes
+//                    var partitioning = ctx.configuration().pragmas().dataPartitioning(ctx.plannerSettings().defaultDataPartitioning());
+//                    if (partitioning != DataPartitioning.SHARD && ctx.searchStats().canPartitionByTsidPrefix()) {
+//                        return evalExec;
+//                    }
                 }
                 plan = planRoundTo(roundTo, evalExec, queryExec, ctx);
             }
