@@ -546,7 +546,7 @@ public final class LuceneSliceQueue {
                         return new PartialLeafReaderContext(ctx, curr.minDoc(), next.maxDoc());
                     });
                     PartialLeafReaderContext merged = current.get(ctx);
-                    if ((merged.maxDoc() - merged.minDoc()) >= 5 * MAX_DOCS_PER_SLICE) {
+                    if ((merged.maxDoc() - merged.minDoc()) >= MAX_DOCS_PER_SLICE) {
                         anyLeafExceedsMaxDocs = true;
                     }
                 }
