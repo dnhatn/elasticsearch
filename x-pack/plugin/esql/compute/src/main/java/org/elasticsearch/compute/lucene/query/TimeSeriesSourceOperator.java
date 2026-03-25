@@ -27,7 +27,7 @@ import java.util.function.Function;
  * such as slice index and future max timestamp, to allow downstream operators to optimize processing.
  */
 public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
-    private static final int MAX_TARGET_PAGE_SIZE = 1024;
+    private static final int MAX_TARGET_PAGE_SIZE = 4096;
     private static final int CHUNK_SIZE = 128;
 
     public static final class Factory extends LuceneSourceOperator.Factory {
