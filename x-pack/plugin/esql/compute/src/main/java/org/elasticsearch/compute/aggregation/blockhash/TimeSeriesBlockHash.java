@@ -93,6 +93,7 @@ public final class TimeSeriesBlockHash extends BlockHash {
             return;
         }
         vectors++;
+        System.err.println("--> vector with size " + tsidVector.getPositionCount());
         addVector(tsidVector, timestampVector, addInput);
     }
 
