@@ -518,10 +518,10 @@ public final class LuceneSliceQueue {
                         .add(leaf, pendingStartDoc, leaf.reader().maxDoc());
                 }
             }
-            int totalDocs = firstByteGroups.values().stream().flatMap(m -> m.values().stream()).mapToInt(g -> g.numDocs).sum();
-            int docsPerSlice = Math.max(Math.ceilDiv(totalDocs, taskConcurrency), 1);
             List<List<PartialLeafReaderContext>> results = new ArrayList<>();
             for (Map<Integer, PrefixGroup> prefixGroups : firstByteGroups.values()) {
+                int totalDocs = prefixGroups.values().stream().mapToInt(g -> g.numDocs).sum();
+                int docsPerSlice = Math.max(Math.ceilDiv(totalDocs, taskConcurrency), 1);
                 results.addAll(combineSlices(prefixGroups.values().stream().toList(), docsPerSlice));
             }
             return results;
@@ -546,7 +546,7 @@ public final class LuceneSliceQueue {
                         return new PartialLeafReaderContext(ctx, curr.minDoc(), next.maxDoc());
                     });
                     PartialLeafReaderContext merged = current.get(ctx);
-                    if ((merged.maxDoc() - merged.minDoc()) >= MAX_DOCS_PER_SLICE) {
+                    if ((merged.maxDoc() - merged.minDoc()) >= 5 * MAX_DOCS_PER_SLICE) {
                         anyLeafExceedsMaxDocs = true;
                     }
                 }
