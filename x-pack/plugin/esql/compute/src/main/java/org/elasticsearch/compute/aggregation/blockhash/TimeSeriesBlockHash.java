@@ -173,12 +173,12 @@ public final class TimeSeriesBlockHash extends BlockHash {
             groupIds.appendInt(0, prevGroupId);
             for (int p = 1; p < positionCount; p++) {
                 final long timestamp = timestamps.getLong(p);
-                trackTimestamp(timestamp);
                 int tsid = tsidOrds.getInt(p);
                 if (tsid != prevTsid || timestamp != prevTimestamp) {
-                    prevTimestamp = timestamps.getLong(p);
                     prevGroupId = Math.toIntExact(hashOrdToGroup(finalHash.add(tsid, prevTimestamp)));
                     prevTsid = tsid;
+                    prevTimestamp = timestamp;
+                    trackTimestamp(timestamp);
                 }
                 groupIds.appendInt(p, prevGroupId);
             }
