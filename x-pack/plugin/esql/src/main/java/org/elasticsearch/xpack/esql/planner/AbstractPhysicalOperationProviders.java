@@ -170,6 +170,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
             );
             int maxPageSize = context.pageSize(aggregateExec, aggregateExec.estimatedRowSize());
             int aggregationBatchSize = maxPageSize; // TODO pick a more sensible number
+            QueryPragmas pragmas = context.queryPragmas();
             // time-series aggregation
             if (aggregateExec instanceof TimeSeriesAggregateExec ts) {
                 operatorFactory = timeSeriesAggregatorOperatorFactory(
@@ -178,10 +179,10 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
                     aggregatorFactories,
                     groupSpecs.stream().map(GroupSpec::toHashGroupSpec).toList(),
                     context,
-                    aggregationBatchSize
+                    aggregationBatchSize,
+                    pragmas.partialAggregationEmitKeysThreshold(context.plannerSettings().partialEmitKeysThreshold())
                 );
             } else {
-                QueryPragmas pragmas = context.queryPragmas();
                 operatorFactory = new HashAggregationOperator.Builder().groups(groupSpecs.stream().map(GroupSpec::toHashGroupSpec).toList())
                     .mode(aggregatorMode)
                     .aggregators(aggregatorFactories)
@@ -378,6 +379,7 @@ public abstract class AbstractPhysicalOperationProviders implements PhysicalOper
         List<GroupingAggregator.Factory> aggregatorFactories,
         List<BlockHash.GroupSpec> groupSpecs,
         LocalExecutionPlannerContext context,
-        int maxPageSize
+        int maxPageSize,
+        int partialEmitKeysThreshold
     );
 }

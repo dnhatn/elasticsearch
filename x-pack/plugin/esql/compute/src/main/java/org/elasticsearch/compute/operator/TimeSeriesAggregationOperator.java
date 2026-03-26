@@ -51,7 +51,8 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         List<BlockHash.GroupSpec> groups,
         AggregatorMode aggregatorMode,
         List<GroupingAggregator.Factory> aggregators,
-        int aggregationBatchSize
+        int aggregationBatchSize,
+        int partialEmitKeysThreshold
     ) implements OperatorFactory {
         @Override
         public Operator get(DriverContext driverContext) {
@@ -74,7 +75,8 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
                     // Broken optimizations are allowed as the inputs are vectors.
                     return BlockHash.build(groups, driverContext.blockFactory(), aggregationBatchSize, true);
                 },
-                driverContext
+                driverContext,
+                Math.min(partialEmitKeysThreshold, 10_000)
             );
         }
 
@@ -96,11 +98,12 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
         Rounding.Prepared timeBucket,
         DateFieldMapper.Resolution timeResolution,
         AggregatorMode aggregatorMode,
-        List<GroupingAggregator.Factory> aggregators,
+        List<GroupingAggregator.Factory> aggregatorFactories,
         Supplier<BlockHash> blockHash,
-        DriverContext driverContext
+        DriverContext driverContext,
+        int partialEmitKeysThreshold
     ) {
-        super(aggregatorMode, aggregators, blockHash, Integer.MAX_VALUE, 1.0, Integer.MAX_VALUE, driverContext);
+        super(aggregatorMode, aggregatorFactories, blockHash, partialEmitKeysThreshold, 0.0, Integer.MAX_VALUE, driverContext);
         this.timeBucket = timeBucket;
         this.timeResolution = timeResolution;
     }
@@ -109,11 +112,6 @@ public class TimeSeriesAggregationOperator extends HashAggregationOperator {
     public void finish() {
         expandWindowBuckets();
         super.finish();
-    }
-
-    @Override
-    protected boolean shouldEmitPartialResultsPeriodically() {
-        return false;
     }
 
     private long largestWindowMillis() {

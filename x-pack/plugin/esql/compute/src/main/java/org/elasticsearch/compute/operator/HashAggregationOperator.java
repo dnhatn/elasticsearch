@@ -180,7 +180,7 @@ public class HashAggregationOperator implements Operator {
 
     // The blockHash and aggregators can be re-initialized when partial results are emitted periodically
     protected BlockHash blockHash;
-    private boolean finished;
+    private OperatorState operatorState = OperatorState.RUNNING;
     private ReleasableIterator<Page> output;
 
     /**
@@ -261,13 +261,19 @@ public class HashAggregationOperator implements Operator {
 
     @Override
     public boolean needsInput() {
-        return output == null && finished == false;
+        return output == null && operatorState == OperatorState.RUNNING;
     }
 
     @Override
     public void addInput(Page page) {
         try {
-            maybeReinitializeAfterPeriodicallyEmitted();
+            if (shouldEmitPartialResultsPeriodically(aggregatorMode, page)) {
+                emit();
+                blockHash = blockHashSupplier.get();
+                for (GroupingAggregator.Factory aggregatorFactory : aggregatorFactories) {
+                    aggregators.add(aggregatorFactory.apply(driverContext));
+                }
+            }
             GroupingAggregatorFunction.AddInput[] prepared = new GroupingAggregatorFunction.AddInput[aggregators.size()];
             class AddInput implements GroupingAggregatorFunction.AddInput {
                 long hashStart = System.nanoTime();
@@ -316,7 +322,6 @@ public class HashAggregationOperator implements Operator {
                 }
             }
             try (AddInput add = new AddInput()) {
-                checkState(needsInput(), "Operator is already finishing");
                 requireNonNull(page, "page is null");
 
                 for (int i = 0; i < prepared.length; i++) {
@@ -327,9 +332,6 @@ public class HashAggregationOperator implements Operator {
                 hashNanos += System.nanoTime() - add.hashStart;
             }
             rowsAddedInCurrentBatch += page.getPositionCount();
-            if (shouldEmitPartialResultsPeriodically()) {
-                emit();
-            }
         } finally {
             page.releaseBlocks();
             pagesProcessed++;
@@ -345,7 +347,12 @@ public class HashAggregationOperator implements Operator {
         if (output.hasNext() == false) {
             output.close();
             output = null;
-            return null;
+            if (operatorState == OperatorState.FINISHING_PENDING_EMIT) {
+                emit();
+                operatorState = OperatorState.FINISHED;
+            } else {
+                return null;
+            }
         }
         Page p = output.next();
         rowsEmitted += p.getPositionCount();
@@ -354,21 +361,14 @@ public class HashAggregationOperator implements Operator {
 
     @Override
     public void finish() {
-        if (finished) {
+        if (operatorState != OperatorState.RUNNING) {
             return;
         }
-        finished = true;
-        emit();
-    }
-
-    private void maybeReinitializeAfterPeriodicallyEmitted() {
-        if (rowsReceived > 0 && rowsAddedInCurrentBatch == 0) {
-            blockHash.close();
-            blockHash = null;
-            blockHash = blockHashSupplier.get();
-            for (int i = 0; i < aggregators.size(); i++) {
-                Releasables.close(aggregators.set(i, aggregatorFactories.get(i).apply(driverContext)));
-            }
+        if (output == null) {
+            emit();
+            operatorState = OperatorState.FINISHED;
+        } else {
+            operatorState = OperatorState.FINISHING_PENDING_EMIT;
         }
     }
 
@@ -376,9 +376,12 @@ public class HashAggregationOperator implements Operator {
         if (rowsAddedInCurrentBatch == 0) {
             return;
         }
+        assert output == null;
         int[] aggBlockCounts = aggregators.stream().mapToInt(GroupingAggregator::evaluateBlockCount).toArray();
         long startInNanos = System.nanoTime();
-        PreparedForEvaluation prepared = new PreparedForEvaluation();
+        PreparedForEvaluation prepared = new PreparedForEvaluation(blockHash, aggregators);
+        blockHash = null;
+        aggregators.clear();
         try {
             if (prepared.selected.keys.getPositionCount() <= maxPageSize) {
                 output = ReleasableIterator.single(prepared.buildPage(prepared.selected, aggBlockCounts));
@@ -405,7 +408,10 @@ public class HashAggregationOperator implements Operator {
         return selected;
     }
 
-    protected boolean shouldEmitPartialResultsPeriodically() {
+    protected boolean shouldEmitPartialResultsPeriodically(AggregatorMode aggregatorMode, Page newInputPage) {
+        if (output != null) {
+            return false;
+        }
         if (aggregatorMode.isOutputPartial() == false) {
             return false;
         }
@@ -416,7 +422,15 @@ public class HashAggregationOperator implements Operator {
         if (numKeys < partialEmitKeysThreshold) {
             return false;
         }
-        return rowsAddedInCurrentBatch * partialEmitUniquenessThreshold <= numKeys;
+        if (rowsAddedInCurrentBatch * partialEmitUniquenessThreshold < numKeys) {
+            return false;
+        }
+        for (GroupingAggregator aggregator : aggregators) {
+            if (aggregator.aggregatorFunction().canEmit(aggregatorMode, newInputPage) == false) {
+                return false;
+            }
+        }
+        return true;
     }
 
     protected GroupingAggregatorEvaluationContext evaluationContext(BlockHash blockHash) {
@@ -425,7 +439,7 @@ public class HashAggregationOperator implements Operator {
 
     @Override
     public boolean isFinished() {
-        return finished && output == null;
+        return operatorState == OperatorState.FINISHED && output == null;
     }
 
     @Override
@@ -441,12 +455,6 @@ public class HashAggregationOperator implements Operator {
     @Override
     public Operator.Status status() {
         return new Status(hashNanos, aggregationNanos, pagesProcessed, rowsReceived, rowsEmitted, emitNanos, emitCount);
-    }
-
-    protected static void checkState(boolean condition, String msg) {
-        if (condition == false) {
-            throw new IllegalArgumentException(msg);
-        }
     }
 
     @Override
@@ -719,8 +727,10 @@ public class HashAggregationOperator implements Operator {
         private final GroupingAggregatorEvaluationContext ctx;
         private final Selected selected;
         private final List<GroupingAggregatorFunction.PreparedForEvaluation> preparedAggregators;
+        private final BlockHash blockHash;
+        private final List<GroupingAggregator> aggregators;
 
-        private PreparedForEvaluation() {
+        private PreparedForEvaluation(BlockHash blockHash, List<GroupingAggregator> aggregators) {
             int count = aggregators.size();
             GroupingAggregatorEvaluationContext ctx = evaluationContext(blockHash);
             Selected selected = null;
@@ -738,6 +748,8 @@ public class HashAggregationOperator implements Operator {
                     Releasables.close(ctx, selected, Releasables.wrap(preparedAggregators));
                 }
             }
+            this.blockHash = blockHash;
+            this.aggregators = List.copyOf(aggregators);
             this.ctx = ctx;
             this.selected = selected;
             this.preparedAggregators = preparedAggregators;
@@ -771,7 +783,7 @@ public class HashAggregationOperator implements Operator {
 
         @Override
         public void close() {
-            Releasables.close(ctx, selected, Releasables.wrap(preparedAggregators));
+            Releasables.close(ctx, selected, Releasables.wrap(preparedAggregators), Releasables.wrap(aggregators), blockHash);
         }
     }
 
@@ -795,5 +807,11 @@ public class HashAggregationOperator implements Operator {
         public void close() {
             Releasables.close(keys, Releasables.wrap(aggs));
         }
+    }
+
+    private enum OperatorState {
+        RUNNING,
+        FINISHING_PENDING_EMIT,
+        FINISHED
     }
 }
