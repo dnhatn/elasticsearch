@@ -44,14 +44,22 @@ public final class TimeSeriesBlockHash extends BlockHash {
     private final BytesRefHashTable tsidHash;
     private final LongLongHashTable finalHash;
     private final BytesRef scratch = new BytesRef();
+    private final boolean trackTimestamp;
     private long minTimestamp = Long.MAX_VALUE;
     private long maxTimestamp = Long.MIN_VALUE;
 
-    public TimeSeriesBlockHash(int tsidChannel, int timestampChannel, boolean reverseOutput, BlockFactory blockFactory) {
+    public TimeSeriesBlockHash(
+        int tsidChannel,
+        int timestampChannel,
+        boolean reverseOutput,
+        boolean trackTimestamp,
+        BlockFactory blockFactory
+    ) {
         super(blockFactory);
         this.tsidChannel = tsidChannel;
         this.timestampChannel = timestampChannel;
         this.reverseOutput = reverseOutput;
+        this.trackTimestamp = trackTimestamp;
         boolean success = false;
         try {
             this.tsidHash = HashImplFactory.newBytesRefHash(blockFactory);
@@ -81,6 +89,9 @@ public final class TimeSeriesBlockHash extends BlockHash {
         if (timestampVector == null) {
             throw new IllegalStateException("Expected a vector for timestamp");
         }
+        if (trackTimestamp) {
+            trackTimestampFromVector(timestampVector);
+        }
         if (tsidVector.isConstant()) {
             addConstant(tsidVector, timestampVector, addInput);
             return;
@@ -97,7 +108,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
         final int tsid = Math.toIntExact(hashOrdToGroup(tsidHash.add(tsidVector.getBytesRef(0, scratch))));
         final int positionCount = timestamps.getPositionCount();
         long prevTimestamp = timestamps.getLong(0);
-        trackTimestamp(prevTimestamp);
         int prevGroupId = (int) hashOrdToGroup(finalHash.add(tsid, prevTimestamp));
         if (timestamps.isConstant() || constantTimestamp(timestamps, prevTimestamp, positionCount)) {
             try (var groups = blockFactory.newConstantIntVector(prevGroupId, positionCount)) {
@@ -111,7 +121,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
             for (int p = 1; p < positionCount; p++) {
                 long timestamp = timestamps.getLong(p);
                 if (prevTimestamp != timestamp) {
-                    trackTimestamp(timestamp);
                     prevGroupId = (int) hashOrdToGroup(finalHash.add(tsid, timestamp));
                     prevTimestamp = timestamp;
                 }
@@ -138,50 +147,44 @@ public final class TimeSeriesBlockHash extends BlockHash {
     }
 
     private void addOrdinals(OrdinalBytesRefVector tsidVector, LongVector timestamps, GroupingAggregatorFunction.AddInput addInput) {
-        final int[] dictOrds = dictOrdsForTsid(tsidVector.getDictionaryVector());
-        final int positionCount = tsidVector.getPositionCount();
-        final IntVector ordinals = tsidVector.getOrdinalsVector();
-        final IntVector groupIds = groupIdsForOrdinals(positionCount, dictOrds, ordinals, timestamps);
-        try (groupIds) {
-            addInput.add(0, groupIds);
-        }
-    }
-
-    private int[] dictOrdsForTsid(BytesRefVector dict) {
-        final int[] dictOrds = new int[dict.getPositionCount()];
-        for (int p = 0; p < dict.getPositionCount(); p++) {
-            BytesRef v = dict.getBytesRef(p, scratch);
-            dictOrds[p] = Math.toIntExact(hashOrdToGroup(tsidHash.add(v)));
-        }
-        return dictOrds;
-    }
-
-    private IntVector groupIdsForOrdinals(int positionCount, int[] dictOrds, IntVector ordinals, LongVector timestamps) {
-        try (var groupIds = blockFactory.newIntVectorFixedBuilder(positionCount)) {
-            int prevTsid = dictOrds[ordinals.getInt(0)];
+        final IntVector ordinalsVector = tsidVector.getOrdinalsVector();
+        final int ordinalsLength = ordinalsVector.getPositionCount();
+        final BytesRefVector dictVector = tsidVector.getDictionaryVector();
+        final int dictLength = dictVector.getPositionCount();
+        long acquiredBytes = (long) Integer.BYTES * (ordinalsLength + dictLength);
+        blockFactory.breaker().addEstimateBytesAndMaybeBreak(acquiredBytes, "TimeSeriesBlockHash");
+        try {
+            final int[] dictOrds = new int[dictLength];
+            for (int p = 0; p < dictLength; p++) {
+                BytesRef v = dictVector.getBytesRef(p, scratch);
+                dictOrds[p] = Math.toIntExact(hashOrdToGroup(tsidHash.add(v)));
+            }
+            final int[] groupIds = new int[ordinalsLength];
+            int prevTsid = dictOrds[ordinalsVector.getInt(0)];
             long prevTimestamp = timestamps.getLong(0);
             int prevGroupId = Math.toIntExact(hashOrdToGroup(finalHash.add(prevTsid, prevTimestamp)));
-            groupIds.appendInt(0, prevGroupId);
-            for (int p = 1; p < positionCount; p++) {
+            groupIds[0] = prevGroupId;
+            for (int p = 1; p < ordinalsLength; p++) {
                 final long timestamp = timestamps.getLong(p);
-                int tsid = dictOrds[ordinals.getInt(p)];
+                int tsid = dictOrds[ordinalsVector.getInt(p)];
                 if (tsid != prevTsid || timestamp != prevTimestamp) {
                     prevTimestamp = timestamp;
                     prevGroupId = Math.toIntExact(hashOrdToGroup(finalHash.add(tsid, prevTimestamp)));
                     prevTsid = tsid;
-                    trackTimestamp(timestamp);
                 }
-                groupIds.appendInt(p, prevGroupId);
+                groupIds[p] = prevGroupId;
             }
-            return groupIds.build();
+            try (var groupsVector = blockFactory.newIntArrayVector(groupIds, ordinalsLength, acquiredBytes)) {
+                acquiredBytes = 0;
+                addInput.add(0, groupsVector);
+            }
+        } finally {
+            blockFactory.breaker().addWithoutBreaking(-acquiredBytes);
         }
     }
 
     private void addVector(BytesRefVector tsidVector, LongVector timestamps, GroupingAggregatorFunction.AddInput addInput) {
         final int positionCount = tsidVector.getPositionCount();
-        for (int p = 0; p < positionCount; p++) {
-            trackTimestamp(timestamps.getLong(p));
-        }
         long acquiredBytes = (long) Integer.BYTES * positionCount;
         blockFactory.breaker().addEstimateBytesAndMaybeBreak(acquiredBytes, "TimeSeriesBlockHash");
         final int[] ords = new int[positionCount];
@@ -192,7 +195,6 @@ public final class TimeSeriesBlockHash extends BlockHash {
             }
             for (int p = 0; p < positionCount; p++) {
                 long timestamp = timestamps.getLong(p);
-                trackTimestamp(timestamps.getLong(p));
                 ords[p] = Math.toIntExact(hashOrdToGroup(finalHash.add(ords[p], timestamp)));
             }
             try (var groupIds = blockFactory.newIntArrayVector(ords, positionCount, acquiredBytes)) {
@@ -306,29 +308,39 @@ public final class TimeSeriesBlockHash extends BlockHash {
         return finalHash.find(tsid, timestamp);
     }
 
-    public long addGroup(int tsid, long timestamp) {
-        trackTimestamp(timestamp);
+    public long addExtraGroup(int tsid, long timestamp) {
         return finalHash.add(tsid, timestamp);
-    }
-
-    private void trackTimestamp(long timestamp) {
-        if (minTimestamp > timestamp) {
-            minTimestamp = timestamp;
-        }
-        if (maxTimestamp < timestamp) {
-            maxTimestamp = timestamp;
-        }
     }
 
     public long numGroups() {
         return finalHash.size();
     }
 
+    private void maybeScanTimestampsFromFinalHash() {
+        if (minTimestamp > maxTimestamp) {
+            for (long i = 0; i < finalHash.size(); i++) {
+                long t = finalHash.getKey2(i);
+                minTimestamp = Math.min(t, minTimestamp);
+                maxTimestamp = Math.max(t, maxTimestamp);
+            }
+        }
+    }
+
+    private void trackTimestampFromVector(LongVector timestampVector) {
+        for (int p = 0; p < timestampVector.getPositionCount(); p++) {
+            long t = timestampVector.getLong(p);
+            minTimestamp = Math.min(t, minTimestamp);
+            maxTimestamp = Math.max(t, maxTimestamp);
+        }
+    }
+
     public long minTimestamp() {
+        maybeScanTimestampsFromFinalHash();
         return minTimestamp;
     }
 
     public long maxTimestamp() {
+        maybeScanTimestampsFromFinalHash();
         return maxTimestamp;
     }
 
