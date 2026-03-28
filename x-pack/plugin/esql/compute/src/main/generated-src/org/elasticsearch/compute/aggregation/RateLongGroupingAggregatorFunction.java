@@ -7,8 +7,10 @@
 package org.elasticsearch.compute.aggregation;
 
 // begin generated imports
+
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.PriorityQueue;
+import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.DoubleArray;
@@ -111,7 +113,7 @@ public final class RateLongGroupingAggregatorFunction extends AbstractRateGroupi
         this.dateFactor = isDateNanos ? 1_000_000_000.0 : 1000.0;
         LongRawBuffer buffer = null;
         try {
-            buffer = new LongRawBuffer(bigArrays);
+            buffer = new LongRawBuffer(driverContext.breaker());
             this.reducedStates = bigArrays.newObjectArray(256);
 
             this.rawBuffer = buffer;
@@ -435,13 +437,13 @@ public final class RateLongGroupingAggregatorFunction extends AbstractRateGroupi
     }
 
     static final class LongRawBuffer extends RawBuffer {
-        private LongArray values;
+        private final LongBuffer values;
 
-        LongRawBuffer(BigArrays bigArrays) {
-            super(bigArrays);
+        LongRawBuffer(CircuitBreaker breaker) {
+            super(breaker);
             boolean success = false;
             try {
-                this.values = bigArrays.newLongArray(PageCacheRecycler.DOUBLE_PAGE_SIZE, false);
+                this.values = new LongBuffer(breaker, PAGE_SIZE);
                 success = true;
             } finally {
                 if (success == false) {
@@ -453,8 +455,8 @@ public final class RateLongGroupingAggregatorFunction extends AbstractRateGroupi
         void prepareForAppend(int groupId, int count, long firstTimestamp) {
             prepareSlicesOnly(groupId, firstTimestamp);
             int newSize = valueCount + count;
-            timestamps = bigArrays.grow(timestamps, newSize);
-            values = bigArrays.grow(values, newSize);
+            timestamps.ensureCapacity(newSize);
+            values.ensureCapacity(newSize);
         }
 
         void appendWithoutResize(long timestamp, long value) {
@@ -464,17 +466,29 @@ public final class RateLongGroupingAggregatorFunction extends AbstractRateGroupi
         }
 
         void maybeResizeAndAppend(long timestamp, long value) {
-            timestamps = bigArrays.grow(timestamps, valueCount + 1);
-            values = bigArrays.grow(values, valueCount + 1);
+            timestamps.ensureCapacity(valueCount + 1);
+            values.ensureCapacity(valueCount + 1);
             appendWithoutResize(timestamp, value);
         }
 
         void appendRange(int fromPosition, int toPosition, LongVector valueVector, LongVector timestampVector) {
-            for (int p = fromPosition; p < toPosition; p++) {
-                values.set(valueCount, valueVector.getLong(p));
-                timestamps.set(valueCount, timestampVector.getLong(p));
-                valueCount++;
+            int count = toPosition - fromPosition;
+            timestamps.fill(valueCount, timestampVector, fromPosition, toPosition);
+            int dst = valueCount;
+            int src = fromPosition;
+            int remaining = count;
+            while (remaining > 0) {
+                long[] page = values.pages[dst >>> PAGE_SHIFT];
+                int pageOffset = dst & PAGE_MASK;
+                int chunk = Math.min(remaining, PAGE_SIZE - pageOffset);
+                for (int i = 0; i < chunk; i++) {
+                    page[pageOffset + i] = valueVector.getLong(src + i);
+                }
+                src += chunk;
+                dst += chunk;
+                remaining -= chunk;
             }
+            valueCount += count;
         }
 
         void appendRange(int fromPosition, int toPosition, LongBlock valueBlock, LongVector timestampVector) {
@@ -522,19 +536,14 @@ public final class RateLongGroupingAggregatorFunction extends AbstractRateGroupi
             }
         }
         var prevValue = lastValue;
+        double[] resets = new double[] { state.resets };
         long secondNextTimestamp = flushQueue.secondNextTimestamp();
         while (flushQueue.size() > 1) {
             // If the last timestamp is greater than the maximum timestamp of the next two candidate slices,
             // there is no overlap with subsequent slices, so batch merging can be performed without comparing
             // timestamps from the buffer.
             if (top.lastTimestamp() > secondNextTimestamp) {
-                for (int p = top.start; p < top.end; p++) {
-                    var val = values.get(p);
-                    if (val > prevValue) {
-                        state.resets += val;
-                    }
-                    prevValue = val;
-                }
+                prevValue = values.scanResets(top.start, top.end, prevValue, resets);
                 flushQueue.pop();
                 top = flushQueue.top();
                 secondNextTimestamp = flushQueue.secondNextTimestamp();
@@ -542,7 +551,7 @@ public final class RateLongGroupingAggregatorFunction extends AbstractRateGroupi
             }
             var val = values.get(top.next());
             if (val > prevValue) {
-                state.resets += val;
+                resets[0] += val;
             }
             prevValue = val;
             if (top.exhausted()) {
@@ -556,13 +565,8 @@ public final class RateLongGroupingAggregatorFunction extends AbstractRateGroupi
         }
         // last slice
         top = flushQueue.top();
-        for (int p = top.start; p < top.end; p++) {
-            var val = values.get(p);
-            if (val > prevValue) {
-                state.resets += val;
-            }
-            prevValue = val;
-        }
+        prevValue = values.scanResets(top.start, top.end, prevValue, resets);
+        state.resets = resets[0];
         state.samples += flushQueue.valueCount;
         state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(top.end - 1), prevValue));
     }
