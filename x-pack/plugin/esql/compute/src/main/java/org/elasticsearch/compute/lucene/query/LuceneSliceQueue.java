@@ -325,7 +325,7 @@ public final class LuceneSliceQueue {
             @Override
             List<List<PartialLeafReaderContext>> groups(IndexSearcher searcher, int taskConcurrency) {
                 try {
-                    return new TimeSeriesPartitioner().partition(searcher.getLeafContexts(), taskConcurrency, MAX_DOCS_PER_SLICE * 5);
+                    return new TimeSeriesPartitioner().partition(searcher.getLeafContexts(), taskConcurrency, MAX_DOCS_PER_SLICE);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
