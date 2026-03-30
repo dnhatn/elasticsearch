@@ -283,30 +283,6 @@ class AbstractRateGroupingFunction {
             pages[pageIndex(index)][indexInPage(index)] = value;
         }
 
-        long scanResets(int from, int to, long prevValue, double[] resets) {
-            int indexInPageStart = indexInPage(from);
-            int indexInPageEnd = indexInPageStart + (to - from);
-            if (indexInPageEnd <= PAGE_SIZE) {
-                long[] page = pages[pageIndex(from)];
-                for (int i = indexInPageStart; i < indexInPageEnd; i++) {
-                    long val = page[i];
-                    if (val > prevValue) {
-                        resets[0] += val;
-                    }
-                    prevValue = val;
-                }
-                return prevValue;
-            }
-            for (int pos = from; pos < to; pos++) {
-                long val = pages[pageIndex(pos)][indexInPage(pos)];
-                if (val > prevValue) {
-                    resets[0] += val;
-                }
-                prevValue = val;
-            }
-            return prevValue;
-        }
-
         void appendRange(long dst, LongVector src, int from, int count) {
             int indexInPageStart = indexInPage(dst);
             if (indexInPageStart + count <= PAGE_SIZE) {
@@ -366,30 +342,6 @@ class AbstractRateGroupingFunction {
             }
         }
 
-        double scanResets(int from, int to, double prevValue, double[] resets) {
-            int indexInPageStart = indexInPage(from);
-            int indexInPageEnd = indexInPageStart + (to - from);
-            if (indexInPageEnd <= PAGE_SIZE) {
-                double[] page = pages[pageIndex(from)];
-                for (int i = indexInPageStart; i < indexInPageEnd; i++) {
-                    double val = page[i];
-                    if (val > prevValue) {
-                        resets[0] += val;
-                    }
-                    prevValue = val;
-                }
-                return prevValue;
-            }
-            for (int pos = from; pos < to; pos++) {
-                double val = pages[pageIndex(pos)][indexInPage(pos)];
-                if (val > prevValue) {
-                    resets[0] += val;
-                }
-                prevValue = val;
-            }
-            return prevValue;
-        }
-
         void ensureCapacity(long minCapacity) {
             int oldNumPages = numPages;
             grow(minCapacity, Double.BYTES);
@@ -435,30 +387,6 @@ class AbstractRateGroupingFunction {
                 long d = dst + i;
                 pages[pageIndex(d)][indexInPage(d)] = src.getInt(from + i);
             }
-        }
-
-        int scanResets(int from, int to, int prevValue, double[] resets) {
-            int indexInPageStart = indexInPage(from);
-            int indexInPageEnd = indexInPageStart + (to - from);
-            if (indexInPageEnd <= PAGE_SIZE) {
-                int[] page = pages[pageIndex(from)];
-                for (int i = indexInPageStart; i < indexInPageEnd; i++) {
-                    int val = page[i];
-                    if (val > prevValue) {
-                        resets[0] += val;
-                    }
-                    prevValue = val;
-                }
-                return prevValue;
-            }
-            for (int pos = from; pos < to; pos++) {
-                int val = pages[pageIndex(pos)][indexInPage(pos)];
-                if (val > prevValue) {
-                    resets[0] += val;
-                }
-                prevValue = val;
-            }
-            return prevValue;
         }
 
         void ensureCapacity(long minCapacity) {

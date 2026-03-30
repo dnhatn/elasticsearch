@@ -503,14 +503,19 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
             }
         }
         var prevValue = lastValue;
-        double[] resets = new double[] { state.resets };
         long secondNextTimestamp = flushQueue.secondNextTimestamp();
         while (flushQueue.size() > 1) {
             // If the last timestamp is greater than the maximum timestamp of the next two candidate slices,
             // there is no overlap with subsequent slices, so batch merging can be performed without comparing
             // timestamps from the buffer.
             if (top.lastTimestamp() > secondNextTimestamp) {
-                prevValue = values.scanResets(top.start, top.end, prevValue, resets);
+                for (int p = top.start; p < top.end; p++) {
+                    var val = values.get(p);
+                    if (val > prevValue) {
+                        state.resets += val;
+                    }
+                    prevValue = val;
+                }
                 flushQueue.pop();
                 top = flushQueue.top();
                 secondNextTimestamp = flushQueue.secondNextTimestamp();
@@ -518,7 +523,7 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
             }
             var val = values.get(top.next());
             if (val > prevValue) {
-                resets[0] += val;
+                state.resets += val;
             }
             prevValue = val;
             if (top.exhausted()) {
@@ -532,8 +537,13 @@ public final class RateIntGroupingAggregatorFunction extends AbstractRateGroupin
         }
         // last slice
         top = flushQueue.top();
-        prevValue = values.scanResets(top.start, top.end, prevValue, resets);
-        state.resets = resets[0];
+        for (int p = top.start; p < top.end; p++) {
+            var val = values.get(p);
+            if (val > prevValue) {
+                state.resets += val;
+            }
+            prevValue = val;
+        }
         state.samples += flushQueue.valueCount;
         state.appendInterval(new Interval(lastTimestamp, lastValue, timestamps.get(top.end - 1), prevValue));
     }

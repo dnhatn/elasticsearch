@@ -62,34 +62,4 @@ public class BufferedArrayTests extends ComputeTestCase {
                 assertThat(buf.get(i), equalTo(expected[i]));
             }
         }
-    }
-
-    public void testScanResets() {
-        int count = randomIntBetween(1000, 5000);
-        try (LongBuffer buf = new LongBuffer(blockFactory().breaker(), between(1, 1024))) {
-            buf.ensureCapacity(count);
-            long[] values = new long[count];
-            for (int i = 0; i < count; i++) {
-                values[i] = randomLongBetween(0, 1000);
-                buf.set(i, values[i]);
-            }
-            int from = randomIntBetween(0, count / 2);
-            int to = randomIntBetween(from + 1, count);
-            long prevValue = randomLongBetween(0, 1000);
-
-            double expectedResets = 0;
-            long expectedPrev = prevValue;
-            for (int i = from; i < to; i++) {
-                if (values[i] > expectedPrev) {
-                    expectedResets += values[i];
-                }
-                expectedPrev = values[i];
-            }
-
-            double[] resets = new double[] { 0.0 };
-            long prev = buf.scanResets(from, to, prevValue, resets);
-            assertThat(prev, equalTo(expectedPrev));
-            assertThat(resets[0], equalTo(expectedResets));
-        }
-    }
-}
+    }}
