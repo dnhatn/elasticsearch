@@ -30,7 +30,6 @@ class AbstractRateGroupingFunction {
      * the slice with the greatest timestamp.
      */
     static final int INITIAL_SLICE_CAPACITY = 512;
-    static final int NUM_BUFFERS = 100;
 
     abstract static class RawBuffer implements Releasable {
         private final CircuitBreaker breaker;
