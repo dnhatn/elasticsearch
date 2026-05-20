@@ -2593,22 +2593,15 @@ public abstract class ESIntegTestCase extends ESTestCase {
     }
 
     private int getMinNumDataNodes() {
-        ClusterScope annotation = getAnnotation(this.getClass(), ClusterScope.class);
-        return annotation == null || annotation.minNumDataNodes() == -1
-            ? InternalTestCluster.DEFAULT_MIN_NUM_DATA_NODES
-            : annotation.minNumDataNodes();
+        return 1;
     }
 
     private int getMaxNumDataNodes() {
-        ClusterScope annotation = getAnnotation(this.getClass(), ClusterScope.class);
-        return annotation == null || annotation.maxNumDataNodes() == -1
-            ? InternalTestCluster.DEFAULT_MAX_NUM_DATA_NODES
-            : annotation.maxNumDataNodes();
+        return 1;
     }
 
     private int getNumClientNodes() {
-        ClusterScope annotation = getAnnotation(this.getClass(), ClusterScope.class);
-        return annotation == null ? InternalTestCluster.DEFAULT_NUM_CLIENT_NODES : annotation.numClientNodes();
+        return 1;
     }
 
     /**
