@@ -56,12 +56,15 @@ $endif$
     $Type$ArrayState(BigArrays bigArrays, $type$ init) {
         super(bigArrays);
 $if(boolean)$
-        this.values = new BitArray(1, bigArrays);
-        this.size = 1;
-$else$
-        this.values = bigArrays.new$Type$Array(1, false);
-$endif$
+        this.values = new BitArray(1024, bigArrays);
+        this.size = 1024;
         this.values.set(0, init);
+$else$
+        this.values = bigArrays.new$Type$Array(1024, init == 0);
+        if (init != 0) {
+            this.values.set(0, init);
+        }
+$endif$
         this.init = init;
     }
 
@@ -70,22 +73,16 @@ $endif$
     }
 
     $type$ getOrDefault(int groupId) {
-$if(boolean)$
-        return groupId < size ? values.get(groupId) : init;
-$else$
-        return groupId < values.size() ? values.get(groupId) : init;
-$endif$
+        return values.get(groupId);
     }
 
     void set(int groupId, $type$ value) {
-        ensureCapacity(groupId);
         values.set(groupId, value);
         trackGroupId(groupId);
     }
 
 $if(long||double)$
     void increment(int groupId, $type$ value) {
-        ensureCapacity(groupId);
         values.increment(groupId, value);
         trackGroupId(groupId);
     }
@@ -124,7 +121,9 @@ $else$
         if (groupId >= values.size()) {
             long prevSize = values.size();
             values = bigArrays.grow(values, groupId + 1);
-            values.fill(prevSize, values.size(), init);
+            if (init != 0) {
+                values.fill(prevSize, values.size(), init);
+            }
         }
 $endif$
     }

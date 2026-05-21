@@ -26,7 +26,7 @@ public interface SeenGroupIds {
     record Empty() implements SeenGroupIds {
         @Override
         public BitArray seenGroupIds(BigArrays bigArrays) {
-            return new BitArray(1, bigArrays);
+            return new BitArray(1024, bigArrays);
         }
 
         @Override

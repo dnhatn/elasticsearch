@@ -38,8 +38,10 @@ final class FloatFallibleArrayState extends AbstractFallibleArrayState implement
 
     FloatFallibleArrayState(BigArrays bigArrays, float init) {
         super(bigArrays);
-        this.values = bigArrays.newFloatArray(1, false);
-        this.values.set(0, init);
+        this.values = bigArrays.newFloatArray(1024, init == 0);
+        if (init != 0) {
+            this.values.set(0, init);
+        }
         this.init = init;
     }
 
@@ -48,11 +50,10 @@ final class FloatFallibleArrayState extends AbstractFallibleArrayState implement
     }
 
     float getOrDefault(int groupId) {
-        return groupId < values.size() ? values.get(groupId) : init;
+        return values.get(groupId);
     }
 
     void set(int groupId, float value) {
-        ensureCapacity(groupId);
         values.set(groupId, value);
         trackGroupId(groupId);
     }
@@ -84,7 +85,9 @@ final class FloatFallibleArrayState extends AbstractFallibleArrayState implement
         if (groupId >= values.size()) {
             long prevSize = values.size();
             values = bigArrays.grow(values, groupId + 1);
-            values.fill(prevSize, values.size(), init);
+            if (init != 0) {
+                values.fill(prevSize, values.size(), init);
+            }
         }
     }
 

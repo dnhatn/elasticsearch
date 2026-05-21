@@ -39,8 +39,8 @@ final class BooleanFallibleArrayState extends AbstractFallibleArrayState impleme
 
     BooleanFallibleArrayState(BigArrays bigArrays, boolean init) {
         super(bigArrays);
-        this.values = new BitArray(1, bigArrays);
-        this.size = 1;
+        this.values = new BitArray(1024, bigArrays);
+        this.size = 1024;
         this.values.set(0, init);
         this.init = init;
     }
@@ -50,11 +50,10 @@ final class BooleanFallibleArrayState extends AbstractFallibleArrayState impleme
     }
 
     boolean getOrDefault(int groupId) {
-        return groupId < size ? values.get(groupId) : init;
+        return values.get(groupId);
     }
 
     void set(int groupId, boolean value) {
-        ensureCapacity(groupId);
         values.set(groupId, value);
         trackGroupId(groupId);
     }
