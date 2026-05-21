@@ -58,6 +58,11 @@ public abstract class BlockHashWrapper extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        return blockHash.maxSeenGroupId();
+    }
+
+    @Override
     public void close() {
         blockHash.close();
     }

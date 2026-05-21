@@ -79,6 +79,11 @@ final class NullBlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        return seenNull ? 0 : -1;
+    }
+
+    @Override
     public void close() {
         // Nothing to close
     }

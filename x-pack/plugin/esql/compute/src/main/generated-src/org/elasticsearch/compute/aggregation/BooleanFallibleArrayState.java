@@ -81,7 +81,8 @@ final class BooleanFallibleArrayState extends AbstractFallibleArrayState impleme
         }
     }
 
-    private void ensureCapacity(int groupId) {
+    @Override
+    public void ensureCapacity(int groupId) {
         if (groupId >= size) {
             values.fill(size, groupId + 1, init);
             size = groupId + 1;

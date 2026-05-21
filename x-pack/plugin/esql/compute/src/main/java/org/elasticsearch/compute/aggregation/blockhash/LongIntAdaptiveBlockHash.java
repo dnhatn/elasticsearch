@@ -275,6 +275,11 @@ public final class LongIntAdaptiveBlockHash extends AdaptiveBlockHash {
         }
 
         @Override
+        public int maxSeenGroupId() {
+            return numKeys() - 1;
+        }
+
+        @Override
         public void close() {
             blockFactory.adjustBreaker(-batchUsedBytes);
             Releasables.close(longLongHash);

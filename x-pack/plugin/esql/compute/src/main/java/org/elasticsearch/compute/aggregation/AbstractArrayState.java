@@ -63,6 +63,13 @@ public abstract class AbstractArrayState implements Releasable, GroupingAggregat
         org.elasticsearch.compute.operator.DriverContext driverContext
     );
 
+    /**
+     * Ensure the state has capacity to hold values for the given {@code maxGroupId}.
+     * Called once per chunk of group ids before processing, so that individual
+     * {@code set}/{@code combine} calls in the inner loop don't need to check capacity.
+     */
+    public void ensureCapacity(int maxGroupId) {}
+
     @Override
     public void close() {
         Releasables.close(seen);

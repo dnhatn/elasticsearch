@@ -180,6 +180,14 @@ final class IntBlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        if (hash.size() == 0 && seenNull == false) {
+            return -1;
+        }
+        return Math.toIntExact(hash.size());
+    }
+
+    @Override
     public void close() {
         hash.close();
     }

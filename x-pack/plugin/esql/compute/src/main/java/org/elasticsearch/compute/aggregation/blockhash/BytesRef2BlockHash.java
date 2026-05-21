@@ -181,6 +181,11 @@ final class BytesRef2BlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        return Math.toIntExact(finalHash.size()) - 1;
+    }
+
+    @Override
     public IntVector nonEmpty() {
         return blockFactory.newIntRangeVector(0, Math.toIntExact(finalHash.size()));
     }

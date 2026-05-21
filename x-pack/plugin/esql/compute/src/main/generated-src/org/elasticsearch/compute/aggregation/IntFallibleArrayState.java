@@ -79,7 +79,8 @@ final class IntFallibleArrayState extends AbstractFallibleArrayState implements 
         }
     }
 
-    private void ensureCapacity(int groupId) {
+    @Override
+    public void ensureCapacity(int groupId) {
         if (groupId >= values.size()) {
             long prevSize = values.size();
             values = bigArrays.grow(values, groupId + 1);

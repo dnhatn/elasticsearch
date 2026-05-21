@@ -779,7 +779,7 @@ public class AggregatorImplementer {
      * @param declaredType declared state type as returned by init method
      * @param type actual type used (we have some predefined state types for primitive values)
      */
-    public record AggregationState(TypeName declaredType, TypeName type, boolean hasSeen, boolean hasFailed) {
+    public record AggregationState(TypeName declaredType, TypeName type, boolean hasSeen, boolean hasFailed, boolean hasEnsureCapacity) {
 
         public static AggregationState create(Elements elements, TypeMirror mirror, boolean hasFailures, boolean isArray) {
             var declaredType = TypeName.get(mirror);
@@ -790,7 +790,8 @@ public class AggregatorImplementer {
                 declaredType,
                 stateType,
                 hasMethod(elements, stateType, "seen()"),
-                hasMethod(elements, stateType, "failed()")
+                hasMethod(elements, stateType, "failed()"),
+                hasPublicMethod(elements, stateType, "ensureCapacity(int)")
             );
         }
 
@@ -808,5 +809,11 @@ public class AggregatorImplementer {
 
     private static boolean hasMethod(Elements elements, TypeName type, String name) {
         return elements.getAllMembers(elements.getTypeElement(type.toString())).stream().anyMatch(e -> e.toString().equals(name));
+    }
+
+    private static boolean hasPublicMethod(Elements elements, TypeName type, String name) {
+        return elements.getAllMembers(elements.getTypeElement(type.toString()))
+            .stream()
+            .anyMatch(e -> e.toString().equals(name) && e.getModifiers().contains(Modifier.PUBLIC));
     }
 }

@@ -82,6 +82,11 @@ abstract class AdaptiveBlockHash extends BlockHash {
     }
 
     @Override
+    public final int maxSeenGroupId() {
+        return current.maxSeenGroupId();
+    }
+
+    @Override
     public void close() {
         Releasables.close(current);
     }

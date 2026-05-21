@@ -73,16 +73,19 @@ public final class SumDenseVectorGroupingAggregatorFunction implements GroupingA
     return new GroupingAggregatorFunction.AddInput() {
       @Override
       public void add(int positionOffset, IntArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, vectorBlock);
       }
 
       @Override
       public void add(int positionOffset, IntBigArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, vectorBlock);
       }
 
       @Override
       public void add(int positionOffset, IntVector groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, vectorBlock);
       }
 

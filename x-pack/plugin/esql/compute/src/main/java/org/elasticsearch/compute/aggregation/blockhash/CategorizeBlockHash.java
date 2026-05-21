@@ -138,6 +138,14 @@ public class CategorizeBlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        if (categorizer.getCategoryCount() == 0 && seenNull == false) {
+            return -1;
+        }
+        return Math.toIntExact(categorizer.getCategoryCount());
+    }
+
+    @Override
     public final ReleasableIterator<IntBlock> lookup(Page page, ByteSizeValue targetBlockSize) {
         throw new UnsupportedOperationException();
     }

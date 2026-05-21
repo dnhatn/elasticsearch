@@ -67,16 +67,19 @@ public final class AnyDoubleGroupingAggregatorFunction implements GroupingAggreg
     return new GroupingAggregatorFunction.AddInput() {
       @Override
       public void add(int positionOffset, IntArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valuesBlock);
       }
 
       @Override
       public void add(int positionOffset, IntBigArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valuesBlock);
       }
 
       @Override
       public void add(int positionOffset, IntVector groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valuesBlock);
       }
 

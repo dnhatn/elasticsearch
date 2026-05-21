@@ -157,7 +157,8 @@ final class SpatialExtentGroupingStateWrappedLongitudeState extends AbstractArra
         trackGroupId(groupId);
     }
 
-    private void ensureCapacity(int groupId) {
+    @Override
+    public void ensureCapacity(int groupId) {
         long requiredSize = groupId + 1;
         if (negLefts.size() < requiredSize) {
             tops = bigArrays.grow(tops, requiredSize);

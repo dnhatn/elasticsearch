@@ -143,7 +143,8 @@ final class SpatialExtentGroupingState extends AbstractArrayState {
         trackGroupId(groupId);
     }
 
-    private void ensureCapacity(int groupId) {
+    @Override
+    public void ensureCapacity(int groupId) {
         long requiredSize = groupId + 1;
         if (minXs.size() < requiredSize) {
             assert minXs.size() == maxXs.size() && minXs.size() == maxYs.size() && minXs.size() == minYs.size();

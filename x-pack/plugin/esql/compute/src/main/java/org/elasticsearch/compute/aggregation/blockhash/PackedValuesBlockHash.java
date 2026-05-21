@@ -522,6 +522,11 @@ final class PackedValuesBlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        return Math.toIntExact(bytesRefHash.size()) - 1;
+    }
+
+    @Override
     public void close() {
         Releasables.close(bytesRefHash, bytes, batchWork);
     }

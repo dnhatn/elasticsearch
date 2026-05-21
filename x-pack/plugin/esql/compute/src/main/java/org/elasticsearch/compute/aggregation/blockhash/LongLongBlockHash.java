@@ -118,6 +118,11 @@ final class LongLongBlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        return Math.toIntExact(hash.size()) - 1;
+    }
+
+    @Override
     public String toString() {
         return "LongLongBlockHash{channels=[" + channel1 + "," + channel2 + "], entries=" + hash.size() + "}";
     }

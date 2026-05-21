@@ -454,6 +454,10 @@ public class GroupingAggregatorImplementer {
             MethodSpec.Builder builder = MethodSpec.methodBuilder("add").addAnnotation(Override.class).addModifiers(Modifier.PUBLIC);
             builder.addParameter(TypeName.INT, "positionOffset").addParameter(groupIdsType, "groupIds");
 
+            if (aggState.hasEnsureCapacity()) {
+                builder.addStatement("state.ensureCapacity(seenGroupIds.maxSeenGroupId())");
+            }
+
             StringBuilder pattern = new StringBuilder("addRawInput(positionOffset, groupIds");
             List<Object> params = new ArrayList<>();
             for (Argument a : aggParams) {
@@ -663,8 +667,28 @@ public class GroupingAggregatorImplementer {
         builder.addStatement("state.enableGroupIdTracking(seenGroupIds)");
         builder.endControlFlow();
 
-        builder.addStatement("return new $T.IntermediateAddInput(this, seenGroupIds, page)", GROUPING_AGGREGATOR_FUNCTION);
+        builder.addStatement("return $L", intermediateAddInput());
         return builder.build();
+    }
+
+    private TypeSpec intermediateAddInput() {
+        TypeSpec.Builder typeBuilder = TypeSpec.anonymousClassBuilder("");
+        typeBuilder.addSuperinterface(GROUPING_AGGREGATOR_FUNCTION_ADD_INPUT);
+
+        for (ClassName groupIdsType : GROUP_IDS_CLASSES) {
+            MethodSpec.Builder builder = MethodSpec.methodBuilder("add").addAnnotation(Override.class).addModifiers(Modifier.PUBLIC);
+            builder.addParameter(TypeName.INT, "positionOffset").addParameter(groupIdsType, "groupIds");
+            if (aggState.hasEnsureCapacity()) {
+                builder.addStatement("state.ensureCapacity(seenGroupIds.maxSeenGroupId())");
+            }
+            builder.addStatement("addIntermediateInput(positionOffset, groupIds, page)");
+            typeBuilder.addMethod(builder.build());
+        }
+
+        MethodSpec.Builder close = MethodSpec.methodBuilder("close").addAnnotation(Override.class).addModifiers(Modifier.PUBLIC);
+        typeBuilder.addMethod(close.build());
+
+        return typeBuilder.build();
     }
 
     private MethodSpec selectedMayContainUnseenGroups() {

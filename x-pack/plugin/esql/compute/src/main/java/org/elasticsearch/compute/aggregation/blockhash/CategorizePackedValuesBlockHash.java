@@ -173,6 +173,11 @@ public class CategorizePackedValuesBlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        return packedValuesBlockHash.maxSeenGroupId();
+    }
+
+    @Override
     public final ReleasableIterator<IntBlock> lookup(Page page, ByteSizeValue targetBlockSize) {
         throw new UnsupportedOperationException();
     }

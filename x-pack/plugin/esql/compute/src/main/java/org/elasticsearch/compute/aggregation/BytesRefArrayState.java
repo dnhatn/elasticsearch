@@ -92,7 +92,7 @@ public final class BytesRefArrayState implements GroupingAggregatorState, Releas
         }
     }
 
-    private void ensureCapacity(int groupId) {
+    public void ensureCapacity(int groupId) {
         var minSize = groupId + 1;
         if (minSize > values.size()) {
             long prevSize = values.size();

@@ -512,6 +512,14 @@ final class BytesRefTopNBlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        if (hash.size() == 0 && hasNull == false) {
+            return -1;
+        }
+        return Math.toIntExact(hash.size());
+    }
+
+    @Override
     public void close() {
         Releasables.close(hash, topValues);
     }

@@ -9,6 +9,7 @@ package org.elasticsearch.compute.aggregation;
 
 import org.apache.lucene.document.InetAddressPoint;
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.BitArray;
 import org.elasticsearch.compute.ConstantBooleanExpressionEvaluator;
 import org.elasticsearch.compute.aggregation.blockhash.BlockHash;
@@ -738,10 +739,18 @@ public abstract class GroupingAggregatorFunctionTestCase extends ForkingOperator
 
                     @Override
                     public AddInput prepareProcessRawInputPage(SeenGroupIds ignoredSeenGroupIds, Page page) {
-                        final AddInput delegateAddInput = delegate.prepareProcessRawInputPage(bigArrays -> {
-                            BitArray seen = new BitArray(0, bigArrays);
-                            seen.or(seenGroupIds);
-                            return seen;
+                        final AddInput delegateAddInput = delegate.prepareProcessRawInputPage(new SeenGroupIds() {
+                            @Override
+                            public BitArray seenGroupIds(BigArrays bigArrays) {
+                                BitArray seen = new BitArray(0, bigArrays);
+                                seen.or(seenGroupIds);
+                                return seen;
+                            }
+
+                            @Override
+                            public int maxSeenGroupId() {
+                                return (int) seenGroupIds.size() - 1;
+                            }
                         }, page);
                         if (delegateAddInput == null) {
                             return null;

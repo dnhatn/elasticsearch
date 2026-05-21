@@ -99,7 +99,8 @@ public final class IpArrayState extends AbstractArrayState implements GroupingAg
         }
     }
 
-    private void ensureCapacity(int groupId) {
+    @Override
+    public void ensureCapacity(int groupId) {
         var minIpIndex = getIndex(groupId);
         var minSize = minIpIndex + IP_LENGTH;
         if (minSize > values.size()) {

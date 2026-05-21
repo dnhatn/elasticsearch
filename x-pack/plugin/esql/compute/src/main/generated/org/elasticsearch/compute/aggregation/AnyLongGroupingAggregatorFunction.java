@@ -67,16 +67,19 @@ public final class AnyLongGroupingAggregatorFunction implements GroupingAggregat
     return new GroupingAggregatorFunction.AddInput() {
       @Override
       public void add(int positionOffset, IntArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valuesBlock);
       }
 
       @Override
       public void add(int positionOffset, IntBigArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valuesBlock);
       }
 
       @Override
       public void add(int positionOffset, IntVector groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valuesBlock);
       }
 

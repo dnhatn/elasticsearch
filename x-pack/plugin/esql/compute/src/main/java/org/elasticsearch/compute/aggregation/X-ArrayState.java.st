@@ -113,7 +113,8 @@ $endif$
         }
     }
 
-    private void ensureCapacity(int groupId) {
+    @Override
+    public void ensureCapacity(int groupId) {
 $if(boolean)$
         if (groupId >= size) {
             values.fill(size, groupId + 1, init);

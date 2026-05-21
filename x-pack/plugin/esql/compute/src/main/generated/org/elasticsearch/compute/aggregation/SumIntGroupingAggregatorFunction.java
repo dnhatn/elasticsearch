@@ -71,16 +71,19 @@ public final class SumIntGroupingAggregatorFunction implements GroupingAggregato
       return new GroupingAggregatorFunction.AddInput() {
         @Override
         public void add(int positionOffset, IntArrayBlock groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, vBlock);
         }
 
         @Override
         public void add(int positionOffset, IntBigArrayBlock groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, vBlock);
         }
 
         @Override
         public void add(int positionOffset, IntVector groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, vBlock);
         }
 
@@ -92,16 +95,19 @@ public final class SumIntGroupingAggregatorFunction implements GroupingAggregato
     return new GroupingAggregatorFunction.AddInput() {
       @Override
       public void add(int positionOffset, IntArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, vVector);
       }
 
       @Override
       public void add(int positionOffset, IntBigArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, vVector);
       }
 
       @Override
       public void add(int positionOffset, IntVector groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, vVector);
       }
 
@@ -358,7 +364,29 @@ public final class SumIntGroupingAggregatorFunction implements GroupingAggregato
     if (seen == null || seen.isConstant() == false || seen.getBoolean(0) == false) {
       state.enableGroupIdTracking(seenGroupIds);
     }
-    return new GroupingAggregatorFunction.IntermediateAddInput(this, seenGroupIds, page);
+    return new GroupingAggregatorFunction.AddInput() {
+      @Override
+      public void add(int positionOffset, IntArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
+        addIntermediateInput(positionOffset, groupIds, page);
+      }
+
+      @Override
+      public void add(int positionOffset, IntBigArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
+        addIntermediateInput(positionOffset, groupIds, page);
+      }
+
+      @Override
+      public void add(int positionOffset, IntVector groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
+        addIntermediateInput(positionOffset, groupIds, page);
+      }
+
+      @Override
+      public void close() {
+      }
+    };
   }
 
   private void maybeEnableGroupIdTracking(SeenGroupIds seenGroupIds, IntBlock vBlock) {

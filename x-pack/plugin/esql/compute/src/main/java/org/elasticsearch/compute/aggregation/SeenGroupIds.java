@@ -18,10 +18,20 @@ public interface SeenGroupIds {
      */
     BitArray seenGroupIds(BigArrays bigArrays);
 
+    /**
+     * The maximum group id (inclusive) that this instance has seen
+     */
+    int maxSeenGroupId();
+
     record Empty() implements SeenGroupIds {
         @Override
         public BitArray seenGroupIds(BigArrays bigArrays) {
             return new BitArray(1, bigArrays);
+        }
+
+        @Override
+        public int maxSeenGroupId() {
+            return -1;
         }
     }
 
@@ -33,6 +43,11 @@ public interface SeenGroupIds {
                 seen.set(i);
             }
             return seen;
+        }
+
+        @Override
+        public int maxSeenGroupId() {
+            return to - 1;
         }
     }
 }

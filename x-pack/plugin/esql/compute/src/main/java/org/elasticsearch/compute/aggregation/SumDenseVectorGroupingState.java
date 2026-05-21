@@ -57,7 +57,8 @@ final class SumDenseVectorGroupingState extends AbstractFallibleArrayState imple
         trackGroupId(groupId);
     }
 
-    private void ensureCapacity(int groupId) {
+    @Override
+    public void ensureCapacity(int groupId) {
         assert dimensions != -1 : "Dimensions should be set before ensuring capacity";
         sums = bigArrays.grow(sums, (groupId + 1L) * dimensions);
     }

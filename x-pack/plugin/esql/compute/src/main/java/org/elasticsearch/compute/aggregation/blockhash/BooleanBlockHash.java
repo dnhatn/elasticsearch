@@ -159,6 +159,16 @@ final class BooleanBlockHash extends BlockHash {
     }
 
     @Override
+    public int maxSeenGroupId() {
+        for (int i = everSeen.length - 1; i >= 0; i--) {
+            if (everSeen[i]) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    @Override
     public void close() {
         // Nothing to close
     }

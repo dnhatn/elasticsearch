@@ -296,6 +296,11 @@ public final class TimeSeriesBlockHash extends BlockHash {
         return new SeenGroupIds.Range(0, Math.toIntExact(finalHash.size())).seenGroupIds(bigArrays);
     }
 
+    @Override
+    public int maxSeenGroupId() {
+        return Math.toIntExact(finalHash.size()) - 1;
+    }
+
     public int tsidForGroup(long groupId) {
         return Math.toIntExact(finalHash.getKey1(groupId));
     }

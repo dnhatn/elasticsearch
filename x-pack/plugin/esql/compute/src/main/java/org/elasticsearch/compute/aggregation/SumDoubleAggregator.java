@@ -203,7 +203,8 @@ class SumDoubleAggregator {
             trackGroupId(groupId);
         }
 
-        private void ensureCapacity(int groupId) {
+        @Override
+        public void ensureCapacity(int groupId) {
             values = bigArrays.grow(values, groupId + 1);
             deltas = bigArrays.grow(deltas, groupId + 1);
         }

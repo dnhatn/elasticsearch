@@ -87,16 +87,19 @@ public final class DerivDoubleGroupingAggregatorFunction implements GroupingAggr
       return new GroupingAggregatorFunction.AddInput() {
         @Override
         public void add(int positionOffset, IntArrayBlock groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, valueBlock, timestampBlock);
         }
 
         @Override
         public void add(int positionOffset, IntBigArrayBlock groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, valueBlock, timestampBlock);
         }
 
         @Override
         public void add(int positionOffset, IntVector groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, valueBlock, timestampBlock);
         }
 
@@ -111,16 +114,19 @@ public final class DerivDoubleGroupingAggregatorFunction implements GroupingAggr
       return new GroupingAggregatorFunction.AddInput() {
         @Override
         public void add(int positionOffset, IntArrayBlock groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, valueBlock, timestampBlock);
         }
 
         @Override
         public void add(int positionOffset, IntBigArrayBlock groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, valueBlock, timestampBlock);
         }
 
         @Override
         public void add(int positionOffset, IntVector groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, valueBlock, timestampBlock);
         }
 
@@ -132,16 +138,19 @@ public final class DerivDoubleGroupingAggregatorFunction implements GroupingAggr
     return new GroupingAggregatorFunction.AddInput() {
       @Override
       public void add(int positionOffset, IntArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valueVector, timestampVector);
       }
 
       @Override
       public void add(int positionOffset, IntBigArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valueVector, timestampVector);
       }
 
       @Override
       public void add(int positionOffset, IntVector groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, valueVector, timestampVector);
       }
 

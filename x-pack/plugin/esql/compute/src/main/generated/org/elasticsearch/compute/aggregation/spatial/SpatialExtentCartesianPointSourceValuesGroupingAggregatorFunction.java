@@ -77,16 +77,19 @@ public final class SpatialExtentCartesianPointSourceValuesGroupingAggregatorFunc
       return new GroupingAggregatorFunction.AddInput() {
         @Override
         public void add(int positionOffset, IntArrayBlock groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, bytesBlock);
         }
 
         @Override
         public void add(int positionOffset, IntBigArrayBlock groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, bytesBlock);
         }
 
         @Override
         public void add(int positionOffset, IntVector groupIds) {
+          state.ensureCapacity(seenGroupIds.maxSeenGroupId());
           addRawInput(positionOffset, groupIds, bytesBlock);
         }
 
@@ -98,16 +101,19 @@ public final class SpatialExtentCartesianPointSourceValuesGroupingAggregatorFunc
     return new GroupingAggregatorFunction.AddInput() {
       @Override
       public void add(int positionOffset, IntArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, bytesVector);
       }
 
       @Override
       public void add(int positionOffset, IntBigArrayBlock groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, bytesVector);
       }
 
       @Override
       public void add(int positionOffset, IntVector groupIds) {
+        state.ensureCapacity(seenGroupIds.maxSeenGroupId());
         addRawInput(positionOffset, groupIds, bytesVector);
       }
 
