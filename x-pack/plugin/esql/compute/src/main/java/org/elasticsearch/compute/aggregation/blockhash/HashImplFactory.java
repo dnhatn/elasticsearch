@@ -61,14 +61,7 @@ public class HashImplFactory {
 
     /** Creates a new LongLongHashTable. */
     public static LongLongHashTable newLongLongHash(BlockFactory bf) {
-        if (Boolean.getBoolean("esql.partitioned_longlong_hash")) {
-            return new LongLongPartitionedSwissHash(bf.bigArrays().recycler(), bf.breaker());
-        }
-        if (SWISS_HASH_FACTORY != null) {
-            return SWISS_HASH_FACTORY.newLongLongSwissHash(bf.bigArrays().recycler(), bf.breaker());
-        } else {
-            return new LongLongHash(1, bf.bigArrays());
-        }
+        return new LongLongPartitionedSwissHash(bf.bigArrays().recycler(), bf.breaker());
     }
 
     /** Creates a new BytesRefHashTable. */
