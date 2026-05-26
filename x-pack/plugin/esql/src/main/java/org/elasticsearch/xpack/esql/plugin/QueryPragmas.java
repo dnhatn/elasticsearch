@@ -138,7 +138,7 @@ public final class QueryPragmas implements Writeable {
      * (such as a UUID or a per-event id). Produces silently-wrong results when keys can span
      * drivers. Off by default.
      */
-    public static final Setting<Boolean> SKIP_FINAL_AGGREGATION = Setting.boolSetting("skip_final_aggregation", false);
+    public static final Setting<Boolean> SKIP_FINAL_AGGREGATION = Setting.boolSetting("skip_final_aggregation", true);
 
     /**
      * EXPERIMENTAL / unsafe: push a TopN(K) into each data driver after its aggregation, so each
