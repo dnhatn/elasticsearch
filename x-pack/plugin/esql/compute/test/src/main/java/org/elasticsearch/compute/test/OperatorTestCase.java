@@ -100,7 +100,7 @@ public abstract class OperatorTestCase extends AnyOperatorTestCase {
         /*
          * Build the input before building `simple` to handle the rare
          * cases where `simple` need some state from the input - mostly
-         * this is ValuesSourceReaderOperator.
+         * this is ValuesSourceReaderOperator.`
          */
         DriverContext inputFactoryContext = driverContext();
         List<Page> input = CannedSourceOperator.collectPages(simpleInput(inputFactoryContext.blockFactory(), largeInputSize()));

@@ -8,15 +8,21 @@
 package org.elasticsearch.compute.operator;
 
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.common.logging.HeaderWarning;
+import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.util.concurrent.CountDown;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Run a set of drivers to completion.
  */
 public abstract class DriverRunner {
+    private final static Logger LOGGER = LogManager.getLogger(DriverRunner.class);
     private final ThreadContext threadContext;
 
     public DriverRunner(ThreadContext threadContext) {
@@ -32,9 +38,9 @@ public abstract class DriverRunner {
      * Run all drivers to completion asynchronously.
      */
     public void runToCompletion(List<Driver> drivers, ActionListener<Void> listener) {
-        var responseHeadersCollector = new ResponseHeadersCollector(threadContext);
         var failure = new FailureCollector();
         CountDown counter = new CountDown(drivers.size());
+        Set<String> warnings = ConcurrentCollections.newConcurrentSet();
         for (int i = 0; i < drivers.size(); i++) {
             Driver driver = drivers.get(i);
             ActionListener<Void> driverListener = new ActionListener<>() {
@@ -55,9 +61,14 @@ public abstract class DriverRunner {
                 }
 
                 private void done() {
-                    responseHeadersCollector.collect();
+                    warnings.addAll(driver.driverContext().getWarnings());
                     if (counter.countDown()) {
-                        responseHeadersCollector.finish();
+                        if (warnings.isEmpty() == false) {
+                            LOGGER.debug("warnings [{}]", warnings);
+                            for (String warning : warnings) {
+                                threadContext.addResponseHeader("Warning", HeaderWarning.formatWarning(warning));
+                            }
+                        }
                         Exception error = failure.getFailure();
                         if (error != null) {
                             listener.onFailure(error);

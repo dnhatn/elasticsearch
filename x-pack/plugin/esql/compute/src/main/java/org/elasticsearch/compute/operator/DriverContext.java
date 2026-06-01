@@ -19,6 +19,7 @@ import org.elasticsearch.core.Releasables;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,6 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * await the completion of all async actions before finalizing the Driver.
  */
 public class DriverContext {
+    private static final ThreadLocal<DriverContext> CURRENT = new ThreadLocal<>();
 
     // Working set. Only the thread executing the driver will update this set.
     Set<Releasable> workingSet = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -66,6 +68,7 @@ public class DriverContext {
     private final LocalCircuitBreaker.SizeSettings localBreakerSettings;
 
     private Runnable earlyTerminationChecker = () -> {};
+    private final Set<String> warnings = new LinkedHashSet<>();
 
     public DriverContext(BigArrays bigArrays, BlockFactory blockFactory, @Nullable LocalCircuitBreaker.SizeSettings localBreakerSettings) {
         this(bigArrays, blockFactory, localBreakerSettings, null, WarningsMode.COLLECT);
@@ -239,26 +242,6 @@ public class DriverContext {
         IGNORE
     }
 
-    /**
-     * Marks the beginning of a run loop for assertion purposes.
-     */
-    public boolean assertBeginRunLoop() {
-        if (blockFactory.breaker() instanceof LocalCircuitBreaker localBreaker) {
-            assert localBreaker.assertBeginRunLoop();
-        }
-        return true;
-    }
-
-    /**
-     * Marks the end of a run loop for assertion purposes.
-     */
-    public boolean assertEndRunLoop() {
-        if (blockFactory.breaker() instanceof LocalCircuitBreaker localBreaker) {
-            assert localBreaker.assertEndRunLoop();
-        }
-        return true;
-    }
-
     private static class AsyncActions {
         private final SubscribableListener<Void> completion = new SubscribableListener<>();
         private final AtomicBoolean finished = new AtomicBoolean();
@@ -286,5 +269,35 @@ public class DriverContext {
                 removeInstance();
             }
         }
+    }
+
+    public void addWarning(String warning) {
+        warnings.add(warning);
+    }
+
+    public Set<String> getWarnings() {
+        return warnings;
+    }
+
+    /**
+     * Returns the DriverContext associated with the current thread if the Driver is executing
+     */
+    @Nullable
+    public static DriverContext current() {
+        return CURRENT.get();
+    }
+
+    void beginRunLoop() {
+        CURRENT.set(this);
+        if (blockFactory.breaker() instanceof LocalCircuitBreaker localBreaker) {
+            assert localBreaker.assertBeginRunLoop();
+        }
+    }
+
+    void endRunLoop() {
+        if (blockFactory.breaker() instanceof LocalCircuitBreaker localBreaker) {
+            assert localBreaker.assertEndRunLoop();
+        }
+        CURRENT.remove();
     }
 }

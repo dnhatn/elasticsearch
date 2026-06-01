@@ -190,7 +190,6 @@ public class Driver implements Releasable, Describable {
         while (true) {
             IsBlockedResult isBlocked = Operator.NOT_BLOCKED;
             try {
-                assert driverContext.assertBeginRunLoop();
                 isBlocked = runSingleLoopIteration(currentTimeNanosSupplier, lastStatusUpdateTime);
             } catch (DriverEarlyTerminationException unused) {
                 closeEarlyFinishedOperators(
@@ -214,8 +213,6 @@ public class Driver implements Releasable, Describable {
                     LOGGER.error(Strings.format("Error running driver [%s]", shortDescription), e);
                 }
                 throw e;
-            } finally {
-                assert driverContext.assertEndRunLoop();
             }
             totalIterationsThisRun++;
             iterationsSinceLastStatusUpdate++;
@@ -503,7 +500,13 @@ public class Driver implements Releasable, Describable {
 
             @Override
             protected void doRun() {
-                SubscribableListener<Void> fut = driver.run(maxTime, maxIterations, currentTimeNanosSupplier);
+                final SubscribableListener<Void> fut;
+                try {
+                    driver.driverContext.beginRunLoop();
+                    fut = driver.run(maxTime, maxIterations, currentTimeNanosSupplier);
+                } finally {
+                    driver.driverContext.endRunLoop();
+                }
                 if (driver.isFinished()) {
                     onComplete(listener);
                     return;

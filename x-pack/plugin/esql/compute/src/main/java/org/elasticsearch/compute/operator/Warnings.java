@@ -7,10 +7,11 @@
 
 package org.elasticsearch.compute.operator;
 
+import org.elasticsearch.common.logging.HeaderWarning;
+
 import java.util.HashSet;
 import java.util.Set;
 
-import static org.elasticsearch.common.logging.HeaderWarning.addWarning;
 import static org.elasticsearch.common.logging.LoggerMessageFormat.format;
 
 /**
@@ -152,6 +153,15 @@ public class Warnings {
             emittedNonExceptionWarnings.add(message);
             addWarning(nonExceptionWarningPrefix + message);
             addedWarnings++;
+        }
+    }
+
+    private void addWarning(String message) {
+        DriverContext ctx = DriverContext.current();
+        if (ctx != null) {
+            ctx.addWarning(message);
+        } else {
+            HeaderWarning.addWarning(message);
         }
     }
 }

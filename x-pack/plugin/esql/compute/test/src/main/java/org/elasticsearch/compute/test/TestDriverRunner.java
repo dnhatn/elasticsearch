@@ -31,8 +31,10 @@ import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.LongStream;
 
 import static org.elasticsearch.test.ESTestCase.assertThat;
@@ -48,6 +50,7 @@ import static org.hamcrest.Matchers.not;
 public class TestDriverRunner {
     private Integer numThreads = null;
     private TimeValue timeout = TimeValue.timeValueSeconds(30);
+    private final Set<String> warnings = new HashSet<>();
 
     /**
      * Set the number of threads use to run the driver. If this isn't called
@@ -133,12 +136,23 @@ public class TestDriverRunner {
             }
         };
         PlainActionFuture<Void> future = new PlainActionFuture<>();
+        warnings.clear();
         try {
-            driverRunner.runToCompletion(drivers, future);
+            driverRunner.runToCompletion(drivers, ActionListener.runBefore(future, () -> {
+                List<String> ws = threadPool.getThreadContext().getResponseHeaders().get("Warning");
+                threadPool.getThreadContext().stashContext().close();
+                if (ws != null) {
+                    warnings.addAll(ws);
+                }
+            }));
             future.actionGet(timeout);
         } finally {
             terminate(threadPool);
         }
+    }
+
+    public Set<String> getWarnings() {
+        return warnings;
     }
 
     /**
