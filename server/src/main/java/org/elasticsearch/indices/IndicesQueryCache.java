@@ -471,7 +471,8 @@ public class IndicesQueryCache implements QueryCache, Closeable {
                             }
                             @Override
                             public void collect(int doc) {
-                                matches[doc >>> 6] |= 1L << (doc - startDoc);
+                                int idx = doc - startDoc;
+                                matches[idx >>> 6] |= 1L << idx;
                             }
                         }, context.reader().getLiveDocs(), startDoc, endDoc);
                         System.err.println(
