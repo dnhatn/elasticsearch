@@ -31,6 +31,7 @@ import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.RefCounted;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.indices.IndicesQueryCache;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.xcontent.XContentBuilder;
@@ -243,7 +244,12 @@ public abstract class LuceneOperator extends SourceOperator {
                     currentScorer = new LuceneScorer(currentSlice.shardContext(), weight, currentSlice.tags(), leaf);
                     sliceBlocked = currentSlice.leafBlockedOnCaching(currentScorer.leafReaderContext());
                     if (sliceBlocked == null || sliceBlocked.isDone()) {
-                        currentScorer.reinitialize();
+                        IndicesQueryCache.PARTITION_RANGE.set(new int[] { partialLeaf.minDoc(), partialLeaf.maxDoc() });
+                        try {
+                            currentScorer.reinitialize();
+                        } finally {
+                            IndicesQueryCache.PARTITION_RANGE.remove();
+                        }
                     }
                 }
                 assert currentScorer.maxPosition <= partialLeaf.maxDoc() : currentScorer.maxPosition + ">" + partialLeaf.maxDoc();

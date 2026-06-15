@@ -402,7 +402,7 @@ public final class LuceneSliceQueue {
                     ctx.searcher().getQueryCachingPolicy(),
                     false
                 );
-                return new WeightAndCache(searcher.createWeight(query, scoreMode, 1), queryCache::blockedOnCaching);
+                return new WeightAndCache(searcher.createWeight(query, scoreMode, 1), LuceneSlice.NEVER_BLOCKED);
             } else {
                 return new WeightAndCache(ctx.searcher().createWeight(query, scoreMode, 1), LuceneSlice.NEVER_BLOCKED);
             }

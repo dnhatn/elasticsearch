@@ -777,6 +777,7 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                     }
 
                     final long cost = supplier.cost();
+                    // TODO: we should make this support bulkScorer and scorer so that we can leverage the block-level cache
                     return new ConstantScoreScorerSupplier(0f, ScoreMode.COMPLETE_NO_SCORES, maxDoc) {
                         @Override
                         public DocIdSetIterator iterator(long leadCost) throws IOException {

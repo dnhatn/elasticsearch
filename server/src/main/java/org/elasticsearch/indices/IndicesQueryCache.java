@@ -13,11 +13,15 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.BulkScorer;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.FilterWeight;
+import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.QueryCache;
 import org.apache.lucene.search.QueryCachingPolicy;
+import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.Weight;
 import org.elasticsearch.common.lucene.ShardCoreKeyMap;
@@ -49,6 +53,12 @@ import java.util.function.Supplier;
 public class IndicesQueryCache implements QueryCache, Closeable {
 
     private static final Logger logger = LogManager.getLogger(IndicesQueryCache.class);
+
+    /**
+     * Set by LuceneOperator before reinitialize() to signal the doc range this thread is responsible for.
+     * int[0] = minDoc (inclusive), int[1] = maxDoc (exclusive).
+     */
+    public static final ThreadLocal<int[]> PARTITION_RANGE = new ThreadLocal<>();
 
     public static final Setting<ByteSizeValue> INDICES_CACHE_QUERY_SIZE_SETTING = Setting.memorySizeSetting(
         "indices.queries.cache.size",
@@ -445,18 +455,34 @@ public class IndicesQueryCache implements QueryCache, Closeable {
             LeafReaderContext context
         ) throws IOException {
             if (weight instanceof OptionalCachingWeight cachingWeight) {
-                try (Releasable onComplete = cachingWeight.startCaching(context)) {
-                    if (onComplete != null) {
-                        final long startInNanos = System.nanoTime();
-                        CacheAndCount cacheAndCount = super.tryPopulateCache(cacheKey, weight, scorerSupplier, context);
-                        long endInNanos = System.nanoTime();
-                        int numDocs = context.reader().maxDoc();
-                        System.err.println("--> caching " + weight.getQuery() + " docs [" + numDocs + "] took " + TimeValue.timeValueNanos(endInNanos - startInNanos));
-                        return cacheAndCount;
-                    } else {
-                        return null;
+                int[] range = PARTITION_RANGE.get();
+                if (range != null) {
+                    final long startInNanos = System.nanoTime();
+                    BulkScorer scorer = scorerSupplier.bulkScorer();
+                    if (scorer != null) {
+                        final int numDocs = range[1] - range[0] + 1;
+                        final long[] matches = new long[(numDocs + 63) >>> 6];
+                        scorer.score(new LeafCollector() {
+                            @Override
+                            public void setScorer(Scorable s) {
+                            }
+
+                            @Override
+                            public void collect(int doc) {
+                                matches[doc >>> 6] |= 1L << doc;
+                            }
+                        }, context.reader().getLiveDocs(), range[0], range[1]);
+                        System.err.println(
+                            "--> caching "
+                                + weight.getQuery()
+                                + " docs ["
+                                + numDocs
+                                + "] took "
+                                + TimeValue.timeValueNanos(System.nanoTime() - startInNanos)
+                        );
                     }
                 }
+                return null;
             }
             return super.tryPopulateCache(cacheKey, weight, scorerSupplier, context);
         }
