@@ -89,6 +89,7 @@ final class DocPartitioningQueryCache implements QueryCache {
                     maybeRemoveCachingListener(leaf);
                 };
             }
+            System.err.println("--> query=" + in.getQuery() + " caching is skipped because it's being cached");
             listener.onResponse(null);
             maybeRemoveCachingListener(leaf);
             return null;

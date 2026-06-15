@@ -781,7 +781,9 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                         @Override
                         public DocIdSetIterator iterator(long leadCost) throws IOException {
                             // skip cache operation which would slow query down too much
-                            if (cost / skipCacheFactor > leadCost) {
+                            boolean skipped = cost / skipCacheFactor > leadCost;
+                            System.err.println("--> query=" + in.getQuery() + " cost=" + cost + " lead_cost=" + leadCost + " skip_factor=" + skipCacheFactor + " skipped=" + skipped);
+                            if (skipped) {
                                 return supplier.get(leadCost).iterator();
                             }
                             CacheAndCount cached = tryPopulateCache(cacheHelper, in, supplier, context);
