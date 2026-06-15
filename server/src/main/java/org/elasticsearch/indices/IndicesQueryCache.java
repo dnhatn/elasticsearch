@@ -28,6 +28,7 @@ import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Predicates;
 import org.elasticsearch.core.Releasable;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.cache.query.QueryCacheStats;
 import org.elasticsearch.index.shard.IndexShard;
@@ -446,7 +447,12 @@ public class IndicesQueryCache implements QueryCache, Closeable {
             if (weight instanceof OptionalCachingWeight cachingWeight) {
                 try (Releasable onComplete = cachingWeight.startCaching(context)) {
                     if (onComplete != null) {
-                        return super.tryPopulateCache(cacheKey, weight, scorerSupplier, context);
+                        final long startInNanos = System.nanoTime();
+                        CacheAndCount cacheAndCount = super.tryPopulateCache(cacheKey, weight, scorerSupplier, context);
+                        long endInNanos = System.nanoTime();
+                        int numDocs = context.reader().maxDoc();
+                        System.err.println("--> caching " + weight.getQuery() + " docs [" + numDocs + "] took " + TimeValue.timeValueNanos(endInNanos - startInNanos));
+                        return cacheAndCount;
                     } else {
                         return null;
                     }
