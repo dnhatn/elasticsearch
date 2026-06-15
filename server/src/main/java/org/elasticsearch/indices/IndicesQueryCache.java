@@ -460,7 +460,9 @@ public class IndicesQueryCache implements QueryCache, Closeable {
                     final long startInNanos = System.nanoTime();
                     BulkScorer scorer = scorerSupplier.bulkScorer();
                     if (scorer != null) {
-                        final int numDocs = range[1] - range[0] + 1;
+                        final int startDoc = range[0];
+                        final int endDoc = range[1];
+                        final int numDocs = endDoc - startDoc + 1;
                         final long[] matches = new long[(numDocs + 63) >>> 6];
                         scorer.score(new LeafCollector() {
                             @Override
@@ -469,9 +471,9 @@ public class IndicesQueryCache implements QueryCache, Closeable {
 
                             @Override
                             public void collect(int doc) {
-                                matches[doc >>> 6] |= 1L << doc;
+                                matches[doc >>> 6] |= 1L << (doc - startDoc);
                             }
-                        }, context.reader().getLiveDocs(), range[0], range[1]);
+                        }, context.reader().getLiveDocs(), startDoc, endDoc);
                         System.err.println(
                             "--> caching "
                                 + weight.getQuery()
