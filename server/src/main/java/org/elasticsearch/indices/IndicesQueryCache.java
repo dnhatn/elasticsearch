@@ -467,8 +467,8 @@ public class IndicesQueryCache implements QueryCache, Closeable {
                         scorer.score(new LeafCollector() {
                             @Override
                             public void setScorer(Scorable s) {
-                            }
 
+                            }
                             @Override
                             public void collect(int doc) {
                                 matches[doc >>> 6] |= 1L << (doc - startDoc);
