@@ -372,12 +372,13 @@ public abstract class LuceneOperator extends SourceOperator {
             numDocs = Math.min(maxPosition - position, numDocs);
             assert numDocs > 0 : "scorer was exhausted";
             int max = Math.min(maxPosition, position + numDocs);
+            int from = position;
+            position = bulkScorer.score(collector, acceptDocs, from, max);
             if (cachingScorers != null) {
                 for (XLRUQueryCache.RangeCache rc : cachingScorers) {
-                    rc.cacheRange(position, max);
+                    rc.cacheRange(from, max);
                 }
             }
-            position = bulkScorer.score(collector, acceptDocs, position, max);
         }
 
         LeafReaderContext leafReaderContext() {

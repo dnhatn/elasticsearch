@@ -964,39 +964,40 @@ public class XLRUQueryCache implements QueryCache, Accountable {
         private final Scorer delegate;
         private final SlicedCache slicedCache;
         private final boolean hasTwoPhase;
-        private int currentBlock;
-        private int blockVisits;
-        private boolean blockMatched;
+        private int skippedMatches;
+        private int totalMatches;
 
         SlicedCacheScorer(Scorer delegate, SlicedCache slicedCache) {
             this.delegate = delegate;
             this.slicedCache = slicedCache;
             this.hasTwoPhase = delegate.twoPhaseIterator() != null;
-            this.currentBlock = -1;
-            this.blockVisits = 0;
-            this.blockMatched = false;
         }
 
         @Override
         public void cacheRange(int from, int to) {
-            flushBlock();
-        }
-
-        private void onApproximationDoc(int docId) {
-            int block = docId >>> SlicedCache.BLOCK_SHIFT;
-            if (block != currentBlock) {
-                flushBlock();
-                currentBlock = block;
-                blockVisits = 0;
-                blockMatched = false;
+            int firstFullBlock = (from + SlicedCache.BLOCK_SIZE - 1) >>> SlicedCache.BLOCK_SHIFT;
+            int lastFullBlock = (to >>> SlicedCache.BLOCK_SHIFT) - 1;
+            int markedScored = 0;
+            for (int b = firstFullBlock; b <= lastFullBlock; b++) {
+                slicedCache.markBlockScored(b);
+                markedScored++;
             }
-            blockVisits++;
-        }
-
-        private void flushBlock() {
-            if (currentBlock >= 0 && blockVisits == SlicedCache.BLOCK_SIZE) {
-                slicedCache.markBlockScored(currentBlock);
+            if (markedScored > 0 || skippedMatches > 0) {
+                System.out.println(
+                    "[SlicedCacheScorer] cacheRange("
+                        + from
+                        + ","
+                        + to
+                        + ") markedScored="
+                        + markedScored
+                        + " skippedMatches="
+                        + skippedMatches
+                        + " totalMatches="
+                        + totalMatches
+                );
             }
+            skippedMatches = 0;
+            totalMatches = 0;
         }
 
         @Override
@@ -1010,14 +1011,14 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                 @Override
                 public boolean matches() throws IOException {
                     int docId = approximation.docID();
-                    onApproximationDoc(docId);
                     int block = docId >>> SlicedCache.BLOCK_SHIFT;
+                    totalMatches++;
                     if (slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
+                        skippedMatches++;
                         return false;
                     }
                     boolean matched = realTwoPhase.matches();
                     if (matched) {
-                        blockMatched = true;
                         slicedCache.markBlockMatch(docId);
                     }
                     return matched;
