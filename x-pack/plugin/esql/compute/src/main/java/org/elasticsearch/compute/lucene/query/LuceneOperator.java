@@ -16,7 +16,6 @@ import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.Bits;
 import org.elasticsearch.TransportVersion;
-import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -34,10 +33,12 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.indices.IndicesQueryCache;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
+import org.elasticsearch.lucene.search.XLRUQueryCache;
 import org.elasticsearch.xcontent.XContentBuilder;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -110,8 +111,6 @@ public abstract class LuceneOperator extends SourceOperator {
      * Shard index currently being timed, or -1 if not timing.
      */
     private int shardClockShardIndex = -1;
-
-    private IsBlockedResult blocked = Operator.NOT_BLOCKED;
 
     private final LongSupplier directoryBytesRead;
 
@@ -220,7 +219,6 @@ public abstract class LuceneOperator extends SourceOperator {
 
     LuceneScorer getCurrentOrLoadNextScorer() {
         for (;;) {
-            SubscribableListener<Void> sliceBlocked = null;
             while (currentScorer == null || currentScorer.isDone()) {
                 if (currentSlice == null || sliceIndex >= currentSlice.numLeaves()) {
                     sliceIndex = 0;
@@ -242,24 +240,11 @@ public abstract class LuceneOperator extends SourceOperator {
                     final Weight weight = currentSlice.weight();
                     processedQueries.add(Status.queryString(weight.getQuery()));
                     currentScorer = new LuceneScorer(currentSlice.shardContext(), weight, currentSlice.tags(), leaf);
-                    sliceBlocked = currentSlice.leafBlockedOnCaching(currentScorer.leafReaderContext());
-                    if (sliceBlocked == null || sliceBlocked.isDone()) {
-                        IndicesQueryCache.PARTITION_RANGE.set(new int[] { partialLeaf.minDoc(), partialLeaf.maxDoc() });
-                        try {
-                            currentScorer.reinitialize();
-                        } finally {
-                            IndicesQueryCache.PARTITION_RANGE.remove();
-                        }
-                    }
+                    currentScorer.reinitialize();
                 }
                 assert currentScorer.maxPosition <= partialLeaf.maxDoc() : currentScorer.maxPosition + ">" + partialLeaf.maxDoc();
                 currentScorer.maxPosition = partialLeaf.maxDoc();
                 currentScorer.position = Math.max(currentScorer.position, partialLeaf.minDoc());
-            }
-            if (sliceBlocked != null && sliceBlocked.isDone() == false) {
-                blocked = new IsBlockedResult(sliceBlocked, "segment is being cached");
-                currentScorer.executingThread = null; // force to use the cached iterator next time
-                return null;
             }
             if (Thread.currentThread() != currentScorer.executingThread) {
                 currentScorer.reinitialize();
@@ -329,10 +314,7 @@ public abstract class LuceneOperator extends SourceOperator {
 
     @Override
     public IsBlockedResult isBlocked() {
-        if (blocked.listener().isDone()) {
-            blocked = NOT_BLOCKED;
-        }
-        return blocked;
+        return NOT_BLOCKED;
     }
 
     /**
@@ -357,6 +339,7 @@ public abstract class LuceneOperator extends SourceOperator {
         private final List<Object> tags;
 
         private BulkScorer bulkScorer;
+        private List<XLRUQueryCache.RangeCache> cachingScorers;
         private int position;
         private int maxPosition;
         private Thread executingThread;
@@ -371,10 +354,15 @@ public abstract class LuceneOperator extends SourceOperator {
 
         private void reinitialize() {
             this.executingThread = Thread.currentThread();
+            var registry = new ArrayList<XLRUQueryCache.RangeCache>();
+            IndicesQueryCache.CACHING_SCORER.set(registry);
             try {
                 this.bulkScorer = weight.bulkScorer(leafReaderContext);
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
+            } finally {
+                this.cachingScorers = IndicesQueryCache.CACHING_SCORER.get();
+                IndicesQueryCache.CACHING_SCORER.remove();
             }
         }
 
@@ -383,7 +371,13 @@ public abstract class LuceneOperator extends SourceOperator {
             // avoid overflow and limit the range
             numDocs = Math.min(maxPosition - position, numDocs);
             assert numDocs > 0 : "scorer was exhausted";
-            position = bulkScorer.score(collector, acceptDocs, position, Math.min(maxPosition, position + numDocs));
+            int max = Math.min(maxPosition, position + numDocs);
+            if (cachingScorers != null) {
+                for (XLRUQueryCache.RangeCache rc : cachingScorers) {
+                    rc.cacheRange(position, max);
+                }
+            }
+            position = bulkScorer.score(collector, acceptDocs, position, max);
         }
 
         LeafReaderContext leafReaderContext() {

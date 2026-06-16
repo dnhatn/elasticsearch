@@ -11,17 +11,11 @@ package org.elasticsearch.indices;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.search.BulkScorer;
-import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Explanation;
-import org.apache.lucene.search.FilterWeight;
-import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.QueryCache;
 import org.apache.lucene.search.QueryCachingPolicy;
-import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.Weight;
 import org.elasticsearch.common.lucene.ShardCoreKeyMap;
@@ -31,8 +25,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Predicates;
-import org.elasticsearch.core.Releasable;
-import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.cache.query.QueryCacheStats;
 import org.elasticsearch.index.shard.IndexShard;
@@ -44,6 +36,7 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,10 +48,14 @@ public class IndicesQueryCache implements QueryCache, Closeable {
     private static final Logger logger = LogManager.getLogger(IndicesQueryCache.class);
 
     /**
-     * Set by LuceneOperator before reinitialize() to signal the doc range this thread is responsible for.
-     * int[0] = minDoc (inclusive), int[1] = maxDoc (exclusive).
+     * Set by the operator during scorer construction to collect all {@link XLRUQueryCache.RangeCache}
+     * instances created by sub-clause caching weights. Each sub-clause scorer that participates in
+     * block-level caching registers itself into this list. The operator drains it after construction
+     * to hold direct references for subsequent {@code cacheRange} calls.
+     * <p>
+     * When {@code null}, sub-clause caching proceeds with the traditional full-segment path.
      */
-    public static final ThreadLocal<int[]> PARTITION_RANGE = new ThreadLocal<>();
+    public static final ThreadLocal<List<XLRUQueryCache.RangeCache>> CACHING_SCORER = new ThreadLocal<>();
 
     public static final Setting<ByteSizeValue> INDICES_CACHE_QUERY_SIZE_SETTING = Setting.memorySizeSetting(
         "indices.queries.cache.size",
@@ -447,66 +444,5 @@ public class IndicesQueryCache implements QueryCache, Closeable {
             shardStats.missCount += 1;
         }
 
-        @Override
-        protected CacheAndCount tryPopulateCache(
-            IndexReader.CacheHelper cacheKey,
-            Weight weight,
-            ScorerSupplier scorerSupplier,
-            LeafReaderContext context
-        ) throws IOException {
-            if (weight instanceof OptionalCachingWeight cachingWeight) {
-                int[] range = PARTITION_RANGE.get();
-                if (range != null) {
-                    final long startInNanos = System.nanoTime();
-                    BulkScorer scorer = scorerSupplier.bulkScorer();
-                    if (scorer != null) {
-                        final int startDoc = range[0];
-                        final int endDoc = range[1];
-                        final int numDocs = endDoc - startDoc + 1;
-                        final long[] matches = new long[(numDocs + 63) >>> 6];
-                        scorer.score(new LeafCollector() {
-                            @Override
-                            public void setScorer(Scorable s) {
-
-                            }
-                            @Override
-                            public void collect(int doc) {
-                                int idx = doc - startDoc;
-                                matches[idx >>> 6] |= 1L << idx;
-                            }
-                        }, context.reader().getLiveDocs(), startDoc, endDoc);
-                        System.err.println(
-                            "--> caching "
-                                + weight.getQuery()
-                                + " docs ["
-                                + numDocs
-                                + "] took "
-                                + TimeValue.timeValueNanos(System.nanoTime() - startInNanos)
-                        );
-                    }
-                }
-                return null;
-            }
-            return super.tryPopulateCache(cacheKey, weight, scorerSupplier, context);
-        }
-    }
-
-    /**
-     * A {@link Weight} that controls whether cache population should proceed for a given leaf.
-     * This is useful when multiple threads query different ranges of the same segment concurrently;
-     * ideally only one thread populates the cache while others fall back to uncached iteration
-     * or wait for caching to complete and then use the cached result.
-     */
-    public abstract static class OptionalCachingWeight extends FilterWeight {
-        protected OptionalCachingWeight(Weight weight) {
-            super(weight);
-        }
-
-        /**
-         * Attempts to claim the right to populate the cache for the given leaf.
-         * Returns a {@link Releasable} that must be closed once caching is complete,
-         * or {@code null} if another thread is already caching this segment.
-         */
-        protected abstract Releasable startCaching(LeafReaderContext leaf);
     }
 }

@@ -25,7 +25,6 @@ import org.elasticsearch.compute.lucene.ShardContext;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.codec.tsdb.PartitionedDocValues;
 import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
-import org.elasticsearch.search.internal.ContextIndexSearcher;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -252,17 +251,7 @@ public final class LuceneSliceQueue {
                     for (List<PartialLeafReaderContext> group : groups) {
                         if (group.isEmpty() == false) {
                             final int slicePosition = nextSliceId++;
-                            slices.add(
-                                new LuceneSlice(
-                                    slicePosition,
-                                    queryHead,
-                                    ctx,
-                                    group,
-                                    weightAndCache.weight,
-                                    queryAndExtra.tags,
-                                    weightAndCache.blockedOnCaching
-                                )
-                            );
+                            slices.add(new LuceneSlice(slicePosition, queryHead, ctx, group, weightAndCache.weight(), queryAndExtra.tags));
                             queryHead = false;
                         }
                     }
@@ -388,24 +377,11 @@ public final class LuceneSliceQueue {
         }
     }
 
-    record WeightAndCache(Weight weight, LuceneSlice.BlockedOnCaching blockedOnCaching) {}
+    record WeightAndCache(Weight weight) {}
 
     private static WeightAndCache weight(ShardContext ctx, Query query, ScoreMode scoreMode, PartitioningStrategy partitioning) {
-        final boolean intraSegment = partitioning == PartitioningStrategy.DOC || partitioning == PartitioningStrategy.TIME_SERIES;
         try {
-            if (scoreMode == ScoreMode.COMPLETE_NO_SCORES && intraSegment) {
-                DocPartitioningQueryCache queryCache = new DocPartitioningQueryCache(ctx.searcher().getQueryCache());
-                ContextIndexSearcher searcher = new ContextIndexSearcher(
-                    ctx.searcher().getIndexReader(),
-                    ctx.searcher().getSimilarity(),
-                    queryCache,
-                    ctx.searcher().getQueryCachingPolicy(),
-                    false
-                );
-                return new WeightAndCache(searcher.createWeight(query, scoreMode, 1), LuceneSlice.NEVER_BLOCKED);
-            } else {
-                return new WeightAndCache(ctx.searcher().createWeight(query, scoreMode, 1), LuceneSlice.NEVER_BLOCKED);
-            }
+            return new WeightAndCache(ctx.searcher().createWeight(query, scoreMode, 1));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
