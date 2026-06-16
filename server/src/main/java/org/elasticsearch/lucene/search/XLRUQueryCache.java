@@ -772,6 +772,7 @@ public class XLRUQueryCache implements QueryCache, Accountable {
 
             int maxDoc = context.reader().maxDoc();
             if (cached instanceof SlicedCache slicedCache) {
+                System.out.println("[CachingWrapperWeight] REUSE SlicedCache for query=" + in.getQuery().getClass().getSimpleName());
                 final ScorerSupplier supplier = in.scorerSupplier(context);
                 if (supplier == null) {
                     return null;
@@ -791,6 +792,7 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                     final long cost = supplier.cost();
                     final List<RangeCache> registry = getCachingScorerRegistry();
                     if (registry != null) {
+                        System.out.println("[CachingWrapperWeight] NEW SlicedCache for query=" + in.getQuery().getClass().getSimpleName());
                         SlicedCache slicedCache = new SlicedCache(maxDoc);
                         putIfAbsent(in.getQuery(), slicedCache, cacheHelper);
                         return new SlicedCacheScorerSupplier(supplier, slicedCache, cost, maxDoc);
@@ -971,6 +973,9 @@ public class XLRUQueryCache implements QueryCache, Accountable {
             this.delegate = delegate;
             this.slicedCache = slicedCache;
             this.hasTwoPhase = delegate.twoPhaseIterator() != null;
+            System.out.println(
+                "[SlicedCacheScorer] CREATED hasTwoPhase=" + hasTwoPhase + " delegate=" + delegate.getClass().getSimpleName()
+            );
         }
 
         @Override
@@ -982,20 +987,20 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                 slicedCache.markBlockScored(b);
                 markedScored++;
             }
-            if (markedScored > 0 || skippedMatches > 0) {
-                System.out.println(
-                    "[SlicedCacheScorer] cacheRange("
-                        + from
-                        + ","
-                        + to
-                        + ") markedScored="
-                        + markedScored
-                        + " skippedMatches="
-                        + skippedMatches
-                        + " totalMatches="
-                        + totalMatches
-                );
-            }
+            System.out.println(
+                "[SlicedCacheScorer] cacheRange("
+                    + from
+                    + ","
+                    + to
+                    + ") markedScored="
+                    + markedScored
+                    + " skippedMatches="
+                    + skippedMatches
+                    + " totalMatches="
+                    + totalMatches
+                    + " hasTwoPhase="
+                    + hasTwoPhase
+            );
             skippedMatches = 0;
             totalMatches = 0;
         }
@@ -1168,7 +1173,7 @@ public class XLRUQueryCache implements QueryCache, Accountable {
      */
     protected static class SlicedCache extends CacheAndCount {
         private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(SlicedCache.class);
-        static final int BLOCK_SHIFT = 10;
+        static final int BLOCK_SHIFT = 6;
         static final int BLOCK_SIZE = 1 << BLOCK_SHIFT;
 
         private final long[] matchBits;
