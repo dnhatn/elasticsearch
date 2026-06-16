@@ -964,52 +964,77 @@ public class XLRUQueryCache implements QueryCache, Accountable {
         private final Scorer delegate;
         private final SlicedCache slicedCache;
         private final boolean hasTwoPhase;
-        private int rangeFrom;
-        private int rangeTo;
-        private int lastBlock;
+        private int currentBlock;
+        private int blockVisits;
+        private boolean blockMatched;
 
         SlicedCacheScorer(Scorer delegate, SlicedCache slicedCache) {
             this.delegate = delegate;
             this.slicedCache = slicedCache;
             this.hasTwoPhase = delegate.twoPhaseIterator() != null;
-            this.rangeFrom = 0;
-            this.rangeTo = slicedCache.maxDoc();
-            this.lastBlock = -1;
+            this.currentBlock = -1;
+            this.blockVisits = 0;
+            this.blockMatched = false;
         }
 
         @Override
         public void cacheRange(int from, int to) {
-            this.rangeFrom = from;
-            this.rangeTo = to;
+            flushBlock();
         }
 
-        private void markBlockScoredIfCrossed(int doc) {
-            int block = doc >>> SlicedCache.BLOCK_SHIFT;
-            if (lastBlock >= 0 && block != lastBlock) {
-                slicedCache.markBlockScored(lastBlock);
+        private void onApproximationDoc(int docId) {
+            int block = docId >>> SlicedCache.BLOCK_SHIFT;
+            if (block != currentBlock) {
+                flushBlock();
+                currentBlock = block;
+                blockVisits = 0;
+                blockMatched = false;
             }
-            lastBlock = block;
+            blockVisits++;
         }
 
-        private int skipConfirmedEmptyBlocks(int target) {
-            int block = target >>> SlicedCache.BLOCK_SHIFT;
-            int maxBlock = (Math.min(rangeTo, slicedCache.maxDoc()) - 1) >>> SlicedCache.BLOCK_SHIFT;
-            while (block <= maxBlock && slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
-                block++;
+        private void flushBlock() {
+            if (currentBlock >= 0 && blockVisits == SlicedCache.BLOCK_SIZE) {
+                slicedCache.markBlockScored(currentBlock);
             }
-            if (block > maxBlock) {
-                return target;
-            }
-            return Math.max(target, block << SlicedCache.BLOCK_SHIFT);
         }
 
         @Override
         public TwoPhaseIterator twoPhaseIterator() {
-            return delegate.twoPhaseIterator();
+            TwoPhaseIterator realTwoPhase = delegate.twoPhaseIterator();
+            if (realTwoPhase == null) {
+                return null;
+            }
+            DocIdSetIterator approximation = realTwoPhase.approximation();
+            return new TwoPhaseIterator(approximation) {
+                @Override
+                public boolean matches() throws IOException {
+                    int docId = approximation.docID();
+                    onApproximationDoc(docId);
+                    int block = docId >>> SlicedCache.BLOCK_SHIFT;
+                    if (slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
+                        return false;
+                    }
+                    boolean matched = realTwoPhase.matches();
+                    if (matched) {
+                        blockMatched = true;
+                        slicedCache.markBlockMatch(docId);
+                    }
+                    return matched;
+                }
+
+                @Override
+                public float matchCost() {
+                    return realTwoPhase.matchCost();
+                }
+            };
         }
 
         @Override
         public DocIdSetIterator iterator() {
+            if (hasTwoPhase) {
+                return TwoPhaseIterator.asDocIdSetIterator(twoPhaseIterator());
+            }
             return delegate.iterator();
         }
 
@@ -1049,7 +1074,40 @@ public class XLRUQueryCache implements QueryCache, Accountable {
 
         @Override
         public int score(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
-            return delegate.score(collector, acceptDocs, min, max);
+            LeafCollector trackingCollector = new LeafCollector() {
+                @Override
+                public void setScorer(Scorable scorer) throws IOException {
+                    collector.setScorer(scorer);
+                }
+
+                @Override
+                public void collect(int doc) throws IOException {
+                    slicedCache.markBlockMatch(doc);
+                    collector.collect(doc);
+                }
+            };
+            int pos = min;
+            while (pos < max) {
+                int block = pos >>> SlicedCache.BLOCK_SHIFT;
+                if (slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
+                    pos = Math.min((block + 1) << SlicedCache.BLOCK_SHIFT, max);
+                    continue;
+                }
+                int batchEnd = Math.min((block + 1) << SlicedCache.BLOCK_SHIFT, max);
+                int nextBlock = block + 1;
+                while (batchEnd < max) {
+                    if (slicedCache.blockScored(nextBlock) && slicedCache.blockHasMatch(nextBlock) == false) {
+                        break;
+                    }
+                    batchEnd = Math.min((nextBlock + 1) << SlicedCache.BLOCK_SHIFT, max);
+                    nextBlock++;
+                }
+                pos = delegate.score(trackingCollector, acceptDocs, pos, batchEnd);
+                for (int b = block; b < nextBlock; b++) {
+                    slicedCache.markBlockScored(b);
+                }
+            }
+            return pos;
         }
 
         @Override
