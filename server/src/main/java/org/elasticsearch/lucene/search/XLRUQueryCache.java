@@ -1115,7 +1115,8 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                     nextBlock++;
                 }
                 scoredBlocks += (nextBlock - block);
-                pos = delegate.score(trackingCollector, acceptDocs, pos, batchEnd);
+                int newPos = delegate.score(trackingCollector, acceptDocs, pos, batchEnd);
+                pos = Math.max(newPos, batchEnd);
                 for (int b = block; b < nextBlock; b++) {
                     int bStart = b << SlicedCache.BLOCK_SHIFT;
                     int bEnd = Math.min((b + 1) << SlicedCache.BLOCK_SHIFT, slicedCache.maxDoc());
