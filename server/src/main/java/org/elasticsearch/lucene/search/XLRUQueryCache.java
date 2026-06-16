@@ -1092,36 +1092,37 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                     collector.collect(doc);
                 }
             };
+            int firstBlock = min >>> SlicedCache.BLOCK_SHIFT;
+            int lastBlock = (max - 1) >>> SlicedCache.BLOCK_SHIFT;
             int pos = min;
             int skippedBlocks = 0;
             int scoredBlocks = 0;
-            while (pos < max) {
-                int block = pos >>> SlicedCache.BLOCK_SHIFT;
-                int blockStart = block << SlicedCache.BLOCK_SHIFT;
-                int blockEnd = Math.min((block + 1) << SlicedCache.BLOCK_SHIFT, slicedCache.maxDoc());
-                if (slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
+            int b = firstBlock;
+            while (b <= lastBlock) {
+                int bStart = b << SlicedCache.BLOCK_SHIFT;
+                if (slicedCache.blockScored(b) && slicedCache.blockHasMatch(b) == false) {
                     skippedBlocks++;
-                    pos = Math.min(blockEnd, max);
+                    b++;
                     continue;
                 }
-                int batchEnd = Math.min(blockEnd, max);
-                int nextBlock = block + 1;
-                while (batchEnd < max) {
-                    int nBlockEnd = Math.min((nextBlock + 1) << SlicedCache.BLOCK_SHIFT, slicedCache.maxDoc());
-                    if (slicedCache.blockScored(nextBlock) && slicedCache.blockHasMatch(nextBlock) == false) {
+                int batchStartBlock = b;
+                b++;
+                while (b <= lastBlock) {
+                    if (slicedCache.blockScored(b) && slicedCache.blockHasMatch(b) == false) {
                         break;
                     }
-                    batchEnd = Math.min(nBlockEnd, max);
-                    nextBlock++;
+                    b++;
                 }
-                scoredBlocks += (nextBlock - block);
-                int newPos = delegate.score(trackingCollector, acceptDocs, pos, batchEnd);
-                pos = Math.max(newPos, batchEnd);
-                for (int b = block; b < nextBlock; b++) {
-                    int bStart = b << SlicedCache.BLOCK_SHIFT;
-                    int bEnd = Math.min((b + 1) << SlicedCache.BLOCK_SHIFT, slicedCache.maxDoc());
-                    if (min <= bStart && max >= bEnd) {
-                        slicedCache.markBlockScored(b);
+                int batchBlocks = b - batchStartBlock;
+                scoredBlocks += batchBlocks;
+                int scoreFrom = Math.max(pos, batchStartBlock << SlicedCache.BLOCK_SHIFT);
+                int scoreTo = Math.min(max, b << SlicedCache.BLOCK_SHIFT);
+                pos = delegate.score(trackingCollector, acceptDocs, scoreFrom, scoreTo);
+                for (int sb = batchStartBlock; sb < b; sb++) {
+                    int sbStart = sb << SlicedCache.BLOCK_SHIFT;
+                    int sbEnd = (sb + 1) << SlicedCache.BLOCK_SHIFT;
+                    if (min <= sbStart && max >= sbEnd) {
+                        slicedCache.markBlockScored(sb);
                     }
                 }
             }
@@ -1130,7 +1131,7 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                     "[SlicedCacheBulkScorer] min=" + min + " max=" + max + " skipped=" + skippedBlocks + " scored=" + scoredBlocks
                 );
             }
-            return pos;
+            return Math.max(pos, max);
         }
 
         @Override
