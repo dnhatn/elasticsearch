@@ -808,8 +808,13 @@ public abstract class AbstractTSDBDocValuesProducer extends DocValuesProducer {
                 boolean matchesInBlock(int idx) {
                     int offset = uncompressedDocStarts[idx];
                     int length = uncompressedDocStarts[idx + 1] - offset;
-                    return length >= containsTerm.length
+                    boolean matched = length >= containsTerm.length
                         && BinaryDocValuesContainsTermQuery.contains(uncompressedBlock, offset, length, containsTerm);
+                    if (matched) {
+
+                        System.err.println("--> doc " + approximation.docID() + " / " + leafMaxDoc + " matched");
+                    }
+                    return matched;
                 }
 
                 @Override
