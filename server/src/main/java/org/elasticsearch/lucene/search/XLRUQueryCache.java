@@ -998,7 +998,7 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                 block++;
             }
             if (block > maxBlock) {
-                return rangeTo;
+                return target;
             }
             return Math.max(target, block << SlicedCache.BLOCK_SHIFT);
         }
@@ -1024,9 +1024,6 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                 @Override
                 public int advance(int target) throws IOException {
                     int skipTo = skipConfirmedEmptyBlocks(target);
-                    if (skipTo >= rangeTo) {
-                        return approximation.advance(slicedCache.maxDoc());
-                    }
                     int doc = approximation.advance(skipTo);
                     if (doc != NO_MORE_DOCS) {
                         markBlockScoredIfCrossed(doc);
