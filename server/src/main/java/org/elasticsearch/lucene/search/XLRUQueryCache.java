@@ -1005,59 +1005,11 @@ public class XLRUQueryCache implements QueryCache, Accountable {
 
         @Override
         public TwoPhaseIterator twoPhaseIterator() {
-            TwoPhaseIterator realTwoPhase = delegate.twoPhaseIterator();
-            if (realTwoPhase == null) {
-                return null;
-            }
-            DocIdSetIterator approximation = realTwoPhase.approximation();
-            DocIdSetIterator skippingApproximation = new DocIdSetIterator() {
-                @Override
-                public int docID() {
-                    return approximation.docID();
-                }
-
-                @Override
-                public int nextDoc() throws IOException {
-                    return advance(approximation.docID() + 1);
-                }
-
-                @Override
-                public int advance(int target) throws IOException {
-                    int skipTo = skipConfirmedEmptyBlocks(target);
-                    int doc = approximation.advance(skipTo);
-                    if (doc != NO_MORE_DOCS) {
-                        markBlockScoredIfCrossed(doc);
-                    }
-                    return doc;
-                }
-
-                @Override
-                public long cost() {
-                    return approximation.cost();
-                }
-            };
-            return new TwoPhaseIterator(skippingApproximation) {
-                @Override
-                public boolean matches() throws IOException {
-                    boolean matched = realTwoPhase.matches();
-                    if (matched) {
-                        slicedCache.markBlockMatch(skippingApproximation.docID());
-                    }
-                    return matched;
-                }
-
-                @Override
-                public float matchCost() {
-                    return realTwoPhase.matchCost();
-                }
-            };
+            return delegate.twoPhaseIterator();
         }
 
         @Override
         public DocIdSetIterator iterator() {
-            if (hasTwoPhase) {
-                return TwoPhaseIterator.asDocIdSetIterator(twoPhaseIterator());
-            }
             return delegate.iterator();
         }
 
@@ -1097,40 +1049,7 @@ public class XLRUQueryCache implements QueryCache, Accountable {
 
         @Override
         public int score(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
-            LeafCollector trackingCollector = new LeafCollector() {
-                @Override
-                public void setScorer(Scorable scorer) throws IOException {
-                    collector.setScorer(scorer);
-                }
-
-                @Override
-                public void collect(int doc) throws IOException {
-                    slicedCache.markBlockMatch(doc);
-                    collector.collect(doc);
-                }
-            };
-            int pos = min;
-            while (pos < max) {
-                int block = pos >>> SlicedCache.BLOCK_SHIFT;
-                if (slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
-                    pos = Math.min((block + 1) << SlicedCache.BLOCK_SHIFT, max);
-                    continue;
-                }
-                int batchEnd = Math.min((block + 1) << SlicedCache.BLOCK_SHIFT, max);
-                int nextBlock = block + 1;
-                while (batchEnd < max) {
-                    if (slicedCache.blockScored(nextBlock) && slicedCache.blockHasMatch(nextBlock) == false) {
-                        break;
-                    }
-                    batchEnd = Math.min((nextBlock + 1) << SlicedCache.BLOCK_SHIFT, max);
-                    nextBlock++;
-                }
-                pos = delegate.score(trackingCollector, acceptDocs, pos, batchEnd);
-                for (int b = block; b < nextBlock; b++) {
-                    slicedCache.markBlockScored(b);
-                }
-            }
-            return pos;
+            return delegate.score(collector, acceptDocs, min, max);
         }
 
         @Override
