@@ -1089,22 +1089,31 @@ public class XLRUQueryCache implements QueryCache, Accountable {
             int pos = min;
             while (pos < max) {
                 int block = pos >>> SlicedCache.BLOCK_SHIFT;
-                if (slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
-                    pos = Math.min((block + 1) << SlicedCache.BLOCK_SHIFT, max);
+                int blockStart = block << SlicedCache.BLOCK_SHIFT;
+                int blockEnd = Math.min((block + 1) << SlicedCache.BLOCK_SHIFT, slicedCache.maxDoc());
+                boolean fullBlock = (pos == blockStart) && (max >= blockEnd);
+                if (fullBlock && slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
+                    pos = blockEnd;
                     continue;
                 }
-                int batchEnd = Math.min((block + 1) << SlicedCache.BLOCK_SHIFT, max);
+                int batchEnd = Math.min(blockEnd, max);
                 int nextBlock = block + 1;
+                boolean batchFullBlocks = fullBlock;
                 while (batchEnd < max) {
-                    if (slicedCache.blockScored(nextBlock) && slicedCache.blockHasMatch(nextBlock) == false) {
+                    int nextBlockEnd = Math.min((nextBlock + 1) << SlicedCache.BLOCK_SHIFT, slicedCache.maxDoc());
+                    boolean nextFull = max >= nextBlockEnd;
+                    if (nextFull && slicedCache.blockScored(nextBlock) && slicedCache.blockHasMatch(nextBlock) == false) {
                         break;
                     }
-                    batchEnd = Math.min((nextBlock + 1) << SlicedCache.BLOCK_SHIFT, max);
+                    batchEnd = Math.min(nextBlockEnd, max);
+                    batchFullBlocks = batchFullBlocks && nextFull;
                     nextBlock++;
                 }
                 pos = delegate.score(trackingCollector, acceptDocs, pos, batchEnd);
-                for (int b = block; b < nextBlock; b++) {
-                    slicedCache.markBlockScored(b);
+                if (batchFullBlocks) {
+                    for (int b = block; b < nextBlock; b++) {
+                        slicedCache.markBlockScored(b);
+                    }
                 }
             }
             return pos;
