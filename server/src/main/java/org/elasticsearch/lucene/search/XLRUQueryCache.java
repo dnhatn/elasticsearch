@@ -1083,7 +1083,9 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                 @Override
                 public void collect(int doc) throws IOException {
                     slicedCache.markBlockMatch(doc);
-                    collector.collect(doc);
+                    if (doc < max) {
+                        collector.collect(doc);
+                    }
                 }
             };
             int pos = min;
