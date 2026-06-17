@@ -1022,21 +1022,31 @@ public class XLRUQueryCache implements QueryCache, Accountable {
         private void scoreAndCache(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
             delegate.score(new LeafCollector() {
                 @Override
-                public void setScorer(Scorable scorer) throws IOException {
-                    collector.setScorer(scorer);
-                }
+                public void setScorer(Scorable scorer) throws IOException {}
 
                 @Override
                 public void collect(int doc) throws IOException {
                     localBits.set(doc);
-                    collector.collect(doc);
                 }
             }, acceptDocs, min, max);
+            replayFromLocal(collector, min, max);
             if (pendingFrom < 0) {
                 pendingFrom = min;
                 pendingTo = max;
             } else {
                 pendingTo = max;
+            }
+        }
+
+        private void replayFromLocal(LeafCollector collector, int min, int max) throws IOException {
+            collector.setScorer(new Scorable() {
+                @Override
+                public float score() {
+                    return 0f;
+                }
+            });
+            for (int doc = localBits.nextSetBit(min, max); doc != DocIdSetIterator.NO_MORE_DOCS; doc = localBits.nextSetBit(doc + 1, max)) {
+                collector.collect(doc);
             }
         }
 
@@ -1048,10 +1058,8 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                 }
             });
             FixedBitSet bits = slicedCache.bits();
-            int doc = bits.nextSetBit(min);
-            while (doc < max && doc != DocIdSetIterator.NO_MORE_DOCS) {
+            for (int doc = bits.nextSetBit(min, max); doc != DocIdSetIterator.NO_MORE_DOCS; doc = bits.nextSetBit(doc + 1, max)) {
                 collector.collect(doc);
-                doc = doc + 1 < max ? bits.nextSetBit(doc + 1) : max;
             }
         }
 
