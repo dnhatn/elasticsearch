@@ -1045,7 +1045,8 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                     return 0f;
                 }
             });
-            for (int doc = localBits.nextSetBit(min, max); doc != DocIdSetIterator.NO_MORE_DOCS; doc = localBits.nextSetBit(doc + 1, max)) {
+            for (int doc = localBits.nextSetBit(min, max); doc != DocIdSetIterator.NO_MORE_DOCS; doc =
+                doc + 1 < max ? localBits.nextSetBit(doc + 1, max) : DocIdSetIterator.NO_MORE_DOCS) {
                 collector.collect(doc);
             }
         }
@@ -1058,7 +1059,8 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                 }
             });
             FixedBitSet bits = slicedCache.bits();
-            for (int doc = bits.nextSetBit(min, max); doc != DocIdSetIterator.NO_MORE_DOCS; doc = bits.nextSetBit(doc + 1, max)) {
+            for (int doc = bits.nextSetBit(min, max); doc != DocIdSetIterator.NO_MORE_DOCS; doc =
+                doc + 1 < max ? bits.nextSetBit(doc + 1, max) : DocIdSetIterator.NO_MORE_DOCS) {
                 collector.collect(doc);
             }
         }
