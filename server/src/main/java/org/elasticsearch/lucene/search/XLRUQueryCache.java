@@ -29,7 +29,6 @@ import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.ScorerSupplier;
-import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Accountables;
@@ -320,6 +319,34 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                 // we just created a new leaf cache, need to register a close listener
                 cacheHelper.addClosedListener(this::clearCoreCacheKey);
             }
+            leafCache.putIfAbsent(query, cached);
+            evictIfNecessary();
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    private void put(Query query, CacheAndCount cached, IndexReader.CacheHelper cacheHelper) {
+        assert query instanceof BoostQuery == false;
+        assert query instanceof ConstantScoreQuery == false;
+        writeLock.lock();
+        try {
+            Query singleton = uniqueQueries.putIfAbsent(query, query);
+            if (singleton == null) {
+                onQueryCache(query, getRamBytesUsed(query));
+            } else {
+                query = singleton;
+            }
+            final IndexReader.CacheKey key = cacheHelper.getKey();
+            LeafCache leafCache = cache.get(key);
+            if (leafCache == null) {
+                leafCache = new LeafCache(key);
+                final LeafCache previous = cache.put(key, leafCache);
+                ramBytesUsed += HASHTABLE_RAM_BYTES_PER_ENTRY;
+                assert previous == null;
+                cacheHelper.addClosedListener(this::clearCoreCacheKey);
+            }
+            leafCache.remove(query);
             leafCache.putIfAbsent(query, cached);
             evictIfNecessary();
         } finally {
@@ -772,13 +799,24 @@ public class XLRUQueryCache implements QueryCache, Accountable {
 
             int maxDoc = context.reader().maxDoc();
             if (cached instanceof SlicedCache slicedCache) {
-                System.out.println("[CachingWrapperWeight] REUSE SlicedCache for query=" + in.getQuery().getClass().getSimpleName());
+                if (slicedCache.isFullyScored()) {
+                    CacheAndCount promoted = slicedCache.promote();
+                    put(in.getQuery(), promoted, cacheHelper);
+                    if (promoted == CacheAndCount.EMPTY) {
+                        return null;
+                    }
+                    DocIdSetIterator disi = promoted.iterator();
+                    if (disi == null) {
+                        return null;
+                    }
+                    return ConstantScoreScorerSupplier.fromIterator(disi, 0f, ScoreMode.COMPLETE_NO_SCORES, maxDoc);
+                }
                 final ScorerSupplier supplier = in.scorerSupplier(context);
                 if (supplier == null) {
                     return null;
                 }
                 final long cost = supplier.cost();
-                return new SlicedCacheScorerSupplier(supplier, slicedCache, cost, maxDoc);
+                return new SlicedCacheScorerSupplier(supplier, slicedCache, cost);
             }
 
             if (cached == null) {
@@ -792,10 +830,9 @@ public class XLRUQueryCache implements QueryCache, Accountable {
                     final long cost = supplier.cost();
                     final List<RangeCache> registry = getCachingScorerRegistry();
                     if (registry != null) {
-                        System.out.println("[CachingWrapperWeight] NEW SlicedCache for query=" + in.getQuery().getClass().getSimpleName());
                         SlicedCache slicedCache = new SlicedCache(maxDoc);
                         putIfAbsent(in.getQuery(), slicedCache, cacheHelper);
-                        return new SlicedCacheScorerSupplier(supplier, slicedCache, cost, maxDoc);
+                        return new SlicedCacheScorerSupplier(supplier, slicedCache, cost);
                     }
 
                     return new ConstantScoreScorerSupplier(0f, ScoreMode.COMPLETE_NO_SCORES, maxDoc) {
@@ -900,41 +937,25 @@ public class XLRUQueryCache implements QueryCache, Accountable {
     }
 
     /**
-     * A {@link ScorerSupplier} that uses a {@link SlicedCache} to skip empty blocks
-     * and tracks which blocks have matches for future executions.
+     * A {@link ScorerSupplier} that uses a {@link SlicedCache} to incrementally cache
+     * query results into a shared {@link FixedBitSet}. On first scoring of a range,
+     * results are collected into the bitset. On subsequent scorings of the same range,
+     * the bitset is used directly without invoking the delegate scorer.
      */
-    protected static class SlicedCacheScorerSupplier extends ScorerSupplier implements RangeCache {
+    protected static class SlicedCacheScorerSupplier extends ScorerSupplier {
         private final ScorerSupplier delegate;
         private final SlicedCache slicedCache;
         private final long cost;
-        private final int maxDoc;
-        private int fromInclusive;
-        private int toExclusive;
 
-        SlicedCacheScorerSupplier(ScorerSupplier delegate, SlicedCache slicedCache, long cost, int maxDoc) {
+        SlicedCacheScorerSupplier(ScorerSupplier delegate, SlicedCache slicedCache, long cost) {
             this.delegate = delegate;
             this.slicedCache = slicedCache;
             this.cost = cost;
-            this.maxDoc = maxDoc;
-            this.fromInclusive = 0;
-            this.toExclusive = maxDoc;
         }
 
         @Override
         public Scorer get(long leadCost) throws IOException {
-            Scorer realScorer = delegate.get(leadCost);
-            SlicedCacheScorer scorer = new SlicedCacheScorer(realScorer, slicedCache);
-            List<RangeCache> registry = getCachingScorerRegistry();
-            if (registry != null) {
-                registry.add(scorer);
-            }
-            return scorer;
-        }
-
-        @Override
-        public void cacheRange(int from, int to) {
-            this.fromInclusive = from;
-            this.toExclusive = to;
+            return delegate.get(leadCost);
         }
 
         @Override
@@ -955,132 +976,51 @@ public class XLRUQueryCache implements QueryCache, Accountable {
     }
 
     /**
-     * A {@link Scorer} that wraps a real scorer and uses {@link SlicedCache} to skip
-     * confirmed-empty blocks and track which blocks have matches.
-     * When the delegate has a {@link TwoPhaseIterator}, it is unwrapped so that
-     * expensive {@code matches()} calls are avoided for confirmed-empty blocks.
-     * For non-TwoPhase delegates, the scorer passes through directly (block caching
-     * is handled by the BulkScorer at the top level).
-     */
-    protected static class SlicedCacheScorer extends Scorer implements RangeCache {
-        private final Scorer delegate;
-        private final SlicedCache slicedCache;
-        private final boolean hasTwoPhase;
-        private int skippedMatches;
-        private int totalMatches;
-
-        SlicedCacheScorer(Scorer delegate, SlicedCache slicedCache) {
-            this.delegate = delegate;
-            this.slicedCache = slicedCache;
-            this.hasTwoPhase = delegate.twoPhaseIterator() != null;
-            System.out.println(
-                "[SlicedCacheScorer] CREATED hasTwoPhase=" + hasTwoPhase + " delegate=" + delegate.getClass().getSimpleName()
-            );
-        }
-
-        @Override
-        public void cacheRange(int from, int to) {
-            int firstFullBlock = (from + SlicedCache.BLOCK_SIZE - 1) >>> SlicedCache.BLOCK_SHIFT;
-            int lastFullBlock = (to >>> SlicedCache.BLOCK_SHIFT) - 1;
-            int markedScored = 0;
-            for (int b = firstFullBlock; b <= lastFullBlock; b++) {
-                slicedCache.markBlockScored(b);
-                markedScored++;
-            }
-            System.out.println(
-                "[SlicedCacheScorer] cacheRange("
-                    + from
-                    + ","
-                    + to
-                    + ") markedScored="
-                    + markedScored
-                    + " skippedMatches="
-                    + skippedMatches
-                    + " totalMatches="
-                    + totalMatches
-                    + " hasTwoPhase="
-                    + hasTwoPhase
-            );
-            skippedMatches = 0;
-            totalMatches = 0;
-        }
-
-        @Override
-        public TwoPhaseIterator twoPhaseIterator() {
-            TwoPhaseIterator realTwoPhase = delegate.twoPhaseIterator();
-            if (realTwoPhase == null) {
-                return null;
-            }
-            DocIdSetIterator approximation = realTwoPhase.approximation();
-            return new TwoPhaseIterator(approximation) {
-                @Override
-                public boolean matches() throws IOException {
-                    int docId = approximation.docID();
-                    int block = docId >>> SlicedCache.BLOCK_SHIFT;
-                    totalMatches++;
-                    if (slicedCache.blockScored(block) && slicedCache.blockHasMatch(block) == false) {
-                        skippedMatches++;
-                        return false;
-                    }
-                    boolean matched = realTwoPhase.matches();
-                    if (matched) {
-                        slicedCache.markBlockMatch(docId);
-                    }
-                    return matched;
-                }
-
-                @Override
-                public float matchCost() {
-                    return realTwoPhase.matchCost();
-                }
-            };
-        }
-
-        @Override
-        public DocIdSetIterator iterator() {
-            if (hasTwoPhase) {
-                return TwoPhaseIterator.asDocIdSetIterator(twoPhaseIterator());
-            }
-            return delegate.iterator();
-        }
-
-        @Override
-        public float getMaxScore(int upTo) throws IOException {
-            return delegate.getMaxScore(upTo);
-        }
-
-        @Override
-        public float score() throws IOException {
-            return delegate.score();
-        }
-
-        @Override
-        public int docID() {
-            return delegate.docID();
-        }
-    }
-
-    /**
-     * A {@link BulkScorer} that wraps a real bulk scorer and uses {@link SlicedCache} skip bits
-     * to skip empty blocks during scoring. Marks blocks as non-empty when hits are observed.
+     * A {@link BulkScorer} that incrementally populates a shared {@link FixedBitSet} cache.
+     * On first scoring of a range, results are collected into a local bitset. When
+     * {@link #cacheRange} is called (after scoring completes), the local bits are OR'd
+     * into the shared cache and the range is marked as scored. This avoids concurrent
+     * writes to the shared bitset — each driver only merges its results during cacheRange.
+     * On subsequent scorings of an already-cached range, the shared bitset is replayed
+     * directly without invoking the expensive delegate scorer.
      */
     protected static class SlicedCacheBulkScorer extends BulkScorer implements RangeCache {
         private final BulkScorer delegate;
         private final SlicedCache slicedCache;
+        private final FixedBitSet localBits;
+        private int pendingFrom;
+        private int pendingTo;
 
         SlicedCacheBulkScorer(BulkScorer delegate, SlicedCache slicedCache) {
             this.delegate = delegate;
             this.slicedCache = slicedCache;
+            this.localBits = new FixedBitSet(slicedCache.maxDoc());
+            this.pendingFrom = -1;
+            this.pendingTo = -1;
         }
 
         @Override
         public void cacheRange(int from, int to) {
-            // no-op for bulk scorer — range is already passed via score(collector, acceptDocs, min, max)
+            if (pendingFrom >= 0) {
+                slicedCache.or(localBits, pendingFrom, pendingTo);
+                slicedCache.markRangeScored(pendingFrom, pendingTo);
+                pendingFrom = -1;
+                pendingTo = -1;
+            }
         }
 
         @Override
         public int score(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
-            LeafCollector trackingCollector = new LeafCollector() {
+            if (slicedCache.isRangeScored(min, max)) {
+                replayFromCache(collector, min, max);
+            } else {
+                scoreAndCache(collector, acceptDocs, min, max);
+            }
+            return max;
+        }
+
+        private void scoreAndCache(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
+            delegate.score(new LeafCollector() {
                 @Override
                 public void setScorer(Scorable scorer) throws IOException {
                     collector.setScorer(scorer);
@@ -1088,50 +1028,31 @@ public class XLRUQueryCache implements QueryCache, Accountable {
 
                 @Override
                 public void collect(int doc) throws IOException {
-                    slicedCache.markBlockMatch(doc);
+                    localBits.set(doc);
                     collector.collect(doc);
                 }
-            };
-            int firstBlock = min >>> SlicedCache.BLOCK_SHIFT;
-            int lastBlock = (max - 1) >>> SlicedCache.BLOCK_SHIFT;
-            int pos = min;
-            int skippedBlocks = 0;
-            int scoredBlocks = 0;
-            int b = firstBlock;
-            while (b <= lastBlock) {
-                int bStart = b << SlicedCache.BLOCK_SHIFT;
-                if (slicedCache.blockScored(b) && slicedCache.blockHasMatch(b) == false) {
-                    skippedBlocks++;
-                    b++;
-                    continue;
-                }
-                int batchStartBlock = b;
-                b++;
-                while (b <= lastBlock) {
-                    if (slicedCache.blockScored(b) && slicedCache.blockHasMatch(b) == false) {
-                        break;
-                    }
-                    b++;
-                }
-                int batchBlocks = b - batchStartBlock;
-                scoredBlocks += batchBlocks;
-                int scoreFrom = Math.max(pos, batchStartBlock << SlicedCache.BLOCK_SHIFT);
-                int scoreTo = Math.min(max, b << SlicedCache.BLOCK_SHIFT);
-                pos = delegate.score(trackingCollector, acceptDocs, scoreFrom, scoreTo);
-                for (int sb = batchStartBlock; sb < b; sb++) {
-                    int sbStart = sb << SlicedCache.BLOCK_SHIFT;
-                    int sbEnd = (sb + 1) << SlicedCache.BLOCK_SHIFT;
-                    if (min <= sbStart && max >= sbEnd) {
-                        slicedCache.markBlockScored(sb);
-                    }
-                }
+            }, acceptDocs, min, max);
+            if (pendingFrom < 0) {
+                pendingFrom = min;
+                pendingTo = max;
+            } else {
+                pendingTo = max;
             }
-            if (skippedBlocks > 0 || scoredBlocks > 0) {
-                System.out.println(
-                    "[SlicedCacheBulkScorer] min=" + min + " max=" + max + " skipped=" + skippedBlocks + " scored=" + scoredBlocks
-                );
+        }
+
+        private void replayFromCache(LeafCollector collector, int min, int max) throws IOException {
+            collector.setScorer(new Scorable() {
+                @Override
+                public float score() {
+                    return 0f;
+                }
+            });
+            FixedBitSet bits = slicedCache.bits();
+            int doc = bits.nextSetBit(min);
+            while (doc < max && doc != DocIdSetIterator.NO_MORE_DOCS) {
+                collector.collect(doc);
+                doc = doc + 1 < max ? bits.nextSetBit(doc + 1) : max;
             }
-            return Math.max(pos, max);
         }
 
         @Override
@@ -1168,48 +1089,92 @@ public class XLRUQueryCache implements QueryCache, Accountable {
     }
 
     /**
-     * A block-level skip cache that stores one bit per {@link #BLOCK_SIZE}-doc block.
-     * A set bit means the block has at least one matching document; a clear bit means the block
-     * is confirmed empty (within observed ranges). Bits are monotone (0→1 only), so concurrent
-     * writers are safe without synchronization.
+     * A range-aware bitset cache that stores exact per-document match results in a
+     * {@link FixedBitSet}. Tracks which doc-ID ranges have been scored so that subsequent
+     * queries over the same range can replay from the bitset without re-executing the scorer.
+     *
+     * <p>Thread safety: each driver collects into its own local {@link FixedBitSet}, then
+     * merges into the shared {@code matchBits} via {@link #or} which is synchronized.
+     * The {@code scoredRangeBits} is also updated under the same monitor via
+     * {@link #markRangeScored}. Reads via {@link #isRangeScored} are synchronized to
+     * ensure visibility of writes from other threads.
      */
     protected static class SlicedCache extends CacheAndCount {
         private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(SlicedCache.class);
-        static final int BLOCK_SHIFT = 6;
-        static final int BLOCK_SIZE = 1 << BLOCK_SHIFT;
 
-        private final long[] matchBits;
-        private final long[] scoredBits;
+        private final FixedBitSet matchBits;
+        private final FixedBitSet scoredRangeBits;
         private final int maxDoc;
 
         SlicedCache(int maxDoc) {
             super(DocIdSet.EMPTY, -1);
             this.maxDoc = maxDoc;
-            int numBlocks = (maxDoc + BLOCK_SIZE - 1) >>> BLOCK_SHIFT;
-            int words = (numBlocks + 63) >>> 6;
-            this.matchBits = new long[words];
-            this.scoredBits = new long[words];
+            this.matchBits = new FixedBitSet(maxDoc);
+            this.scoredRangeBits = new FixedBitSet(maxDoc);
         }
 
-        /** Marks the block containing {@code docId} as having at least one match. */
-        void markBlockMatch(int docId) {
-            int block = docId >>> BLOCK_SHIFT;
-            matchBits[block >>> 6] |= 1L << (block & 63);
+        /** Returns the underlying bitset holding per-document match results. */
+        FixedBitSet bits() {
+            return matchBits;
         }
 
-        /** Marks the given block index as fully scored (authoritative). */
-        void markBlockScored(int block) {
-            scoredBits[block >>> 6] |= 1L << (block & 63);
+        /** ORs the local bitset into the shared matchBits for the given range. */
+        synchronized void or(FixedBitSet localBits, int from, int to) {
+            long[] dst = matchBits.getBits();
+            long[] src = localBits.getBits();
+            int wordFrom = from >>> 6;
+            int wordTo = (Math.min(to, maxDoc) - 1) >>> 6;
+            for (int i = wordFrom; i <= wordTo; i++) {
+                dst[i] |= src[i];
+            }
         }
 
-        /** Returns true if the given block has been fully scored. */
-        boolean blockScored(int block) {
-            return (scoredBits[block >>> 6] & (1L << (block & 63))) != 0;
+        /** Marks the range {@code [from, to)} as fully scored. */
+        synchronized void markRangeScored(int from, int to) {
+            scoredRangeBits.set(from, Math.min(to, maxDoc));
         }
 
-        /** Returns true if the given block has at least one match. Only meaningful when {@link #blockScored} is true. */
-        boolean blockHasMatch(int block) {
-            return (matchBits[block >>> 6] & (1L << (block & 63))) != 0;
+        /** Returns true if every doc in {@code [from, to)} has already been scored. */
+        synchronized boolean isRangeScored(int from, int to) {
+            int end = Math.min(to, maxDoc);
+            if (from >= end) {
+                return true;
+            }
+            int wordFrom = from >>> 6;
+            int wordTo = (end - 1) >>> 6;
+            long[] bits = scoredRangeBits.getBits();
+            if (wordFrom == wordTo) {
+                int fromBit = from & 63;
+                int endBit = end - (wordFrom << 6);
+                long mask = (-1L << fromBit) & (-1L >>> (64 - endBit));
+                return (bits[wordFrom] & mask) == mask;
+            }
+            long firstMask = -1L << (from & 63);
+            if ((bits[wordFrom] & firstMask) != firstMask) {
+                return false;
+            }
+            for (int i = wordFrom + 1; i < wordTo; i++) {
+                if (bits[i] != -1L) {
+                    return false;
+                }
+            }
+            int lastBit = end & 63;
+            long lastMask = lastBit == 0 ? -1L : -1L >>> (64 - lastBit);
+            return (bits[wordTo] & lastMask) == lastMask;
+        }
+
+        /** Returns true if the entire segment {@code [0, maxDoc)} has been scored. */
+        boolean isFullyScored() {
+            return isRangeScored(0, maxDoc);
+        }
+
+        /** Promotes this staging cache to a final {@link CacheAndCount} backed by the collected bitset. */
+        CacheAndCount promote() {
+            int count = (int) matchBits.cardinality();
+            if (count == 0) {
+                return CacheAndCount.EMPTY;
+            }
+            return new CacheAndCount(new BitDocIdSet(matchBits, count), count);
         }
 
         int maxDoc() {
@@ -1228,19 +1193,18 @@ public class XLRUQueryCache implements QueryCache, Accountable {
 
         @Override
         public long ramBytesUsed() {
-            return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(matchBits) + RamUsageEstimator.sizeOf(scoredBits);
+            return BASE_RAM_BYTES_USED + matchBits.ramBytesUsed() + scoredRangeBits.ramBytesUsed();
         }
     }
 
     /**
-     * Interface for scorers that participate in range-aware block caching.
-     * The operator calls {@link #cacheRange} before scoring each partition range,
-     * allowing the scorer to load skip bits and flush observed blocks.
+     * Interface for scorers that participate in range-aware caching.
+     * The operator calls {@link #cacheRange} after scoring each partition range,
+     * allowing the scorer to mark the range as cached.
      */
     public interface RangeCache {
         /**
-         * Signals that scoring will proceed over {@code [from, to)}.
-         * Implementations should load skip bits for this range and prepare to track hits.
+         * Signals that the range {@code [from, to)} has been scored.
          */
         void cacheRange(int from, int to);
     }
