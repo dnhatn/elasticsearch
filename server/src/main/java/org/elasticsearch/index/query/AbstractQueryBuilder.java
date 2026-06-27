@@ -23,6 +23,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.SuggestingErrorOnUnknown;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.plugins.internal.rewriter.QueryRewriteInterceptor;
 import org.elasticsearch.search.internal.MaxClauseCountQueryVisitor;
 import org.elasticsearch.xcontent.AbstractObjectParser;
@@ -138,6 +139,13 @@ public abstract class AbstractQueryBuilder<QB extends AbstractQueryBuilder<QB>> 
     public final Query toQuery(SearchExecutionContext context, MaxClauseCountQueryVisitor visitor) throws IOException {
         Query query = doToQuery(context, visitor);
         if (query != null) {
+            final var predicateKeys = context.predicateKeys();
+            if (predicateKeys != null && predicateKeys.shouldCache(query)) {
+                PredicateKey key = predicateKey();
+                if (key != null) {
+                    predicateKeys.put(query, key);
+                }
+            }
             if (boost != DEFAULT_BOOST) {
                 if (query instanceof MatchNoDocsQuery == false) {
                     query = new BoostQuery(query, boost);

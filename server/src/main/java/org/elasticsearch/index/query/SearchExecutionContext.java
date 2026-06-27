@@ -52,6 +52,7 @@ import org.elasticsearch.index.mapper.NestedLookup;
 import org.elasticsearch.index.mapper.ParsedDocument;
 import org.elasticsearch.index.mapper.SourceLoader;
 import org.elasticsearch.index.mapper.SourceToParse;
+import org.elasticsearch.index.query.cache.PredicateKeys;
 import org.elasticsearch.index.query.support.AutoPrefilteringScope;
 import org.elasticsearch.index.query.support.NestedScope;
 import org.elasticsearch.index.search.stats.ShardSearchStats;
@@ -64,6 +65,7 @@ import org.elasticsearch.script.ScriptContext;
 import org.elasticsearch.script.ScriptFactory;
 import org.elasticsearch.search.NestedDocuments;
 import org.elasticsearch.search.aggregations.support.ValuesSourceRegistry;
+import org.elasticsearch.search.internal.ContextIndexSearcher;
 import org.elasticsearch.search.lookup.LeafFieldLookupProvider;
 import org.elasticsearch.search.lookup.SearchLookup;
 import org.elasticsearch.search.lookup.SourceFilter;
@@ -877,5 +879,12 @@ public class SearchExecutionContext extends QueryRewriteContext {
         }
         circuitBreaker.addWithoutBreaking(-bytes);
         queryConstructionMemoryUsed.addAndGet(-bytes);
+    }
+
+    public PredicateKeys predicateKeys() {
+        if (searcher instanceof ContextIndexSearcher s) {
+            return s.getPredicateKeys();
+        }
+        return null;
     }
 }

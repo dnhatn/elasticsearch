@@ -11,6 +11,7 @@ package org.elasticsearch.index.query;
 
 import org.apache.lucene.search.Query;
 import org.elasticsearch.common.io.stream.VersionedNamedWriteable;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.search.internal.MaxClauseCountQueryVisitor;
 import org.elasticsearch.xcontent.ToXContentObject;
 
@@ -75,6 +76,13 @@ public interface QueryBuilder extends VersionedNamedWriteable, ToXContentObject,
      * Returns the name that identifies uniquely the query
      */
     String getName();
+
+    /**
+     * Returns the predicate key for block-level caching, or {@code null} if this builder does not participate.
+     */
+    default PredicateKey predicateKey() {
+        return null;
+    }
 
     /**
      * Rewrites this query builder into its primitive form. By default this method return the builder itself. If the builder

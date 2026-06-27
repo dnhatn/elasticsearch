@@ -25,6 +25,7 @@ import org.elasticsearch.compute.lucene.ShardContext;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.codec.tsdb.PartitionedDocValues;
 import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
+import org.elasticsearch.index.query.cache.PredicateKeys;
 import org.elasticsearch.search.internal.ContextIndexSearcher;
 
 import java.io.IOException;
@@ -362,6 +363,12 @@ public final class LuceneSliceQueue {
                  */
                 long now = System.nanoTime();
                 ctx.stats().accumulateSearchLoad(now - startShard, now);
+                if (ctx.searcher() instanceof ContextIndexSearcher ctxSearcher) {
+                    PredicateKeys predicateKeys = ctxSearcher.getPredicateKeys();
+                    if (predicateKeys != null) {
+                        predicateKeys.freeze();
+                    }
+                }
             }
         }
         return new LuceneSliceQueue(contexts::get, slices, partitioningStrategies);

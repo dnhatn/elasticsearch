@@ -27,6 +27,8 @@ import org.elasticsearch.common.lucene.search.AutomatonQueries;
 import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.mapper.MappedFieldType;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.index.query.support.QueryParsers;
 import org.elasticsearch.lucene.search.cost.AutomatonQueryCostEstimator;
 import org.elasticsearch.xcontent.ParseField;
@@ -314,6 +316,17 @@ public class RegexpQueryBuilder extends LeafQueryBuilder<RegexpQueryBuilder> imp
                 : new RegexpQuery(term, sanitisedSyntaxFlag, matchFlagsValue, RegexpQuery.DEFAULT_PROVIDER, maxDeterminizedStates, method);
         }
         return query;
+    }
+
+    @Override
+    public PredicateKey predicateKey() {
+        return new PredicateHasher(getClass()).addString(fieldName)
+            .addString(value)
+            .addLong(syntaxFlagsValue)
+            .addBoolean(caseInsensitive)
+            .addLong(maxDeterminizedStates)
+            .addString(rewrite)
+            .finish();
     }
 
     @Override

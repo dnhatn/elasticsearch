@@ -23,6 +23,8 @@ import org.elasticsearch.common.time.DateMathParser;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.index.mapper.FieldNamesFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.index.shard.IndexLongFieldRange;
 import org.elasticsearch.xcontent.ParseField;
 import org.elasticsearch.xcontent.XContentBuilder;
@@ -539,6 +541,65 @@ public class RangeQueryBuilder extends LeafQueryBuilder<RangeQueryBuilder> imple
         }
         DateMathParser forcedDateParser = getForceDateParser();
         return mapper.rangeQuery(from, to, includeLower, includeUpper, relation, timeZone, forcedDateParser, context);
+    }
+
+    @Override
+    public PredicateKey predicateKey() {
+        if (isNowBased(from) || isNowBased(to)) {
+            return null;
+        }
+        PredicateHasher hasher = new PredicateHasher(getClass()).addString(fieldName);
+        if (addBound(hasher, from) == false || addBound(hasher, to) == false) {
+            return null;
+        }
+        return hasher.addBoolean(includeLower)
+            .addBoolean(includeUpper)
+            .addString(timeZone != null ? timeZone.getId() : "")
+            .addString(format != null ? format : "")
+            .finish();
+    }
+
+    private static boolean isNowBased(Object value) {
+        if (value == null) {
+            return false;
+        }
+        String str = value instanceof BytesRef b ? b.utf8ToString() : value.toString();
+        return str.startsWith("now");
+    }
+
+    private static boolean addBound(PredicateHasher hasher, Object value) {
+        if (value == null) {
+            hasher.addBoolean(false);
+            return true;
+        }
+        hasher.addBoolean(true);
+        return switch (value) {
+            case String s -> {
+                hasher.addString(s);
+                yield true;
+            }
+            case BytesRef b -> {
+                hasher.addBytesRef(b);
+                yield true;
+            }
+            case Double d -> {
+                hasher.addDouble(d);
+                yield true;
+            }
+            case Float f -> {
+                hasher.addDouble(f);
+                yield true;
+            }
+            case Long l -> {
+                hasher.addLong(l);
+                yield true;
+            }
+            case Integer i -> {
+                hasher.addLong(i);
+                yield true;
+            }
+            default -> false;
+        };
     }
 
     @Override

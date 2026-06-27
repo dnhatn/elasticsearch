@@ -22,6 +22,8 @@ import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.mapper.ConstantFieldType;
 import org.elasticsearch.index.mapper.MappedFieldType;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.index.query.support.QueryParsers;
 import org.elasticsearch.xcontent.ParseField;
 import org.elasticsearch.xcontent.XContentBuilder;
@@ -277,6 +279,16 @@ public class WildcardQueryBuilder extends LeafQueryBuilder<WildcardQueryBuilder>
 
         MultiTermQuery.RewriteMethod method = QueryParsers.parseRewriteMethod(rewrite, null, LoggingDeprecationHandler.INSTANCE);
         return fieldType.wildcardQuery(value, method, caseInsensitive, context);
+    }
+
+    @Override
+    public PredicateKey predicateKey() {
+        return new PredicateHasher(getClass()).addString(fieldName)
+            .addString(value)
+            .addBoolean(caseInsensitive)
+            .addBoolean(forceStringMatch)
+            .addString(rewrite != null ? rewrite : "")
+            .finish();
     }
 
     @Override
