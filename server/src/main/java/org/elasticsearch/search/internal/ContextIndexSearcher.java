@@ -39,6 +39,7 @@ import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.lucene.search.BitsIterator;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Releasable;
+import org.elasticsearch.index.query.cache.PredicateKeys;
 import org.elasticsearch.search.dfs.AggregatedDfs;
 import org.elasticsearch.search.profile.Timer;
 import org.elasticsearch.search.profile.query.ProfileWeight;
@@ -92,6 +93,8 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     private final int minimumDocsPerSlice;
 
     private volatile boolean timeExceeded = false;
+
+    private PredicateKeys predicateKeys;
 
     /** constructor for non-concurrent search */
     @SuppressWarnings("this-escape")
@@ -285,6 +288,7 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
                 query = rewrittenQuery;
             }
             verifyQueryLimit(query);
+            maybeUpdatePredicateKey(original, query);
             return query;
         } catch (TimeExceededException e) {
             timeExceeded = true;
@@ -706,5 +710,19 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     private static void verifyQueryLimit(Query query) {
         final int maxClauseCount = getMaxClauseCount();
         query.visit(new MaxClauseCountQueryVisitor(maxClauseCount));
+    }
+
+    private void maybeUpdatePredicateKey(Query query, Query rewritten) {
+        if (predicateKeys != null) {
+            predicateKeys.updateRewrittenQuery(query, rewritten);
+        }
+    }
+
+    public PredicateKeys getPredicateKeys() {
+        return predicateKeys;
+    }
+
+    public void setPredicateKeys(PredicateKeys predicateKeys) {
+        this.predicateKeys = predicateKeys;
     }
 }

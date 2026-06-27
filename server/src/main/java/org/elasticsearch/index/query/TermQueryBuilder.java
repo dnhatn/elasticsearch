@@ -19,6 +19,8 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.mapper.ConstantFieldType;
 import org.elasticsearch.index.mapper.MappedFieldType;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.xcontent.ParseField;
 import org.elasticsearch.xcontent.XContentBuilder;
 import org.elasticsearch.xcontent.XContentParser;
@@ -220,6 +222,11 @@ public class TermQueryBuilder extends BaseTermQueryBuilder<TermQueryBuilder> {
     @Override
     public String getWriteableName() {
         return NAME;
+    }
+
+    @Override
+    public PredicateKey predicateKey() {
+        return new PredicateHasher(getClass()).addString(fieldName).addObject(value).addBoolean(caseInsensitive).finish();
     }
 
     @Override

@@ -23,6 +23,8 @@ import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.mapper.ConstantFieldType;
 import org.elasticsearch.index.mapper.MappedFieldType;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.index.query.support.QueryParsers;
 import org.elasticsearch.xcontent.ParseField;
 import org.elasticsearch.xcontent.XContentBuilder;
@@ -241,6 +243,15 @@ public class PrefixQueryBuilder extends LeafQueryBuilder<PrefixQueryBuilder> imp
             throw new IllegalStateException("Rewrite first");
         }
         return fieldType.prefixQuery(value, method, caseInsensitive, context);
+    }
+
+    @Override
+    public PredicateKey predicateKey() {
+        return new PredicateHasher(getClass()).addString(fieldName)
+            .addString(value)
+            .addBoolean(caseInsensitive)
+            .addString(rewrite != null ? rewrite : "")
+            .finish();
     }
 
     @Override
