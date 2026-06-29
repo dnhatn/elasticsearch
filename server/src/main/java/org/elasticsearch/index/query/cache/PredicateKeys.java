@@ -56,7 +56,6 @@ public final class PredicateKeys {
     }
 
     public PredicateKey get(Query query) {
-        assert frozen.get() : "PredicateKeys must be frozen before calling get()";
         PredicateKey key = keys.get(query);
         if (key != null) {
             return key;

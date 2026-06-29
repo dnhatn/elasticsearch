@@ -31,13 +31,17 @@ import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Tuple;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.cache.query.IndexQueryCache;
+import org.elasticsearch.index.query.cache.BlockLevelQueryCache;
 import org.elasticsearch.index.query.cache.PredicateKeys;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.indices.IndicesQueryCache;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.internal.AliasFilter;
+import org.elasticsearch.search.internal.ContextIndexSearcher;
 import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.internal.ShardSearchRequest;
 import org.elasticsearch.tasks.CancellableTask;
@@ -637,7 +641,15 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                         // TODO: `searchService.createSearchContext` allows opening search contexts without limits,
                         // we need to limit the number of active search contexts here or in SearchService
                         context = searchService.createSearchContext(shardRequest, SearchService.NO_TIMEOUT);
-                        context.searcher().setPredicateKeys(new PredicateKeys());
+                        PredicateKeys predicateKeys = new PredicateKeys();
+                        context.searcher().setPredicateKeys(predicateKeys);
+                        ContextIndexSearcher searcher = context.searcher();
+                        if(searcher.getQueryCache() instanceof IndicesQueryCache indicesQueryCache) {
+                            searcher.setQueryCache(indicesQueryCache.blockLevelQueryCache.cacheSession(predicateKeys));
+                        }
+                        if (searcher.getQueryCache() instanceof IndexQueryCache indexQueryCache) {
+                            searcher.setQueryCache(indexQueryCache.indicesQueryCache.blockLevelQueryCache.cacheSession(predicateKeys));
+                        }
                         context.preProcess();
                         newContexts.add(context);
                     } catch (RuntimeException e) {

@@ -31,6 +31,7 @@ import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.RefCounted;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.query.cache.BlockLevelQueryCache;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.xcontent.XContentBuilder;
@@ -244,6 +245,7 @@ public abstract class LuceneOperator extends SourceOperator {
 
     @Override
     public final void close() {
+        syncQueryCache();
         refCounteds.iterable().forEach(RefCounted::decRef);
         additionalClose();
     }
@@ -276,6 +278,9 @@ public abstract class LuceneOperator extends SourceOperator {
                 ) {
                     final Weight weight = currentSlice.weight();
                     processedQueries.add(Status.queryString(weight.getQuery()));
+                    if (currentScorer != null) {
+                        currentScorer.syncQueryCache();
+                    }
                     currentScorer = new LuceneScorer(currentSlice.shardContext(), weight, currentSlice.tags(), leaf);
                     sliceBlocked = currentSlice.leafBlockedOnCaching(currentScorer.leafReaderContext());
                     if (sliceBlocked == null || sliceBlocked.isDone()) {
@@ -469,6 +474,18 @@ public abstract class LuceneOperator extends SourceOperator {
          */
         List<Object> tags() {
             return tags;
+        }
+
+        void syncQueryCache() {
+            if (bulkScorer instanceof BlockLevelQueryCache.CachingBulkScorer cache) {
+                cache.publishCache();
+            }
+        }
+    }
+
+    protected void syncQueryCache() {
+        if (currentScorer != null) {
+            currentScorer.syncQueryCache();
         }
     }
 

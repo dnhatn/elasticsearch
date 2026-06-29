@@ -25,7 +25,7 @@ public class IndexQueryCache implements QueryCache {
 
     private static final Logger logger = LogManager.getLogger(IndexQueryCache.class);
 
-    private final IndicesQueryCache indicesQueryCache;
+    public final IndicesQueryCache indicesQueryCache;
 
     protected final Index index;
 

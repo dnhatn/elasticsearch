@@ -30,6 +30,7 @@ import org.elasticsearch.core.Predicates;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.cache.query.QueryCacheStats;
+import org.elasticsearch.index.query.cache.BlockLevelQueryCache;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.lucene.search.XLRUQueryCache;
@@ -70,6 +71,7 @@ public class IndicesQueryCache implements QueryCache, Closeable {
     );
 
     private final XLRUQueryCache cache;
+    public final BlockLevelQueryCache blockLevelQueryCache;
     private final ShardCoreKeyMap shardKeyMap = new ShardCoreKeyMap();
     private final Map<ShardId, Stats> shardStats = new ConcurrentHashMap<>();
     private volatile long sharedRamBytesUsed;
@@ -124,6 +126,7 @@ public class IndicesQueryCache implements QueryCache, Closeable {
             cache = new ElasticsearchLRUQueryCache(count, size.getBytes());
         }
         sharedRamBytesUsed = 0;
+        blockLevelQueryCache = new BlockLevelQueryCache();
     }
 
     private static QueryCacheStats toQueryCacheStatsSafe(@Nullable Stats stats) {

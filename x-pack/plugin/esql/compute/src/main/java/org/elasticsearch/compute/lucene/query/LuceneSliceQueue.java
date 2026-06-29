@@ -91,8 +91,8 @@ public final class LuceneSliceQueue {
      */
     public record QueryAndTags(Query query, List<Object> tags) {}
 
-    public static final int MAX_DOCS_PER_SLICE = 250_000; // copied from IndexSearcher
-    public static final int MAX_SEGMENTS_PER_SLICE = 5; // copied from IndexSearcher
+    public static final int MAX_DOCS_PER_SLICE = 262144;
+    public static final int MAX_SEGMENTS_PER_SLICE = 5;
     /**
      * Floor for the {@link PartitioningStrategy#DOC} target slice size. Prevents
      * over-splitting on small indices where {@code totalDocs / taskConcurrency}
@@ -638,18 +638,8 @@ public final class LuceneSliceQueue {
     private static WeightAndCache weight(ShardContext ctx, Query query, ScoreMode scoreMode, PartitioningStrategy partitioning) {
         final boolean intraSegment = partitioning == PartitioningStrategy.DOC || partitioning == PartitioningStrategy.TIME_SERIES;
         try {
-            if (scoreMode == ScoreMode.COMPLETE_NO_SCORES && intraSegment) {
-                DocPartitioningQueryCache queryCache = new DocPartitioningQueryCache(ctx.searcher().getQueryCache());
-                ContextIndexSearcher searcher = new ContextIndexSearcher(
-                    ctx.searcher().getIndexReader(),
-                    ctx.searcher().getSimilarity(),
-                    queryCache,
-                    ctx.searcher().getQueryCachingPolicy(),
-                    false
-                );
-                return new WeightAndCache(searcher.createWeight(query, scoreMode, 1), queryCache::blockedOnCaching);
-            }
-            return new WeightAndCache(ctx.searcher().createWeight(query, scoreMode, 1), LuceneSlice.NEVER_BLOCKED);
+            Weight weight = ctx.searcher().createWeight(query, scoreMode, 1);
+            return new WeightAndCache(weight, LuceneSlice.NEVER_BLOCKED);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
