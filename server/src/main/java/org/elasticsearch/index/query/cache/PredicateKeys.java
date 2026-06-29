@@ -10,6 +10,8 @@
 package org.elasticsearch.index.query.cache;
 
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.BoostQuery;
+import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.DisjunctionMaxQuery;
 import org.apache.lucene.search.FieldExistsQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
@@ -62,6 +64,8 @@ public final class PredicateKeys {
         }
         return switch (query) {
             case BooleanQuery bq -> booleanQuery(bq);
+            case BoostQuery bq -> get(bq.getQuery());
+            case ConstantScoreQuery csq -> get(csq.getQuery());
             default -> null;
         };
     }
