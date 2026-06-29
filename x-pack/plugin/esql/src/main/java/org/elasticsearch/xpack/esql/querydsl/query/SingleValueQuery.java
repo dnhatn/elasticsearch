@@ -29,6 +29,8 @@ import org.elasticsearch.index.query.MatchNoneQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryRewriteContext;
 import org.elasticsearch.index.query.SearchExecutionContext;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.xcontent.XContentBuilder;
 import org.elasticsearch.xpack.esql.core.querydsl.query.Query;
 import org.elasticsearch.xpack.esql.core.tree.Location;
@@ -258,6 +260,16 @@ public class SingleValueQuery extends Query {
                 return new MatchNoDocsQuery("missing field [" + field() + "]");
             }
             return simple(ft, context);
+        }
+
+        @Override
+        public PredicateKey predicateKey() {
+            PredicateKey key = next().predicateKey();
+            if (key != null) {
+                return new PredicateHasher(SingleValueMatchQuery.class).addPredicateKey(key).finish();
+            } else {
+                return null;
+            }
         }
 
         @Override
