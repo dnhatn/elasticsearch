@@ -646,9 +646,12 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                         ContextIndexSearcher searcher = context.searcher();
                         if(searcher.getQueryCache() instanceof IndicesQueryCache indicesQueryCache) {
                             searcher.setQueryCache(indicesQueryCache.blockLevelQueryCache.cacheSession(predicateKeys));
-                        }
-                        if (searcher.getQueryCache() instanceof IndexQueryCache indexQueryCache) {
+                            System.err.println("--> use block level cache");
+                        } else if (searcher.getQueryCache() instanceof IndexQueryCache indexQueryCache) {
                             searcher.setQueryCache(indexQueryCache.indicesQueryCache.blockLevelQueryCache.cacheSession(predicateKeys));
+                            System.err.println("--> use block level cache");
+                        } else {
+                            assert false : "unknown cache [" + searcher.getQueryCache();
                         }
                         context.preProcess();
                         newContexts.add(context);

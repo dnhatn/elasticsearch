@@ -140,8 +140,11 @@ public abstract class AbstractQueryBuilder<QB extends AbstractQueryBuilder<QB>> 
         Query query = doToQuery(context, visitor);
         if (query != null) {
             final var predicateKeys = context.predicateKeys();
-            if (predicateKeys != null && predicateKeys.shouldCache(query)) {
+            System.err.println("--> toQuery(" + this.getClass() + ") -> " + query + " keys=" + context.predicateKeys()
+                + " should_cache [" + predicateKeys.shouldCache(query) + "] key=[" + predicateKey() + "]");
+            if (predicateKeys.shouldCache(query)) {
                 PredicateKey key = predicateKey();
+                System.err.println("--> adding predicate key [" + key + "]");
                 if (key != null) {
                     predicateKeys.put(query, key);
                 }

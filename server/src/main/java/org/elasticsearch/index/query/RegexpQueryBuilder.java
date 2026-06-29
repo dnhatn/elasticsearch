@@ -320,12 +320,13 @@ public class RegexpQueryBuilder extends LeafQueryBuilder<RegexpQueryBuilder> imp
 
     @Override
     public PredicateKey predicateKey() {
+        System.err.println("--> value " + value);
         return new PredicateHasher(getClass()).addString(fieldName)
-            .addString(value)
+            .addString(value != null ? value : "")
             .addLong(syntaxFlagsValue)
             .addBoolean(caseInsensitive)
             .addLong(maxDeterminizedStates)
-            .addString(rewrite)
+            .addString(rewrite != null ? rewrite : "")
             .finish();
     }
 

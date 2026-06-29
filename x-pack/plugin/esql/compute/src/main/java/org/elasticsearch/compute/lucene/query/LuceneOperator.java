@@ -247,6 +247,7 @@ public abstract class LuceneOperator extends SourceOperator {
     public final void close() {
         syncQueryCache();
         refCounteds.iterable().forEach(RefCounted::decRef);
+        syncQueryCache();
         additionalClose();
     }
 
