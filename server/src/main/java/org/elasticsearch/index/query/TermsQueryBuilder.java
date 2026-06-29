@@ -30,6 +30,8 @@ import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.mapper.ConstantFieldType;
 import org.elasticsearch.index.mapper.MappedFieldType;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.indices.TermsLookup;
 import org.elasticsearch.xcontent.XContentBuilder;
 import org.elasticsearch.xcontent.XContentParser;
@@ -357,6 +359,19 @@ public class TermsQueryBuilder extends LeafQueryBuilder<TermsQueryBuilder> {
             }
             return terms;
         }));
+    }
+
+    @Override
+    public PredicateKey predicateKey() {
+        if (termsLookup != null || supplier != null) {
+            return null;
+        }
+        PredicateHasher hasher = new PredicateHasher(getClass()).addString(fieldName);
+        hasher.addInt(values.size());
+        for (Object value : values) {
+            hasher.addObject(value);
+        }
+        return hasher.finish();
     }
 
     @Override

@@ -530,7 +530,7 @@ public final class IndexModule {
         IndexAnalyzers indexAnalyzers = null;
         boolean success = false;
         try {
-            if (indexSettings.getValue(INDEX_QUERY_CACHE_ENABLED_SETTING)) {
+            if (indexSettings.getValue(INDEX_QUERY_CACHE_ENABLED_SETTING) || true) {
                 BiFunction<IndexSettings, IndicesQueryCache, QueryCache> queryCacheProvider = forceQueryCacheProvider.get();
                 if (queryCacheProvider == null) {
                     queryCache = new IndexQueryCache(indexSettings.getIndex(), indicesQueryCache);
