@@ -138,9 +138,9 @@ public abstract class AbstractQueryBuilder<QB extends AbstractQueryBuilder<QB>> 
     @Override
     public final Query toQuery(SearchExecutionContext context, MaxClauseCountQueryVisitor visitor) throws IOException {
         Query query = doToQuery(context, visitor);
-        System.err.println("--> toQuery(" + this + ") -> " + query + " keys=" + context.predicateKeys());
         if (query != null) {
             final var predicateKeys = context.predicateKeys();
+            System.err.println("--> toQuery(" + this.getClass() + ") -> " + query + " keys=" + context.predicateKeys());
             if (predicateKeys != null && predicateKeys.shouldCache(query)) {
                 PredicateKey key = predicateKey();
                 System.err.println("--> predicate key [" + key + "] for query [" + query + "]");
