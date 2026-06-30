@@ -7,6 +7,8 @@
 
 package org.elasticsearch.xpack.esql.plugin;
 
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.QueryCachingPolicy;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
@@ -64,6 +66,7 @@ import org.elasticsearch.xpack.esql.planner.PlannerUtils;
 import org.elasticsearch.xpack.esql.session.Configuration;
 import org.elasticsearch.xpack.esql.stats.SearchStats;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -646,9 +649,31 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                         ContextIndexSearcher searcher = context.searcher();
                         if(searcher.getQueryCache() instanceof IndicesQueryCache indicesQueryCache) {
                             searcher.setQueryCache(indicesQueryCache.blockLevelQueryCache.cacheSession(predicateKeys));
+                            searcher.setQueryCachingPolicy(new QueryCachingPolicy() {
+                                @Override
+                                public void onUse(Query query) {
+
+                                }
+
+                                @Override
+                                public boolean shouldCache(Query query) throws IOException {
+                                    return true;
+                                }
+                            });
                             System.err.println("--> use block level cache");
                         } else if (searcher.getQueryCache() instanceof IndexQueryCache indexQueryCache) {
                             searcher.setQueryCache(indexQueryCache.indicesQueryCache.blockLevelQueryCache.cacheSession(predicateKeys));
+                            searcher.setQueryCachingPolicy(new QueryCachingPolicy() {
+                                @Override
+                                public void onUse(Query query) {
+
+                                }
+
+                                @Override
+                                public boolean shouldCache(Query query) throws IOException {
+                                    return true;
+                                }
+                            });
                             System.err.println("--> use block level cache");
                         } else {
                             assert false : "unknown cache [" + searcher.getQueryCache();
