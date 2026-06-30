@@ -639,6 +639,7 @@ public final class LuceneSliceQueue {
         final boolean intraSegment = partitioning == PartitioningStrategy.DOC || partitioning == PartitioningStrategy.TIME_SERIES;
         try {
             Weight weight = ctx.searcher().createWeight(query, scoreMode, 1);
+            System.err.println("--> query cache [" + ctx.searcher().getQueryCache() + "]");
             return new WeightAndCache(weight, LuceneSlice.NEVER_BLOCKED);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
