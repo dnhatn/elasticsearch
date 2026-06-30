@@ -50,7 +50,7 @@ public final class PredicateKeys {
     public void updateRewrittenQuery(Query query, Query rewritten) {
         assert assertUpdatable();
         if (query != rewritten && shouldCache(rewritten)) {
-            PredicateKey key = keys.get(query);
+            PredicateKey key = get(query);
             if (key != null) {
                 keys.put(rewritten, key);
             }
