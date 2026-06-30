@@ -49,12 +49,25 @@ public final class PredicateKeys {
      */
     public void updateRewrittenQuery(Query query, Query rewritten) {
         assert assertUpdatable();
-        if (query != rewritten && shouldCache(rewritten)) {
-            PredicateKey key = get(query);
-            if (key != null) {
-                keys.put(rewritten, key);
+        if (query == rewritten) {
+            return;
+        }
+        PredicateKey key = get(query);
+        if (key != null && shouldCache(rewritten)) {
+            keys.put(rewritten, key);
+            Query inner = unwrap(rewritten);
+            if (inner != rewritten) {
+                keys.put(inner, key);
             }
         }
+    }
+
+    private static Query unwrap(Query query) {
+        return switch (query) {
+            case BoostQuery bq -> unwrap(bq.getQuery());
+            case ConstantScoreQuery csq -> unwrap(csq.getQuery());
+            default -> query;
+        };
     }
 
     public PredicateKey get(Query query) {
@@ -66,6 +79,7 @@ public final class PredicateKeys {
             case BooleanQuery bq -> booleanQuery(bq);
             case BoostQuery bq -> get(bq.getQuery());
             case ConstantScoreQuery csq -> get(csq.getQuery());
+            case Hashable hashable -> hashable.predicatekey();
             default -> null;
         };
     }

@@ -24,6 +24,9 @@ import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.index.mapper.BlockLoader;
+import org.elasticsearch.index.query.cache.Hashable;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 import org.elasticsearch.simdvec.ESVectorUtil;
 
 import java.io.IOException;
@@ -36,7 +39,7 @@ import static org.elasticsearch.index.mapper.MultiValuedBinaryDocValuesField.Sep
  * A query that matches documents whose binary doc values contain a specific term. Only works with binary doc values
  * encoded using {@link org.elasticsearch.index.mapper.MultiValuedBinaryDocValuesField.SeparateCount}.
  */
-public final class BinaryDocValuesContainsTermQuery extends Query {
+public final class BinaryDocValuesContainsTermQuery extends Query implements Hashable {
     final String fieldName;
     final BytesRef containsTerm;
 
@@ -81,6 +84,11 @@ public final class BinaryDocValuesContainsTermQuery extends Query {
                 return DocValues.isCacheable(ctx, fieldName);
             }
         };
+    }
+
+    @Override
+    public PredicateKey predicatekey() {
+        return new PredicateHasher(getClass()).addString(fieldName).addBytesRef(containsTerm).finish();
     }
 
     float matchCost() {
