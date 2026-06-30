@@ -275,26 +275,25 @@ public final class BlockLevelQueryCache implements QueryCache {
 
         int replay(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
             final int emitStart = Math.max(0, min - docBase);
+            final int emitEnd = Math.min(BLOCK_SIZE, max - docBase);
+            int doc = bits.nextSetBit(emitStart);
             if (acceptDocs != null) {
-                for (int doc = bits.nextSetBit(emitStart); doc != -1 && doc < BLOCK_SIZE; doc = bits.nextSetBit(doc + 1)) {
+                while (doc != -1 && doc < emitEnd) {
                     int actualDoc = doc + docBase;
-                    if (actualDoc >= max) {
-                        return actualDoc;
-                    }
                     if (acceptDocs.get(actualDoc)) {
                         collector.collect(actualDoc);
                     }
+                    doc++;
+                    doc = (doc < BLOCK_SIZE) ? bits.nextSetBit(doc) : -1;
                 }
             } else {
-                for (int doc = bits.nextSetBit(emitStart); doc != -1 && doc < BLOCK_SIZE; doc = bits.nextSetBit(doc + 1)) {
-                    int actualDoc = doc + docBase;
-                    if (actualDoc >= max) {
-                        return actualDoc;
-                    }
-                    collector.collect(actualDoc);
+                while (doc != -1 && doc < emitEnd) {
+                    collector.collect(doc + docBase);
+                    doc++;
+                    doc = (doc < BLOCK_SIZE) ? bits.nextSetBit(doc) : -1;
                 }
             }
-            return -1;
+            return (doc != -1 && doc >= emitEnd) ? doc + docBase : -1;
         }
 
         @Override
