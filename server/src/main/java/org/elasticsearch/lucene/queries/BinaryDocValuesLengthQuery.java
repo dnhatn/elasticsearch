@@ -25,6 +25,9 @@ import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.index.mapper.BlockLoader;
+import org.elasticsearch.index.query.cache.Hashable;
+import org.elasticsearch.index.query.cache.PredicateHasher;
+import org.elasticsearch.index.query.cache.PredicateKey;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -32,7 +35,7 @@ import java.util.function.Predicate;
 
 import static org.elasticsearch.index.mapper.MultiValuedBinaryDocValuesField.SeparateCount.COUNT_FIELD_SUFFIX;
 
-final class BinaryDocValuesLengthQuery extends Query {
+final class BinaryDocValuesLengthQuery extends Query implements Hashable {
 
     final String fieldName;
     final int length;
@@ -90,6 +93,11 @@ final class BinaryDocValuesLengthQuery extends Query {
         if (visitor.acceptField(fieldName)) {
             visitor.visitLeaf(this);
         }
+    }
+
+    @Override
+    public PredicateKey predicatekey() {
+        return new PredicateHasher(getClass()).addString(fieldName).addInt(length).finish();
     }
 
     public String toString(String field) {
