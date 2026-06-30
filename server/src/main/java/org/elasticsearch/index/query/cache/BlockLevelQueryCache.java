@@ -61,7 +61,7 @@ public final class BlockLevelQueryCache implements QueryCache {
         public Weight doCache(Weight weight, QueryCachingPolicy policy) {
             Query query = weight.getQuery();
             PredicateKey key = predicateKeys.get(query);
-            System.err.println("--> creating caching weight key=" + key);
+            System.err.println("--> doCache query=" + query.getClass().getSimpleName() + "(" + query + ") key=" + key);
             if (key == null) {
                 return weight;
             }

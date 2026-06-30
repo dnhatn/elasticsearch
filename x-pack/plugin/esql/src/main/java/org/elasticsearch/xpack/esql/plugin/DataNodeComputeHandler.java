@@ -645,8 +645,8 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                         // we need to limit the number of active search contexts here or in SearchService
                         context = searchService.createSearchContext(shardRequest, SearchService.NO_TIMEOUT);
                         PredicateKeys predicateKeys = new PredicateKeys();
-                        context.searcher().setPredicateKeys(predicateKeys);
                         ContextIndexSearcher searcher = context.searcher();
+                        searcher.setPredicateKeys(predicateKeys);
                         if(searcher.getQueryCache() instanceof IndicesQueryCache indicesQueryCache) {
                             searcher.setQueryCache(indicesQueryCache.blockLevelQueryCache.cacheSession(predicateKeys));
                             searcher.setQueryCachingPolicy(new QueryCachingPolicy() {
