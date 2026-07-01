@@ -31,6 +31,7 @@ import org.elasticsearch.xpack.esql.core.expression.FoldContext;
 import org.elasticsearch.xpack.esql.core.expression.NameId;
 import org.elasticsearch.xpack.esql.core.expression.NamedExpression;
 import org.elasticsearch.xpack.esql.evaluator.EvalMapper;
+import org.elasticsearch.xpack.esql.expression.Order;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.AggregateFunction;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Count;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.CountApproximate;
@@ -42,6 +43,7 @@ import org.elasticsearch.xpack.esql.plan.physical.ExternalSourceExec;
 import org.elasticsearch.xpack.esql.plan.physical.FieldExtractExec;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
 import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesAggregateExec;
+import org.elasticsearch.xpack.esql.plan.physical.TopNExec;
 import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.LocalExecutionPlannerContext;
 import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.PhysicalOperation;
 import org.elasticsearch.xpack.esql.plugin.QueryPragmas;
@@ -204,7 +206,7 @@ public abstract class AbstractPhysicalOperationProviders {
                 );
             } else {
                 QueryPragmas pragmas = context.queryPragmas();
-                operatorFactory = new HashAggregationOperator.Builder().groups(groupSpecs.stream().map(GroupSpec::toHashGroupSpec).toList())
+                var builder = new HashAggregationOperator.Builder().groups(groupSpecs.stream().map(GroupSpec::toHashGroupSpec).toList())
                     .mode(aggregatorMode)
                     .aggregators(aggregatorFactories)
                     .partialEmit(
@@ -213,8 +215,12 @@ public abstract class AbstractPhysicalOperationProviders {
                     )
                     .maxPageSize(maxPageSize)
                     .aggregationBatchSize(aggregationBatchSize)
-                    .analysisRegistry(analysisRegistry)
-                    .build();
+                    .analysisRegistry(analysisRegistry);
+                HashAggregationOperator.TopAggregation topAggregation = extractTopAggregation(aggregateExec, context);
+                if (topAggregation != null) {
+                    builder.topAggregation(topAggregation);
+                }
+                operatorFactory = builder.build();
             }
         }
         if (operatorFactory != null) {
@@ -405,6 +411,55 @@ public abstract class AbstractPhysicalOperationProviders {
     private static BlockHash.TopNDef extractPushedTopN(PhysicalPlan child) {
         ExternalSourceExec ext = ExternalSourceAggregatePushdown.findExternalSource(child);
         return ext == null ? null : ext.pushedTopN();
+    }
+
+    private static HashAggregationOperator.TopAggregation extractTopAggregation(
+        AggregateExec aggregateExec,
+        LocalExecutionPlannerContext context
+    ) {
+        if (aggregateExec.getMode().isOutputPartial()) {
+            return null;
+        }
+        TopNExec topN = context.linkedTopN(aggregateExec);
+        if (topN == null || topN.order().size() != 1) {
+            return null;
+        }
+        Order order = topN.order().getFirst();
+        int limit = topNLimit(topN, context);
+        if (limit < 0) {
+            return null;
+        }
+        Attribute sortAttribute = Expressions.attribute(order.child());
+        if (sortAttribute == null) {
+            return null;
+        }
+        int aggregatorIndex = 0;
+        for (NamedExpression aggregate : aggregateExec.aggregates()) {
+            Expression unwrapped = Alias.unwrap(aggregate);
+            if (unwrapped instanceof AggregateFunction == false) {
+                continue;
+            }
+            if (aggregate.toAttribute().semanticEquals(sortAttribute)) {
+                return new HashAggregationOperator.TopAggregation(aggregatorIndex, order.direction() == Order.OrderDirection.ASC, limit);
+            }
+            aggregatorIndex++;
+        }
+        return null;
+    }
+
+    private static int topNLimit(TopNExec topN, LocalExecutionPlannerContext context) {
+        if (topN.limit().foldable() == false) {
+            return -1;
+        }
+        Object folded = topN.limit().fold(context.foldCtx());
+        if (folded instanceof Number number) {
+            try {
+                return Math.toIntExact(number.longValue());
+            } catch (ArithmeticException e) {
+                return -1;
+            }
+        }
+        return -1;
     }
 
     public abstract Operator.OperatorFactory timeSeriesAggregatorOperatorFactory(

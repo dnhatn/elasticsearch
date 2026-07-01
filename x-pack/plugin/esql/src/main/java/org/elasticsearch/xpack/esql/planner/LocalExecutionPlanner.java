@@ -204,6 +204,7 @@ import org.elasticsearch.xpack.esql.session.EsqlCCSUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -302,6 +303,12 @@ public class LocalExecutionPlanner {
         IndexedByShardId<? extends ShardContext> shardContexts
     ) {
         final boolean timeSeries = localPhysicalPlan.anyMatch(p -> p instanceof TimeSeriesAggregateExec);
+
+        // workaround for https://github.com/elastic/elasticsearch/issues/99782
+        localPhysicalPlan = localPhysicalPlan.transformUp(
+            AggregateExec.class,
+            a -> a.getMode().isOutputPartial() ? a : new ProjectExec(a.source(), a, Expressions.asAttributes(a.aggregates()))
+        );
         var context = new LocalExecutionPlannerContext(
             description,
             new ArrayList<>(),
@@ -314,13 +321,8 @@ public class LocalExecutionPlanner {
             timeSeries,
             settings,
             shardContexts,
-            physicalOperationProviders.analysisRegistry()
-        );
-
-        // workaround for https://github.com/elastic/elasticsearch/issues/99782
-        localPhysicalPlan = localPhysicalPlan.transformUp(
-            AggregateExec.class,
-            a -> a.getMode().isOutputPartial() ? a : new ProjectExec(a.source(), a, Expressions.asAttributes(a.aggregates()))
+            physicalOperationProviders.analysisRegistry(),
+            linkedTopNByAggregate(localPhysicalPlan)
         );
         PhysicalOperation physicalOperation = plan(localPhysicalPlan, context);
 
@@ -1040,6 +1042,26 @@ public class LocalExecutionPlanner {
             }
             return null;
         }
+    }
+
+    static Map<AggregateExec, TopNExec> linkedTopNByAggregate(PhysicalPlan localPhysicalPlan) {
+        Map<AggregateExec, TopNExec> linkedTopNByAggregate = new IdentityHashMap<>();
+        localPhysicalPlan.forEachDown(TopNExec.class, topN -> {
+            PhysicalPlan plan = topN.child();
+            while (true) {
+                if (plan instanceof ProjectExec project) {
+                    plan = project.child();
+                } else if (plan instanceof EvalExec eval) {
+                    plan = eval.child();
+                } else if (plan instanceof AggregateExec agg) {
+                    linkedTopNByAggregate.put(agg, topN);
+                    return;
+                } else {
+                    return;
+                }
+            }
+        });
+        return linkedTopNByAggregate;
     }
 
     private PhysicalOperation planTopNBy(TopNByExec topNByExec, LocalExecutionPlannerContext context) {
@@ -2205,10 +2227,16 @@ public class LocalExecutionPlanner {
         boolean timeSeries,
         Settings settings,
         IndexedByShardId<? extends ShardContext> shardContexts,
-        @Nullable AnalysisRegistry analysisRegistry
+        @Nullable AnalysisRegistry analysisRegistry,
+        Map<AggregateExec, TopNExec> linkedTopNByAggregate
     ) {
         void addDriverFactory(DriverFactory driverFactory) {
             driverFactories.add(driverFactory);
+        }
+
+        @Nullable
+        TopNExec linkedTopN(AggregateExec aggregateExec) {
+            return linkedTopNByAggregate.get(aggregateExec);
         }
 
         void driverParallelism(DriverParallelism parallelism) {

@@ -7,6 +7,7 @@
 
 package org.elasticsearch.compute.aggregation;
 
+import org.apache.lucene.util.PriorityQueue;
 import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BooleanBlock;
@@ -21,6 +22,7 @@ import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.data.Vector;
 import org.elasticsearch.compute.operator.DriverContext;
 
+import java.util.Arrays;
 import java.util.List;
 
 public class CountGroupingAggregatorFunction implements GroupingAggregatorFunction {
@@ -306,6 +308,57 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
                 }
             }
             blocks[offset] = builder.build().asBlock();
+        }
+    }
+
+    @Override
+    public IntVector selectTopN(IntVector selected, int limit, boolean asc) {
+        int positionCount = selected.getPositionCount();
+        if (positionCount <= limit) {
+            selected.incRef();
+            return selected;
+        }
+        record GroupIdAndCount(int groupId, long count) {
+
+        }
+        long usedBytes = Long.BYTES * 3L * limit;
+        driverContext.blockFactory().adjustBreaker(usedBytes);
+        try {
+            final PriorityQueue<GroupIdAndCount> pq;
+            if (asc) {
+                pq = new PriorityQueue<>(limit) {
+                    @Override
+                    protected boolean lessThan(GroupIdAndCount a, GroupIdAndCount b) {
+                        return a.count > b.count;
+                    }
+                };
+            } else {
+                pq = new PriorityQueue<>(limit) {
+                    @Override
+                    protected boolean lessThan(GroupIdAndCount a, GroupIdAndCount b) {
+                        return a.count < b.count;
+                    }
+                };
+            }
+            for (int i = 0; i < positionCount; i++) {
+                final int groupId = selected.getInt(i);
+                final long count = groupId < counts.size() ? counts.get(groupId) : 0L;
+                pq.insertWithOverflow(new GroupIdAndCount(groupId, count));
+            }
+            final int[] topGroupIds = new int[pq.size()];
+            int idx = 0;
+            for (GroupIdAndCount groupIdAndCount : pq) {
+                topGroupIds[idx++] = groupIdAndCount.groupId;
+            }
+            // prefer emit results in the order of groupIds
+            Arrays.sort(topGroupIds);
+            IntVector vector = driverContext.blockFactory().newIntArrayVector(topGroupIds, topGroupIds.length, usedBytes);
+            usedBytes = 0;
+            return vector;
+        } finally {
+            if (usedBytes > 0) {
+                driverContext.blockFactory().adjustBreaker(-usedBytes);
+            }
         }
     }
 

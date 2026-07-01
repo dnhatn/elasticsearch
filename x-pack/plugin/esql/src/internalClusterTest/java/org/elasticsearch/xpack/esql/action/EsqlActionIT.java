@@ -2067,6 +2067,56 @@ public class EsqlActionIT extends AbstractEsqlIntegTestCase {
         }
     }
 
+    public void testPushTopNToAggregate() {
+        String indexName = "test-pushdown-topn";
+        assertAcked(client().admin().indices().prepareCreate(indexName).setMapping("value", "type=long", "tag", "type=keyword"));
+        Map<String, Long> counts = new HashMap<>();
+        int numDocs = between(10, 500);
+        BulkRequestBuilder bulk = client().prepareBulk();
+        for (int i = 0; i < numDocs; i++) {
+            String tag = "tag-" + randomIntBetween(10, 50);
+            int value = randomIntBetween(1, 1000);
+            bulk.add(new IndexRequest(indexName).id("1" + i).source("value", value, "tag", tag));
+            counts.merge(tag, 1L, Long::sum);
+        }
+        bulk.setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE).get();
+        int limit = between(1, 100);
+        var request = syncEsqlQueryRequest("""
+            FROM test-pushdown-topn | STATS c = COUNT(*), avg = AVG(value) BY tag | SORT c DESC | LIMIT
+
+            """ + limit).profile(true);
+        try (var result = run(request)) {
+            int expectedRows = Math.min(limit, counts.size());
+            assertThat(getValuesList(result), hasSize(expectedRows));
+            EsqlQueryResponse.Profile profile = result.profile();
+            assertNotNull(profile);
+            DriverProfile finalDriver = profile.drivers().stream().filter(d -> d.description().contains("final")).findFirst().get();
+            HashAggregationOperator.Status status = finalDriver.operators()
+                .stream()
+                .filter(o -> o.status() instanceof HashAggregationOperator.Status)
+                .map(o -> (HashAggregationOperator.Status) o.status())
+                .findFirst()
+                .get();
+            assertThat(status.rowsEmitted(), equalTo((long) expectedRows));
+        }
+        request = syncEsqlQueryRequest("""
+            FROM test-pushdown-topn | STATS c = COUNT(*), avg = AVG(value) BY tag | WHERE avg > 100 | SORT c DESC | LIMIT
+
+            """ + limit).profile(true);
+        try (var result = run(request)) {
+            EsqlQueryResponse.Profile profile = result.profile();
+            assertNotNull(profile);
+            DriverProfile finalDriver = profile.drivers().stream().filter(d -> d.description().contains("final")).findFirst().get();
+            HashAggregationOperator.Status status = finalDriver.operators()
+                .stream()
+                .filter(o -> o.status() instanceof HashAggregationOperator.Status)
+                .map(o -> (HashAggregationOperator.Status) o.status())
+                .findFirst()
+                .get();
+            assertThat(status.rowsEmitted(), equalTo((long) counts.size()));
+        }
+    }
+
     public void testLookupJoin() {
         Settings lookupSettings = Settings.builder().put("index.number_of_shards", 1).put("index.mode", "lookup").build();
         assertAcked(
