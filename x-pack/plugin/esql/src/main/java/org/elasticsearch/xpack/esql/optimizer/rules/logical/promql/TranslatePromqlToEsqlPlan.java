@@ -38,8 +38,6 @@ import org.elasticsearch.xpack.esql.expression.function.grouping.TimeSeriesWitho
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToInteger;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToString;
-import org.elasticsearch.xpack.esql.expression.function.scalar.internal.PackDimension;
-import org.elasticsearch.xpack.esql.expression.function.scalar.internal.UnpackDimension;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.EndsWith;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.StartsWith;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.regex.RLike;
@@ -67,11 +65,13 @@ import org.elasticsearch.xpack.esql.plan.logical.Eval;
 import org.elasticsearch.xpack.esql.plan.logical.Filter;
 import org.elasticsearch.xpack.esql.plan.logical.Fork;
 import org.elasticsearch.xpack.esql.plan.logical.LogicalPlan;
+import org.elasticsearch.xpack.esql.plan.logical.PackDimensions;
 import org.elasticsearch.xpack.esql.plan.logical.Project;
 import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesAggregate;
 import org.elasticsearch.xpack.esql.plan.logical.TopNBy;
 import org.elasticsearch.xpack.esql.plan.logical.UnaryPlan;
 import org.elasticsearch.xpack.esql.plan.logical.UnionAll;
+import org.elasticsearch.xpack.esql.plan.logical.UnpackDimensionValues;
 import org.elasticsearch.xpack.esql.plan.logical.local.EmptyLocalSupplier;
 import org.elasticsearch.xpack.esql.plan.logical.local.LocalRelation;
 import org.elasticsearch.xpack.esql.plan.logical.promql.AcrossSeriesAggregate;
@@ -1202,41 +1202,39 @@ public final class TranslatePromqlToEsqlPlan extends AnalyzerRules.Parameterized
                 allToPack.add(na.toAttribute());
             }
 
-            List<Alias> packAliases = new ArrayList<>();
             List<Expression> groupings = new ArrayList<>();
             groupings.add(step);
             List<NamedExpression> aggKeys = new ArrayList<>();
-            List<Alias> unpackAliases = new ArrayList<>();
             var names = new TemporaryNameGenerator.Monotonic();
 
-            for (Attribute attr : allToPack) {
-                Alias pack = new Alias(source, names.next(attr.name()), new PackDimension(source, attr));
-                packAliases.add(pack);
-                groupings.add(pack.toAttribute());
-                aggKeys.add(pack.toAttribute());
-
-                unpackAliases.add(
-                    new Alias(source, attr.name(), new UnpackDimension(source, pack.toAttribute(), attr.dataType()), attr.id())
-                );
+            // Pack the carried dimensions into a single column before the aggregate (prevents multi-valued dimensions
+            // from splitting rows), group by the packed key, then unpack after the aggregate.
+            Attribute packedAttribute = null;
+            LogicalPlan packed = plan;
+            if (allToPack.isEmpty() == false) {
+                packedAttribute = new ReferenceAttribute(source, names.next("packed"), DataType.SOURCE);
+                packed = new PackDimensions(source, plan, new ArrayList<>(allToPack), packedAttribute);
+                groupings.add(packedAttribute);
+                aggKeys.add(packedAttribute);
             }
-
-            Eval packEval = new Eval(source, plan, packAliases);
 
             var aggregates = new ArrayList<NamedExpression>(aggKeys.size() + 2);
             aggregates.add(value);
             aggregates.add(step);
             aggregates.addAll(aggKeys);
 
-            Aggregate agg = new Aggregate(source, packEval, groupings, aggregates);
-            Eval unpackEval = new Eval(source, agg, unpackAliases);
+            Aggregate agg = new Aggregate(source, packed, groupings, aggregates);
+
+            LogicalPlan unpacked = agg;
+            if (allToPack.isEmpty() == false) {
+                unpacked = new UnpackDimensionValues(source, agg, packedAttribute, new ArrayList<>(allToPack));
+            }
 
             List<NamedExpression> projections = new ArrayList<>();
             projections.add(value.toAttribute());
             projections.add(step);
-            for (Alias unpack : unpackAliases) {
-                projections.add(unpack.toAttribute());
-            }
-            return new Project(source, unpackEval, projections);
+            projections.addAll(allToPack);
+            return new Project(source, unpacked, projections);
         }
 
         // BY/NONE over already-aggregated child: group by concrete labels only.
