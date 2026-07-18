@@ -85,7 +85,7 @@ public class UnpackDimensionValues extends UnaryPlan {
     }
 
     @Override
-    public boolean internalNode() {
+    public boolean skipTelemetry() {
         return true;
     }
 

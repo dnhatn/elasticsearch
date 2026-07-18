@@ -366,7 +366,7 @@ public final class TranslateTimeSeriesAggregate extends AnalyzerRules.Parameteri
             );
         } else {
             var source = aggregate.source();
-            Attribute packedAttribute = new ReferenceAttribute(source, internalNames.next("packed"), DataType.SOURCE);
+            Attribute packedAttribute = PackDimensions.packedAttribute(source);
             PackDimensions packNode = new PackDimensions(source, firstPhase, dimensionAttributes, packedAttribute);
             Alias packedGrouping = new Alias(source, internalNames.next("group"), packedAttribute);
             secondPassGroupings.add(packedGrouping);

@@ -7302,12 +7302,14 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         Aggregate aggsByCluster = as(unpack.child(), Aggregate.class);
         assertThat(aggsByCluster, not(instanceOf(TimeSeriesAggregate.class)));
         assertThat(aggsByCluster.aggregates(), hasSize(2));
-        PackDimensions pack = as(aggsByCluster.child(), PackDimensions.class);
-        assertThat(pack.dimensions(), hasSize(1));
-        TimeSeriesAggregate aggsByTsid = as(pack.child(), TimeSeriesAggregate.class);
-        assertThat(aggsByTsid.aggregates(), hasSize(2)); // _tsid is dropped
+        // The dimensions are packed before the first-phase aggregation and read back as one DimensionValues.
+        TimeSeriesAggregate aggsByTsid = as(aggsByCluster.child(), TimeSeriesAggregate.class);
+        assertThat(aggsByTsid.aggregates(), hasSize(2)); // rate, packed dimension values
         assertNull(aggsByTsid.timeBucket());
-        EsRelation relation = as(aggsByTsid.child(), EsRelation.class);
+        PackDimensions pack = as(aggsByTsid.child(), PackDimensions.class);
+        assertThat(pack.dimensions(), hasSize(1));
+        assertThat(pack.dimensions().get(0).name(), equalTo("cluster"));
+        EsRelation relation = as(pack.child(), EsRelation.class);
         assertThat(relation.indexMode(), equalTo(IndexMode.TIME_SERIES));
 
         Sum sum = as(Alias.unwrap(aggsByCluster.aggregates().get(0)), Sum.class);
@@ -7317,7 +7319,7 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         Rate rate = as(Alias.unwrap(aggsByTsid.aggregates().get(0)), Rate.class);
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
         DimensionValues values = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
-        assertThat(Expressions.attribute(values.field()).name(), equalTo("cluster"));
+        assertThat(Expressions.attribute(values.field()).name(), equalTo("_$packed_dims"));
     }
 
     public void testTranslateMetricsGroupedByTwoDimension() {
@@ -7338,12 +7340,12 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         Aggregate finalAggs = as(eval.child(), Aggregate.class);
         assertThat(finalAggs, not(instanceOf(TimeSeriesAggregate.class)));
         assertThat(finalAggs.aggregates(), hasSize(3)); // sum, count, packed grouping
-        PackDimensions pack = as(finalAggs.child(), PackDimensions.class);
-        assertThat(pack.dimensions(), hasSize(2));
-        TimeSeriesAggregate aggsByTsid = as(pack.child(), TimeSeriesAggregate.class);
-        assertThat(aggsByTsid.aggregates(), hasSize(3)); // _tsid is dropped
+        TimeSeriesAggregate aggsByTsid = as(finalAggs.child(), TimeSeriesAggregate.class);
+        assertThat(aggsByTsid.aggregates(), hasSize(2)); // rate, packed dimension values
         assertNull(aggsByTsid.timeBucket());
-        EsRelation relation = as(aggsByTsid.child(), EsRelation.class);
+        PackDimensions pack = as(aggsByTsid.child(), PackDimensions.class);
+        assertThat(pack.dimensions(), hasSize(2));
+        EsRelation relation = as(pack.child(), EsRelation.class);
         assertThat(relation.indexMode(), equalTo(IndexMode.TIME_SERIES));
 
         assertThat(Expressions.attribute(div.left()).id(), equalTo(finalAggs.aggregates().get(0).id()));
@@ -7355,13 +7357,11 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         assertThat(Expressions.attribute(count.field()).id(), equalTo(aggsByTsid.aggregates().get(0).id()));
         assertThat(finalAggs.groupings(), hasSize(1)); // the two dimensions are packed into one grouping key
 
-        assertThat(aggsByTsid.aggregates(), hasSize(3)); // rates, values(cluster), values(pod)
+        assertThat(aggsByTsid.aggregates(), hasSize(2)); // rate, packed dimension values
         Rate rate = as(Alias.unwrap(aggsByTsid.aggregates().get(0)), Rate.class);
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
-        DimensionValues values1 = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
-        assertThat(Expressions.attribute(values1.field()).name(), equalTo("cluster"));
-        DimensionValues values2 = as(Alias.unwrap(aggsByTsid.aggregates().get(2)), DimensionValues.class);
-        assertThat(Expressions.attribute(values2.field()).name(), equalTo("pod"));
+        DimensionValues values = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
+        assertThat(Expressions.attribute(values.field()).name(), equalTo("_$packed_dims"));
     }
 
     public void testTranslateMetricsGroupedByTimeBucket() {
@@ -7410,12 +7410,12 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         Div div = as(Alias.unwrap(eval.fields().get(0)), Div.class);
         Aggregate finalAgg = as(eval.child(), Aggregate.class);
         assertThat(finalAgg, not(instanceOf(TimeSeriesAggregate.class)));
-        PackDimensions pack = as(finalAgg.child(), PackDimensions.class);
-        assertThat(pack.dimensions(), hasSize(2));
-        TimeSeriesAggregate aggsByTsid = as(pack.child(), TimeSeriesAggregate.class);
+        TimeSeriesAggregate aggsByTsid = as(finalAgg.child(), TimeSeriesAggregate.class);
         assertNotNull(aggsByTsid.timeBucket());
         assertThat(aggsByTsid.timeBucket().buckets().fold(FoldContext.small()), equalTo(Duration.ofMinutes(5)));
-        Eval bucket = as(aggsByTsid.child(), Eval.class);
+        PackDimensions pack = as(aggsByTsid.child(), PackDimensions.class);
+        assertThat(pack.dimensions(), hasSize(2));
+        Eval bucket = as(pack.child(), Eval.class);
         EsRelation relation = as(bucket.child(), EsRelation.class);
         assertThat(relation.indexMode(), equalTo(IndexMode.TIME_SERIES));
         assertThat(Expressions.attribute(div.left()).id(), equalTo(finalAgg.aggregates().get(0).id()));
@@ -7428,11 +7428,11 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         assertThat(Expressions.attribute(count.field()).id(), equalTo(aggsByTsid.aggregates().get(0).id()));
         assertThat(finalAgg.groupings(), hasSize(2)); // bucket + packed grouping
 
-        assertThat(aggsByTsid.aggregates(), hasSize(4)); // rate, values(pod), values(cluster), bucket
+        assertThat(aggsByTsid.aggregates(), hasSize(3)); // rate, packed dimension values, bucket
         Rate rate = as(Alias.unwrap(aggsByTsid.aggregates().get(0)), Rate.class);
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
-        DimensionValues podValues = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
-        assertThat(Expressions.attribute(podValues.field()).name(), equalTo("pod"));
+        DimensionValues packedValues = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
+        assertThat(Expressions.attribute(packedValues.field()).name(), equalTo("_$packed_dims"));
     }
 
     public void testTranslateSumOfTwoRates() {
@@ -7453,11 +7453,11 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         Add sum = as(Alias.unwrap(eval.fields().get(0)), Add.class);
         assertThat(Expressions.name(sum.left()), equalTo("RATE_$1"));
         assertThat(Expressions.name(sum.right()), equalTo("RATE_$2"));
-        PackDimensions pack = as(eval.child(), PackDimensions.class);
-        assertThat(pack.dimensions(), hasSize(2));
-        TimeSeriesAggregate aggsByTsid = as(pack.child(), TimeSeriesAggregate.class);
+        TimeSeriesAggregate aggsByTsid = as(eval.child(), TimeSeriesAggregate.class);
         assertThat(Expressions.name(aggsByTsid.aggregates().get(0)), equalTo("RATE_$1"));
         assertThat(Expressions.name(aggsByTsid.aggregates().get(1)), equalTo("RATE_$2"));
+        PackDimensions pack = as(aggsByTsid.child(), PackDimensions.class);
+        assertThat(pack.dimensions(), hasSize(2));
     }
 
     public void testTranslateMixedAggsGroupedByTimeBucketAndDimensions() {
@@ -7478,12 +7478,12 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         Div div = as(Alias.unwrap(eval.fields().get(0)), Div.class);
         Aggregate finalAgg = as(eval.child(), Aggregate.class);
         assertThat(finalAgg, not(instanceOf(TimeSeriesAggregate.class)));
-        PackDimensions pack = as(finalAgg.child(), PackDimensions.class);
-        assertThat(pack.dimensions(), hasSize(1));
-        TimeSeriesAggregate aggsByTsid = as(pack.child(), TimeSeriesAggregate.class);
+        TimeSeriesAggregate aggsByTsid = as(finalAgg.child(), TimeSeriesAggregate.class);
         assertNotNull(aggsByTsid.timeBucket());
         assertThat(aggsByTsid.timeBucket().buckets().fold(FoldContext.small()), equalTo(Duration.ofMinutes(5)));
-        Eval bucket = as(aggsByTsid.child(), Eval.class);
+        PackDimensions pack = as(aggsByTsid.child(), PackDimensions.class);
+        assertThat(pack.dimensions(), hasSize(1));
+        Eval bucket = as(pack.child(), Eval.class);
         EsRelation relation = as(bucket.child(), EsRelation.class);
         assertThat(relation.indexMode(), equalTo(IndexMode.TIME_SERIES));
 
@@ -7533,15 +7533,15 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         Round round = as(Alias.unwrap(evalRound.fields().get(0)), Round.class);
         Mul mul = as(round.field(), Mul.class);
 
-        PackDimensions pack = as(evalRound.child(), PackDimensions.class);
-        assertThat(pack.dimensions(), hasSize(1));
-        TimeSeriesAggregate aggsByTsid = as(pack.child(), TimeSeriesAggregate.class);
-        assertThat(aggsByTsid.aggregates(), hasSize(3)); // rate, cluster, bucket
+        TimeSeriesAggregate aggsByTsid = as(evalRound.child(), TimeSeriesAggregate.class);
+        assertThat(aggsByTsid.aggregates(), hasSize(3)); // rate, packed dimension values, bucket
         assertThat(aggsByTsid.groupings(), hasSize(2));
         assertNotNull(aggsByTsid.timeBucket());
         assertThat(aggsByTsid.timeBucket().buckets().fold(FoldContext.small()), equalTo(Duration.ofMinutes(1)));
 
-        Eval evalBucket = as(aggsByTsid.child(), Eval.class);
+        PackDimensions pack = as(aggsByTsid.child(), PackDimensions.class);
+        assertThat(pack.dimensions(), hasSize(1));
+        Eval evalBucket = as(pack.child(), Eval.class);
         assertThat(evalBucket.fields(), hasSize(1));
         Bucket bucket = as(Alias.unwrap(evalBucket.fields().get(0)), Bucket.class);
         EsRelation relation = as(evalBucket.child(), EsRelation.class);
@@ -7563,7 +7563,7 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         Rate rate = as(Alias.unwrap(aggsByTsid.aggregates().get(0)), Rate.class);
         assertThat(Expressions.attribute(rate.field()).name(), equalTo("network.total_bytes_in"));
         DimensionValues values = as(Alias.unwrap(aggsByTsid.aggregates().get(1)), DimensionValues.class);
-        assertThat(Expressions.attribute(values.field()).name(), equalTo("cluster"));
+        assertThat(Expressions.attribute(values.field()).name(), equalTo("_$packed_dims"));
     }
 
     public void testTranslateMaxOverTime() {
@@ -11116,19 +11116,20 @@ public class LogicalPlanOptimizerTests extends AbstractLogicalPlanOptimizerTests
         assertThat(aggregate.aggregates(), hasSize(3));
         as(Alias.unwrap(aggregate.aggregates().get(0)), Max.class);
 
-        // PackDimensions[[p], packed_$1]
-        var pack = as(aggregate.child(), PackDimensions.class);
-        assertThat(pack.dimensions(), hasSize(1));
-
-        // TimeSeriesAggregate[[_tsid, bucket], [MAX(..) AS MAXOVERTIME_$1, DIMENSIONVALUES(pod) AS p, bucket]]
-        var timeSeriesAggregate = as(pack.child(), TimeSeriesAggregate.class);
+        // TimeSeriesAggregate[[_tsid, bucket], [MAX(..) AS MAXOVERTIME_$1, DIMENSIONVALUES(_$packed_dims) AS _$packed_dims, bucket]]
+        var timeSeriesAggregate = as(aggregate.child(), TimeSeriesAggregate.class);
         assertThat(timeSeriesAggregate.groupings(), hasSize(2));
         assertThat(timeSeriesAggregate.aggregates(), hasSize(3));
         var dimensionValues = as(Alias.unwrap(timeSeriesAggregate.aggregates().get(1)), DimensionValues.class);
-        assertThat(Expressions.attribute(dimensionValues.field()).name(), equalTo("pod"));
+        assertThat(Expressions.attribute(dimensionValues.field()).name(), equalTo("_$packed_dims"));
+
+        // PackDimensions[[pod], _$packed_dims] — the raw dimension is packed before the first-phase aggregation
+        var pack = as(timeSeriesAggregate.child(), PackDimensions.class);
+        assertThat(pack.dimensions(), hasSize(1));
+        assertThat(pack.dimensions().get(0).name(), equalTo("pod"));
 
         // Eval[[BUCKET(@timestamp, PT1M) AS bucket(@timestamp, 1 minute)]]
-        var eval3 = as(timeSeriesAggregate.child(), Eval.class);
+        var eval3 = as(pack.child(), Eval.class);
         // EsRelation[k8s][@timestamp, client.ip, cluster, ..]
         as(eval3.child(), EsRelation.class);
     }

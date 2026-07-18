@@ -27,6 +27,7 @@ import org.elasticsearch.xpack.esql.optimizer.PhysicalOptimizerRules;
 import org.elasticsearch.xpack.esql.plan.physical.EsQueryExec;
 import org.elasticsearch.xpack.esql.plan.physical.EvalExec;
 import org.elasticsearch.xpack.esql.plan.physical.FieldExtractExec;
+import org.elasticsearch.xpack.esql.plan.physical.PackDimensionsExec;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
 import org.elasticsearch.xpack.esql.plan.physical.ProjectExec;
 import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesAggregateExec;
@@ -74,20 +75,44 @@ public final class ExtractDimensionFieldsAfterAggregation extends PhysicalOptimi
         if (sourceAttr == null) {
             return oldAgg;
         }
+        PackDimensionsExec preAggPack = oldAgg.child() instanceof PackDimensionsExec p ? p : null;
+        Attribute packedAttr = preAggPack != null ? preAggPack.packedAttribute() : null;
+
         List<NamedExpression> newAggregates = new ArrayList<>();
         List<Attribute> dimensionFields = new ArrayList<>();
         List<Alias> aliases = new ArrayList<>();
+        // For the packed path: the raw fields to extract after the aggregation, and the alias that re-packs them into the
+        // DimensionValues intermediate.
+        List<Attribute> packRawFields = null;
+        Alias packAlias = null;
         Set<AggregateFunction> seen = new HashSet<>();
         List<Attribute> oldIntermediates = oldAgg.intermediateAttributes();
         List<Attribute> newIntermediates = new ArrayList<>(oldIntermediates.subList(0, oldAgg.groupings().size()));
         int intermediateOffset = oldAgg.groupings().size();
         for (var agg : oldAgg.aggregates()) {
             Attribute dimensionField = null;
+            boolean packedDim = false;
             if (Alias.unwrap(agg) instanceof AggregateFunction af) {
-                dimensionField = valuesOfDimensionField(af, inputAttributes);
+                if (packedAttr != null
+                    && af instanceof DimensionValues dv
+                    && dv.hasFilter() == false
+                    && dv.field() instanceof Attribute fieldAttr
+                    && packedAttr.semanticEquals(fieldAttr)) {
+                    packedDim = true;
+                } else {
+                    dimensionField = valuesOfDimensionField(af, inputAttributes);
+                }
                 if (seen.add(af)) {
                     int size = intermediateStateSize(af);
-                    if (dimensionField != null) {
+                    if (packedDim) {
+                        if (size != 1) {
+                            throw new IllegalStateException("expected one intermediate attribute for [" + af + "] but got [" + size + "]");
+                        }
+                        Attribute oldAttr = oldIntermediates.get(intermediateOffset);
+                        packRawFields = new ArrayList<>(preAggPack.dimensions());
+                        // Re-packing produces the same packed attribute, aliased to the DimensionValues intermediate.
+                        packAlias = new Alias(agg.source(), agg.name(), packedAttr, oldAttr.id());
+                    } else if (dimensionField != null) {
                         if (size != 1) {
                             throw new IllegalStateException("expected one intermediate attribute for [" + af + "] but got [" + size + "]");
                         }
@@ -128,18 +153,20 @@ public final class ExtractDimensionFieldsAfterAggregation extends PhysicalOptimi
                     intermediateOffset += size;
                 }
             }
-            if (dimensionField == null) {
+            if (dimensionField == null && packedDim == false) {
                 newAggregates.add(agg);
             }
         }
-        if (aliases.isEmpty()) {
+        if (aliases.isEmpty() && packAlias == null) {
             return oldAgg;
         }
+        // Drop the pre-agg pack (its child feeds the aggregation directly) when we re-pack after the aggregation.
+        PhysicalPlan aggChild = packAlias != null ? preAggPack.child() : oldAgg.child();
         newIntermediates.add(new ReferenceAttribute(oldAgg.source(), sourceAttr.qualifier(), sourceAttr.name(), sourceAttr.dataType()));
         newAggregates.add(new Alias(oldAgg.source(), sourceAttr.name(), new FirstDocId(oldAgg.source(), sourceAttr)));
         TimeSeriesAggregateExec newStats = new TimeSeriesAggregateExec(
             oldAgg.source(),
-            oldAgg.child(),
+            aggChild,
             oldAgg.groupings(),
             newAggregates,
             oldAgg.getMode(),
@@ -148,18 +175,28 @@ public final class ExtractDimensionFieldsAfterAggregation extends PhysicalOptimi
             oldAgg.timeBucket(),
             oldAgg.outputTimeBucket()
         );
-        final EvalExec evalExec;
-        if (dimensionFields.isEmpty()) {
-            evalExec = new EvalExec(oldAgg.source(), newStats, aliases);
-        } else {
-            PhysicalPlan fieldExtractExec = new FieldExtractExec(
+        List<Attribute> extract = new ArrayList<>(dimensionFields);
+        if (packRawFields != null) {
+            extract.addAll(packRawFields);
+        }
+        PhysicalPlan afterStats = newStats;
+        if (extract.isEmpty() == false) {
+            afterStats = new FieldExtractExec(
                 oldAgg.source(),
-                newStats,
-                dimensionFields,
+                afterStats,
+                extract,
                 context.configuration().pragmas().fieldExtractPreference()
             );
-            evalExec = new EvalExec(oldAgg.source(), fieldExtractExec, aliases);
         }
+        if (packRawFields != null) {
+            // Re-pack the first-doc raw fields into the packed dimension column.
+            afterStats = new PackDimensionsExec(oldAgg.source(), afterStats, packRawFields, packedAttr);
+        }
+        List<Alias> allAliases = new ArrayList<>(aliases);
+        if (packAlias != null) {
+            allAliases.add(packAlias);
+        }
+        EvalExec evalExec = new EvalExec(oldAgg.source(), afterStats, allAliases);
         return new ProjectExec(oldAgg.source(), evalExec, oldIntermediates);
     }
 

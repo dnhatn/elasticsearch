@@ -1212,7 +1212,7 @@ public final class TranslatePromqlToEsqlPlan extends AnalyzerRules.Parameterized
             Attribute packedAttribute = null;
             LogicalPlan packed = plan;
             if (allToPack.isEmpty() == false) {
-                packedAttribute = new ReferenceAttribute(source, names.next("packed"), DataType.SOURCE);
+                packedAttribute = PackDimensions.packedAttribute(source);
                 packed = new PackDimensions(source, plan, new ArrayList<>(allToPack), packedAttribute);
                 groupings.add(packedAttribute);
                 aggKeys.add(packedAttribute);

@@ -19,7 +19,7 @@ import org.elasticsearch.compute.data.OrdinalBytesRefVector;
 import org.elasticsearch.compute.operator.topn.TopNEncoder;
 import org.elasticsearch.core.Releasables;
 
-final class DimensionPacker {
+public final class DimensionPacker {
     private static final TopNEncoder ENCODER = TopNEncoder.DEFAULT_UNSORTABLE;
     static final int INITIAL_SIZE_IN_BYTES = 6 * 1024;
 
@@ -242,7 +242,7 @@ final class DimensionPacker {
         }
     }
 
-    static BytesRefBlock packMultiColumns(DriverContext driverContext, Block[] blocks) {
+    public static BytesRefBlock packMultiColumns(DriverContext driverContext, Block[] blocks) {
         if (blocks.length == 1) {
             return packSingleColumn(driverContext, blocks[0]);
         }
@@ -275,7 +275,7 @@ final class DimensionPacker {
         }
     }
 
-    static Block[] unpackMultiColumns(DriverContext driverContext, BytesRefBlock inputBlock, ElementType[] outputTypes) {
+    public static Block[] unpackMultiColumns(DriverContext driverContext, BytesRefBlock inputBlock, ElementType[] outputTypes) {
         int positionCount = inputBlock.getPositionCount();
         BytesRefVector inputVector = inputBlock.asVector();
         if (inputVector == null) {

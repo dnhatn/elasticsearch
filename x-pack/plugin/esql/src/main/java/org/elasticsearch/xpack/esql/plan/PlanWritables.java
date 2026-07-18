@@ -25,6 +25,7 @@ import org.elasticsearch.xpack.esql.plan.logical.Lookup;
 import org.elasticsearch.xpack.esql.plan.logical.MetricsInfo;
 import org.elasticsearch.xpack.esql.plan.logical.MvExpand;
 import org.elasticsearch.xpack.esql.plan.logical.OrderBy;
+import org.elasticsearch.xpack.esql.plan.logical.PackDimensions;
 import org.elasticsearch.xpack.esql.plan.logical.ParameterizedQuery;
 import org.elasticsearch.xpack.esql.plan.logical.Project;
 import org.elasticsearch.xpack.esql.plan.logical.RegisteredDomain;
@@ -67,6 +68,7 @@ import org.elasticsearch.xpack.esql.plan.physical.LimitExec;
 import org.elasticsearch.xpack.esql.plan.physical.LocalSourceExec;
 import org.elasticsearch.xpack.esql.plan.physical.MetricsInfoExec;
 import org.elasticsearch.xpack.esql.plan.physical.MvExpandExec;
+import org.elasticsearch.xpack.esql.plan.physical.PackDimensionsExec;
 import org.elasticsearch.xpack.esql.plan.physical.ProjectExec;
 import org.elasticsearch.xpack.esql.plan.physical.RegisteredDomainExec;
 import org.elasticsearch.xpack.esql.plan.physical.SampleExec;
@@ -117,6 +119,7 @@ public class PlanWritables {
             Lookup.ENTRY,
             MvExpand.ENTRY,
             OrderBy.ENTRY,
+            PackDimensions.ENTRY,
             ParameterizedQuery.ENTRY,
             Project.ENTRY,
             Project.V9_ENTRY, // Backward compatibility for reading old "EsqlProject" type
@@ -159,6 +162,7 @@ public class PlanWritables {
             LimitExec.ENTRY,
             LocalSourceExec.ENTRY,
             MvExpandExec.ENTRY,
+            PackDimensionsExec.ENTRY,
             ProjectExec.ENTRY,
             RerankExec.ENTRY,
             SampleExec.ENTRY,
