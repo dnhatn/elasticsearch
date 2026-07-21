@@ -45,10 +45,12 @@ public class WindowFilter extends EsqlScalarFunction implements TimestampAware, 
 
     public static final TransportVersion TIME_SERIES_WINDOW_FILTER = TransportVersion.fromName("time_series_window_filter");
 
-    private final Expression window, bucket, timestamp;
+    private final Expression window, timestamp;
+    private final Bucket bucket;
 
-    public WindowFilter(Source source, Expression window, Expression bucket, Expression timestamp) {
-        super(source, List.of(window, bucket, timestamp));
+    public WindowFilter(Source source, Expression window, Bucket bucket, Expression timestamp) {
+        // treat the bucket as a sidecar to avoid it's being rewritten to a reference
+        super(source, List.of(window, timestamp));
         this.window = window;
         this.bucket = bucket;
         this.timestamp = timestamp;
@@ -58,7 +60,7 @@ public class WindowFilter extends EsqlScalarFunction implements TimestampAware, 
         this(
             Source.readFrom((PlanStreamInput) in),
             in.readNamedWriteable(Expression.class),
-            in.readNamedWriteable(Expression.class),
+            (Bucket) in.readNamedWriteable(Expression.class),
             in.readNamedWriteable(Expression.class)
         );
     }
@@ -98,7 +100,7 @@ public class WindowFilter extends EsqlScalarFunction implements TimestampAware, 
 
     @Override
     public Expression replaceChildren(List<Expression> newChildren) {
-        return new WindowFilter(source(), newChildren.get(0), newChildren.get(1), newChildren.get(2));
+        return new WindowFilter(source(), newChildren.get(0), bucket, newChildren.get(1));
     }
 
     @Override
@@ -108,12 +110,11 @@ public class WindowFilter extends EsqlScalarFunction implements TimestampAware, 
 
     @Override
     public ExpressionEvaluator.Factory toEvaluator(ToEvaluator toEvaluator) {
-        Bucket bucketBucket = (Bucket) bucket;
         if (window.foldable() == false) {
             throw new IllegalArgumentException("Window should be foldable");
         }
         Duration foldedWindow = (Duration) window.fold(toEvaluator.foldCtx());
-        Rounding.Prepared preparedRounding = bucketBucket.getDateRoundingOrNull(toEvaluator.foldCtx());
+        Rounding.Prepared preparedRounding = bucket.getDateRoundingOrNull(toEvaluator.foldCtx());
         var timestampFactory = toEvaluator.apply(timestamp);
         return new WindowFilterEvaluator.Factory(
             source(),
@@ -133,7 +134,7 @@ public class WindowFilter extends EsqlScalarFunction implements TimestampAware, 
         return window;
     }
 
-    protected Expression bucket() {
+    protected Bucket bucket() {
         return bucket;
     }
 

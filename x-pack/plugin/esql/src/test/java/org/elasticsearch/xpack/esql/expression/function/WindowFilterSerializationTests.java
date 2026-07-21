@@ -10,6 +10,8 @@ package org.elasticsearch.xpack.esql.expression.function;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 import org.elasticsearch.xpack.esql.expression.AbstractExpressionSerializationTests;
+import org.elasticsearch.xpack.esql.expression.function.grouping.Bucket;
+import org.elasticsearch.xpack.esql.expression.function.grouping.BucketSerializationTests;
 
 import java.io.IOException;
 
@@ -18,7 +20,7 @@ public class WindowFilterSerializationTests extends AbstractExpressionSerializat
     protected WindowFilter createTestInstance() {
         Source source = randomSource();
         Expression window = randomChild();
-        Expression bucket = randomChild();
+        Bucket bucket = BucketSerializationTests.createRandomBucket(configuration());
         Expression timestamp = randomChild();
         return new WindowFilter(source, window, bucket, timestamp);
     }
@@ -27,11 +29,11 @@ public class WindowFilterSerializationTests extends AbstractExpressionSerializat
     protected WindowFilter mutateInstance(WindowFilter instance) throws IOException {
         Source source = randomSource();
         Expression window = instance.window();
-        Expression bucket = instance.bucket();
+        Bucket bucket = instance.bucket();
         Expression timestamp = instance.timestamp();
         switch (between(0, 2)) {
             case 0 -> window = randomValueOtherThan(window, AbstractExpressionSerializationTests::randomChild);
-            case 1 -> bucket = randomValueOtherThan(bucket, AbstractExpressionSerializationTests::randomChild);
+            case 1 -> bucket = randomValueOtherThan(bucket, () -> BucketSerializationTests.createRandomBucket(configuration()));
             case 2 -> timestamp = randomValueOtherThan(timestamp, AbstractExpressionSerializationTests::randomChild);
         }
         return new WindowFilter(source, window, bucket, timestamp);
