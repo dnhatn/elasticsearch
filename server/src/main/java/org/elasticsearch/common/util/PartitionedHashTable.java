@@ -17,12 +17,14 @@ import org.elasticsearch.core.Releasables;
 public interface PartitionedHashTable {
     int NUM_PARTITIONS = 256;
     int PARTITION_MASK = NUM_PARTITIONS - 1;
-    int SPLIT_WRITE_BATCH_SIZE = 64;
+    int SPLIT_WRITE_BATCH_SIZE = 32; // 64;
 
     interface PartitionedKeys extends Releasable {
         void releasePartition(int partition);
 
         int partitionSize(int partition);
+
+        void releaseIds();
     }
 
     interface PartitionedAgg extends Releasable {

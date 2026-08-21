@@ -452,6 +452,30 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         public void close() {}
     }
 
+    public CountPartitionedAgg partition(int[][] subIds, int[] lens) {
+        int[] offsets = new int[lens.length];
+        long[][] subCounts = new long[PartitionedHashTable.NUM_PARTITIONS][];
+        for (int p = 0; p < PartitionedHashTable.NUM_PARTITIONS; p++) {
+            subCounts[p] = new long[lens[p]];
+        }
+        int added;
+        do {
+            added = 0;
+            for (int p = 0; p < PartitionedHashTable.NUM_PARTITIONS; p++) {
+                int offset = offsets[p];
+                int chunk = Math.min(lens[p] - offset, PartitionedHashTable.SPLIT_WRITE_BATCH_SIZE);
+                int[] subId = subIds[p];
+                long[] subCount = subCounts[p];
+                for (int i = 0; i < chunk; i++) {
+                    subCount[offset + i] = counts.get(subId[offset + i]);
+                }
+                offsets[p] += chunk;
+                added += chunk;
+            }
+        } while (added > 0);
+        return new CountPartitionedAgg(subCounts);
+    }
+
     static final class CountPartitionedAgg implements PartitionedHashTable.PartitionedAgg {
         final long[][] subs;
 

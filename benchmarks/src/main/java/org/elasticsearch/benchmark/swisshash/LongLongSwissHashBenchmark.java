@@ -456,33 +456,19 @@ public class LongLongSwissHashBenchmark {
             }
         }
 
-        public PartitionedHashTable.AggSplitter newSplitter() {
-            PartitionedHashTable.AggSplitter[] splitters = new PartitionedHashTable.AggSplitter[N];
+        public PartitionedHashTable.PartitionedAgg partition(int[][] partitionedIds, int[] lengths) {
+            PartitionedHashTable.PartitionedAgg[] subs = new PartitionedHashTable.PartitionedAgg[N];
             for (int i = 0; i < N; i++) {
-                splitters[i] = counts[i].newSplitter();
+                subs[i] = counts[i].partition(partitionedIds, lengths);
             }
-            return new PartitionedHashTable.AggSplitter() {
-                @Override
-                public void split(PartitionedHashTable.ScratchBuffer scratch, int idOffset, int batchLen, short[] positions, int[] fills) {
-                    for (var s : splitters) {
-                        s.split(scratch, idOffset, batchLen, positions, fills);
-                    }
-                }
+            return new NAggs(subs);
+        }
 
-                @Override
-                public PartitionedHashTable.PartitionedAgg finish() {
-                    PartitionedHashTable.PartitionedAgg[] partitioned = new PartitionedHashTable.PartitionedAgg[N];
-                    for (int i = 0; i < N; i++) {
-                        partitioned[i] = splitters[i].finish();
-                    }
-                    return new NAggs(partitioned);
-                }
-
-                @Override
-                public void close() {
-                    Releasables.close(splitters);
-                }
-            };
+        public void combinePartition(PartitionedHashTable.PartitionedAgg src, int partition, int[] dstIds, int offset, int length) {
+            NAggs nAggs = (NAggs)src;
+            for (int i = 0; i < N; i++) {
+                counts[i].combinePartition(nAggs.subs[i], partition, dstIds, offset, length);
+            }
         }
 
         public void clear() {
@@ -497,17 +483,15 @@ public class LongLongSwissHashBenchmark {
     }
 
     protected PartitionedHashTable.PartitionedKeysAndAggs partition(LongLongSwissHash hashTable, NCount nagg) {
-        PartitionedHashTable.AggSplitter splitter = nagg.newSplitter();
-        PartitionedHashTable.PartitionedKeys partitionedKeys = hashTable.partition(bigArrays, breaker, splitter);
-        PartitionedHashTable.PartitionedAgg partitionedAggs = splitter.finish();
-        splitter.close();
+        var partitionedKeys = hashTable.partition(bigArrays, breaker, NOOP_SPLITTER);
+        PartitionedHashTable.PartitionedAgg partitionedAggs = nagg.partition(partitionedKeys.ids, partitionedKeys.lengths);
         hashTable.clear();
         nagg.clear();
         return new PartitionedHashTable.PartitionedKeysAndAggs(partitionedKeys, partitionedAggs);
     }
 
     @Benchmark
-    public long testPartitionWithNAggs() throws Exception {
+    public long testPartitionNAggs() throws Exception {
         LongLongSwissHash[] workers = new LongLongSwissHash[NUM_WORKERS];
         NCount[] aggs = new NCount[NUM_WORKERS];
         int keysPerWorker = keys.length / NUM_WORKERS;
@@ -549,10 +533,10 @@ public class LongLongSwissHashBenchmark {
                             int endWriteBatch = writeOffset + batchWrite;
                             for (CountGroupingAggregatorFunction c : agg.counts) {
                                 for (int i = writeOffset; i < endWriteBatch; i++) {
-                                    c.accumulateCount(ids[writeOffset + i], offset + i);
+                                    c.accumulateCount(ids[i], 1L);
                                 }
                             }
-                            writeOffset += len;
+                            writeOffset += batchWrite;
                         }
                     }
                     offset += len;
@@ -600,10 +584,6 @@ public class LongLongSwissHashBenchmark {
                             naggs.subs[si].releasePartition(p);
                         }
                     }
-                    for (var gen : allGens) {
-                        gen.aggs().releasePartition(p);
-                    }
-
                 }
                 mergeLatch.countDown();
             });
