@@ -515,6 +515,16 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
+        void mergeKeys(long[] keys, int[] ids, int len) {
+            for (int i = 0; i < len; i++) {
+                long k1 = keys[i * 2];
+                long k2 = keys[i * 2 + 1];
+                long hash = hash(k1, k2);
+                int id = addImpl(k1, k2, hash);
+                ids[i] = id >= 0 ? id : -1 - id;
+            }
+        }
+
         @Override
         protected Status status() {
             return new BigCoreStatus(growCount, capacity, size, nextGrowSize, insertProbes, keyPages.length, idPages.length);
@@ -564,6 +574,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         }
 
         private void rehash(BigCore newBigCore) {
+            if (size == 0) {
+                return;
+            }
             final int oldCapacity = controlData.length - BYTE_VECTOR_LANES;
             for (int slot = 0; slot < oldCapacity; slot++) {
                 final byte ctrl = controlData[slot];
@@ -652,6 +665,130 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         Objects.checkIndex(actualId, size());
         final long keyOffset = keyOffset(actualId);
         return smallCore != null ? smallCore.key2(Math.toIntExact(keyOffset)) : bigCore.key2(keyOffset);
+    }
+
+    public static final int NUM_PARTITIONS = 256;
+    public static final int PARTITION_MASK = NUM_PARTITIONS - 1;
+    public static final int PARTITION_BATCH_WRITE = 32;
+
+    public static class PartitionHash {
+        public final int[] lengths;
+        public int[][] ids;
+        public final long[][] keys;
+
+        public PartitionHash(int[] lengths, long[][] keys, int[][] ids) {
+            this.lengths = lengths;
+            this.keys = keys;
+            this.ids = ids;
+        }
+
+        public int partitionSize(int p) {
+            return lengths[p];
+        }
+    }
+
+    public PartitionHash partition(int[][] usedIds) {
+        final int[] lengths = new int[NUM_PARTITIONS];
+        final byte[] partitions = bigCore != null ? bigCore.controlData : new byte[size];
+        // compute the partitions
+        {
+            int offset = 0;
+            for (byte[] keyPage : keyPages) {
+                final int keysInPage = Math.min(size - offset, PageCacheRecycler.PAGE_SIZE_IN_BYTES >> 4);
+                for (int i = 0; i < keysInPage; i++) {
+                    final long key1 = (long) LONG_HANDLE.get(keyPage, i << 4);
+                    final long key2 = (long) LONG_HANDLE.get(keyPage, (i << 4) + Long.BYTES);
+                    final long hash64 = hash(key1, key2);
+                    final int p = (int) (hash64 >>> 32) & PARTITION_MASK;
+                    partitions[offset + i] = (byte) p;
+                    lengths[p]++;
+                }
+                offset += keysInPage;
+            }
+        }
+        final int[][] ids = usedIds != null ? usedIds : new int[NUM_PARTITIONS][];
+        for (int p = 0; p < NUM_PARTITIONS; p++) {
+            int len = lengths[p];
+            if (ids[p] == null || ids[p].length < len) {
+                ids[p] = new int[len + Math.max(64, len >>> 3)];
+            }
+        }
+        // fill the ids
+        final int[] nextIndices = new int[NUM_PARTITIONS];
+        for (int i = 0; i < size; i++) {
+            int p = partitions[i] & 0xFF;
+            int idx = nextIndices[p]++;
+            assert idx == 0 || ids[p][idx - 1] < i;
+            ids[p][idx] = i;
+        }
+        if (bigCore != null) {
+            Arrays.fill(bigCore.controlData, BigCore.EMPTY);
+        } else {
+            Arrays.fill(smallCore.idPage, (byte) 0xff);
+        }
+        // split the keys
+        final long[][] keys = new long[NUM_PARTITIONS][];
+        for (int p = 0; p < NUM_PARTITIONS; p++) {
+            keys[p] = new long[lengths[p] * 2];
+        }
+        Arrays.fill(nextIndices, 0);
+        int added = 0;
+        while (added < size) {
+            for (int p = 0; p < NUM_PARTITIONS; p++) {
+                final int offset = nextIndices[p];
+                final int chunk = Math.min(lengths[p] - offset, PARTITION_BATCH_WRITE);
+                final int[] subIds = ids[p];
+                final long[] subKeys = keys[p];
+                for (int c = 0; c < chunk; c++) {
+                    int idx = offset + c;
+                    int id = subIds[idx];
+                    final long keyOffset = (long) id * KEY_SIZE;
+                    final int pageIndex = (int) (keyOffset >> PAGE_SHIFT);
+                    final int indexInPage = (int) (keyOffset & PAGE_MASK);
+                    final byte[] keyPage = keyPages[pageIndex];
+                    subKeys[idx << 1] = (long) LONG_HANDLE.get(keyPage, indexInPage);
+                    subKeys[(idx << 1) + 1] = (long) LONG_HANDLE.get(keyPage, indexInPage + Long.BYTES);
+                }
+                nextIndices[p] += chunk;
+                added += chunk;
+            }
+        }
+        size = 0;
+        return new PartitionHash(lengths, keys, ids);
+    }
+
+    public static class MergeKeys {
+        public int[] ids;
+        public int length;
+    }
+
+    public void clear() {
+        if (bigCore != null) {
+            Arrays.fill(bigCore.controlData, BigCore.EMPTY);
+        } else {
+            Arrays.fill(smallCore.idPage, (byte) 0xff);
+        }
+        size = 0;
+    }
+
+    public MergeKeys mergeKeys(PartitionHash partitions, int partition, int totalSize, MergeKeys reused) {
+        if (smallCore != null) {
+            smallCore.transitionToBigCore();
+        }
+        while (nextGrowSize <= totalSize) {
+            bigCore.grow();
+        }
+        final long[] keys = partitions.keys[partition];
+        final int len = partitions.lengths[partition];
+        if (reused == null) {
+            reused = new MergeKeys();
+        }
+        reused.length = len;
+        if (reused.ids == null || reused.ids.length < len) {
+            reused.ids = new int[len + Math.max(64, len >>> 3)]; // allow reuse
+        }
+        bigCore.mergeKeys(keys, reused.ids, reused.length);
+        return reused;
     }
 
     private long keyOffset(final int id) {

@@ -22,6 +22,7 @@ import org.elasticsearch.compute.data.LongVector;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.data.Vector;
 import org.elasticsearch.compute.operator.DriverContext;
+import org.elasticsearch.swisshash.LongLongSwissHash;
 
 import java.util.Arrays;
 import java.util.List;
@@ -42,7 +43,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         return INTERMEDIATE_STATE_DESC;
     }
 
-    CountGroupingAggregatorFunction(List<Integer> channels, DriverContext driverContext) {
+    public CountGroupingAggregatorFunction(List<Integer> channels, DriverContext driverContext) {
         this.channels = channels;
         this.driverContext = driverContext;
         this.counts = driverContext.bigArrays().newLongArray(256);
@@ -288,7 +289,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         return this::evaluateFinal;
     }
 
-    private void accumulateCount(int groupId, long value) {
+    public void accumulateCount(int groupId, long value) {
         if (groupId < counts.size()) {
             counts.increment(groupId, value);
         } else {
@@ -361,6 +362,51 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
                 driverContext.blockFactory().adjustBreaker(-usedBytes);
             }
         }
+    }
+
+    public static class PartitionAggs {
+        public long[][] values;
+        public PartitionAggs(long[][] values) {
+            this.values = values;
+        }
+    }
+
+    public PartitionAggs partitionAggs(int[][] ids, int[] lengths, int totalLength, int[] fills) {
+        final long[][] values = new long[lengths.length][];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = new long[lengths[i]];
+        }
+        int added = 0;
+        Arrays.fill(fills, 0);
+        while (added < totalLength) {
+            for (int p = 0; p < LongLongSwissHash.NUM_PARTITIONS; p++) {
+                final int offset = fills[p];
+                final int chunk = Math.min(lengths[p] - offset, LongLongSwissHash.PARTITION_BATCH_WRITE);
+                final int[] fromIds = ids[p];
+                final long[] toValues = values[p];
+                for (int c = 0; c < chunk; c++) {
+                    int idx = offset + c;
+                    toValues[idx] = counts.get(fromIds[idx]);
+                }
+                fills[p] += chunk;
+                added += chunk;
+            }
+        }
+        return new PartitionAggs(values);
+    }
+
+    public void combinePartition(long[] values, int[] newIds, int length, int totalLength) {
+        if (counts.size() < totalLength) {
+            counts = driverContext.bigArrays().grow(counts, totalLength);
+        }
+        LongArray dst = counts;
+        for (int i = 0; i < length; i++) {
+            dst.increment(newIds[i], values[i]);
+        }
+    }
+
+    public void clear() {
+        counts.fill(0, counts.size(), 0L);
     }
 
     @Override
