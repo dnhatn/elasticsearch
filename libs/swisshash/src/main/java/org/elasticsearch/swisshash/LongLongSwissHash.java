@@ -525,6 +525,40 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
+        private static final int MERGE_LOOKAHEAD = 16;
+        private final long[] mergeHashRing = new long[MERGE_LOOKAHEAD];
+
+        void mergeKeysWithPrefetch(long[] keys, int[] ids, int len) {
+            final long[] ring = mergeHashRing;
+            long dummy = 0;
+            final int prologue = Math.min(MERGE_LOOKAHEAD, len);
+            for (int i = 0; i < prologue; i++) {
+                final long hash = hash(keys[i * 2], keys[(i * 2) + 1]);
+                ring[i & (MERGE_LOOKAHEAD - 1)] = hash;
+                dummy ^= touchSlot(hash);
+            }
+            for (int i = 0; i < len; i++) {
+                final int slot = i & (MERGE_LOOKAHEAD - 1);
+                final long hash = ring[slot];
+                final int ahead = i + MERGE_LOOKAHEAD;
+                if (ahead < len) {
+                    final long aheadHash = hash(keys[ahead * 2], keys[(ahead * 2) + 1]);
+                    ring[slot] = aheadHash;
+                    dummy ^= touchSlot(aheadHash);
+                }
+                final int id = addImpl(keys[i * 2], keys[(i * 2) + 1], hash);
+                ids[i] = id >= 0 ? id : -1 - id;
+            }
+            SINK_HANDLE.setOpaque(this, dummy);
+        }
+
+        private long touchSlot(final long hash) {
+            final int group = (int) hash & mask;
+            final int idOffset = idOffset(group);
+            return controlData[group] ^ idPages[idOffset >> PAGE_SHIFT][idOffset & PAGE_MASK];
+        }
+
+
         @Override
         protected Status status() {
             return new BigCoreStatus(growCount, capacity, size, nextGrowSize, insertProbes, keyPages.length, idPages.length);
@@ -787,7 +821,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         if (reused.ids == null || reused.ids.length < len) {
             reused.ids = new int[len + Math.max(64, len >>> 3)]; // allow reuse
         }
-        bigCore.mergeKeys(keys, reused.ids, reused.length);
+        if (supportBulkAdd()) {
+            bigCore.mergeKeysWithPrefetch(keys, reused.ids, reused.length);
+        } else {
+            bigCore.mergeKeys(keys, reused.ids, reused.length);
+        }
         return reused;
     }
 
