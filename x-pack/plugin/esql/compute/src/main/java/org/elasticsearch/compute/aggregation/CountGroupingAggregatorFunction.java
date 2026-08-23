@@ -383,7 +383,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     }
 
      public void combinePartition(PartitionedHashTable.PartitionedAgg source, int partition, int[] dstIds, int offset, int length) {
-        final long[] sourceCounts = ((CountPartitionedAgg) source).subs[partition];
+        final int[] sourceCounts = ((CountPartitionedAgg) source).subs[partition];
         int end = offset + length;
         for (int i = offset; i < end; i++) {
             accumulateCount(dstIds[i], sourceCounts[i]);
@@ -396,7 +396,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     }
 
     private final class CountAggSplitter implements PartitionedHashTable.AggSplitter {
-        private final long[][] subs = new long[PartitionedHashTable.NUM_PARTITIONS][];
+        private final int[][] subs = new int[PartitionedHashTable.NUM_PARTITIONS][];
         private final int[] lengths = new int[PartitionedHashTable.NUM_PARTITIONS];
 
         CountAggSplitter() {
@@ -405,7 +405,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
                 (int) Math.ceilDiv(counts.size() * 110L, 100L * PartitionedHashTable.NUM_PARTITIONS)
             );
             for (int p = 0; p < PartitionedHashTable.NUM_PARTITIONS; p++) {
-                subs[p] = new long[initCap];
+                subs[p] = new int[initCap];
             }
         }
 
@@ -427,11 +427,11 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
                 if (c == 0) continue;
                 ensureCapacity(p, lengths[p] + c);
                 final int base = p * PartitionedHashTable.SPLIT_WRITE_BATCH_SIZE;
-                long[] sub = subs[p];
+                int[] sub = subs[p];
                 int dst = lengths[p];
                 for (int i = 0; i < c; i++) {
                     final int id = positions[base + i] & 0xFFFF;
-                    sub[dst++] = buffer[id];
+                    sub[dst++] = (int)buffer[id];
                 }
                 lengths[p] += c;
             }
@@ -453,9 +453,9 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     }
 
     static final class CountPartitionedAgg implements PartitionedHashTable.PartitionedAgg {
-        final long[][] subs;
+        final int[][] subs;
 
-        CountPartitionedAgg(long[][] subs) {
+        CountPartitionedAgg(int[][] subs) {
             this.subs = subs;
         }
 
