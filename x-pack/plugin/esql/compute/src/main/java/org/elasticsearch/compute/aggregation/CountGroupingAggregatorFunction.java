@@ -36,6 +36,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     );
 
     private LongArray counts;
+    private int[] countArray = new int[0];
     private final List<Integer> channels;
     private final DriverContext driverContext;
     private final boolean countAll;
@@ -376,18 +377,20 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
 
     public void clear() {
         counts.clear();
+        Arrays.fill(countArray, 0);
     }
 
     public PartitionedHashTable.AggSplitter newSplitter() {
         return new CountAggSplitter();
     }
 
-     public void combinePartition(PartitionedHashTable.PartitionedAgg source, int partition, int[] dstIds, int offset, int length) {
+     public void combinePartition(PartitionedHashTable.PartitionedAgg source, int partition, int[] dstIds, int offset, int length, int totalLen) {
+        if (countArray.length < totalLen) {
+            countArray = new int[totalLen * 120 / 100];
+        }
         final int[] sourceCounts = ((CountPartitionedAgg) source).subs[partition];
         int end = offset + length;
-        for (int i = offset; i < end; i++) {
-            accumulateCount(dstIds[i], sourceCounts[i]);
-        }
+        System.arraycopy(sourceCounts, 0, countArray, dstIds[offset], length);
     }
 
     @Override

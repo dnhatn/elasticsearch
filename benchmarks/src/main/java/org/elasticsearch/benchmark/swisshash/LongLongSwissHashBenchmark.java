@@ -209,7 +209,7 @@ public class LongLongSwissHashBenchmark {
         }
     }
 
-    // @Benchmark
+    @Benchmark
     public long testOnePassWithNAgg() {
         CountGroupingAggregatorFunction[] aggs = new CountGroupingAggregatorFunction[5];
         for (int i = 0; i < aggs.length; i++) {
@@ -407,15 +407,17 @@ public class LongLongSwissHashBenchmark {
                         totalSize += gen.keys().partitionSize(p);
                     }
                     partition.clear();
+                    int totalLen = 0;
                     for (int i = 0; i < allGens.size(); i++) {
                         var gen = allGens.get(i);
                         mergedKeys[i] = partition.mergeKeys(gen.keys(), p, totalSize, mergedKeys[i]);
+                        totalLen += mergedKeys[i].length;
                         gen.keys().releasePartition(p);
                     }
                     agg.clear();
                     for (int i = 0; i < allGens.size(); i++) {
                         var gen = allGens.get(i);
-                        agg.combinePartition(gen.aggs(), p, mergedKeys[i].ids, 0, mergedKeys[i].length);
+                        agg.combinePartition(gen.aggs(), p, mergedKeys[i].ids, 0, mergedKeys[i].length, totalLen);
                         gen.aggs().releasePartition(p);
                     }
                 }
@@ -586,9 +588,11 @@ public class LongLongSwissHashBenchmark {
                         totalSize += gen.keys().partitionSize(p);
                     }
                     partition.clear();
+                    int totalLen = 0;
                     for (int i = 0; i < allGens.size(); i++) {
                         var gen = allGens.get(i);
                         mergedKeys[i] = partition.mergeKeys(gen.keys(), p, totalSize, mergedKeys[i]);
+                        totalLen += mergedKeys[i].length;
                         gen.keys().releasePartition(p);
                     }
                     agg.clear();
@@ -596,7 +600,7 @@ public class LongLongSwissHashBenchmark {
                         CountGroupingAggregatorFunction dst = agg.counts[si];
                         for (int gi = 0; gi < allGens.size(); gi++) {
                             NAggs naggs = (NAggs) allGens.get(gi).aggs();
-                            dst.combinePartition(naggs.subs[si], p, mergedKeys[gi].ids, 0, mergedKeys[gi].length);
+                            dst.combinePartition(naggs.subs[si], p, mergedKeys[gi].ids, 0, mergedKeys[gi].length, totalLen);
                             naggs.subs[si].releasePartition(p);
                         }
                     }
