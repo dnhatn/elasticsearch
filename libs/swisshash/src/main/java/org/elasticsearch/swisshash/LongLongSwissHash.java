@@ -525,33 +525,6 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
             }
         }
 
-        void mergeKeysWithPrefetch(long[] keys, int[] ids, int len) {
-            int offset = 0;
-            long dummy = 0;
-            while (offset < len) {
-                final int chunkSize = Math.min(len - offset, CHUNK_SIZE);
-                for (int i = 0; i < chunkSize; i++) {
-                    final int absIdx = offset + i;
-                    final long hash = hash(keys[absIdx * 2], keys[(absIdx * 2) + 1]);
-                    batchHashes[i] = hash;
-                    batchPagesRefs[i] = idPages[((int) hash & mask) >> ID_PAGE_SHIFT];
-                }
-                for (int i = 0; i < chunkSize; i++) {
-                    final int group = ((int) batchHashes[i]) & mask;
-                    dummy ^= controlData[group];
-                    dummy ^= batchPagesRefs[i][idOffset(group) & PAGE_MASK];
-                }
-                for (int r = 0; r < chunkSize; r++) {
-                    final int absIdx = offset + r;
-                    final int id = addImpl(keys[absIdx * 2], keys[(absIdx * 2) + 1], batchHashes[r]);
-                    ids[absIdx] = id >= 0 ? id : -1 - id;
-                }
-                offset += chunkSize;
-            }
-            SINK_HANDLE.setOpaque(this, dummy);
-        }
-
-
         @Override
         protected Status status() {
             return new BigCoreStatus(growCount, capacity, size, nextGrowSize, insertProbes, keyPages.length, idPages.length);
@@ -814,11 +787,7 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable {
         if (reused.ids == null || reused.ids.length < len) {
             reused.ids = new int[len + Math.max(64, len >>> 3)]; // allow reuse
         }
-        if (supportBulkAdd()) {
-            bigCore.mergeKeysWithPrefetch(keys, reused.ids, reused.length);
-        } else {
-            bigCore.mergeKeys(keys, reused.ids, reused.length);
-        }
+        bigCore.mergeKeys(keys, reused.ids, reused.length);
         return reused;
     }
 

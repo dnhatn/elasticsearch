@@ -365,16 +365,16 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     }
 
     public static class PartitionAggs {
-        public long[][] values;
-        public PartitionAggs(long[][] values) {
+        public int[][] values;
+        public PartitionAggs(int[][] values) {
             this.values = values;
         }
     }
 
     public PartitionAggs partitionAggs(int[][] ids, int[] lengths, int totalLength, int[] fills) {
-        final long[][] values = new long[lengths.length][];
+        final int[][] values = new int[lengths.length][];
         for (int i = 0; i < values.length; i++) {
-            values[i] = new long[lengths[i]];
+            values[i] = new int[lengths[i]];
         }
         int added = 0;
         Arrays.fill(fills, 0);
@@ -383,10 +383,10 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
                 final int offset = fills[p];
                 final int chunk = Math.min(lengths[p] - offset, LongLongSwissHash.PARTITION_BATCH_WRITE);
                 final int[] fromIds = ids[p];
-                final long[] toValues = values[p];
+                final int[] toValues = values[p];
                 for (int c = 0; c < chunk; c++) {
                     int idx = offset + c;
-                    toValues[idx] = counts.get(fromIds[idx]);
+                    toValues[idx] = (int)counts.get(fromIds[idx]);
                 }
                 fills[p] += chunk;
                 added += chunk;
@@ -395,7 +395,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         return new PartitionAggs(values);
     }
 
-    public void combinePartition(long[] values, int[] newIds, int length, int totalLength) {
+    public void combinePartition(int[] values, int[] newIds, int length, int totalLength) {
         if (counts.size() < totalLength) {
             counts = driverContext.bigArrays().grow(counts, totalLength);
         }
