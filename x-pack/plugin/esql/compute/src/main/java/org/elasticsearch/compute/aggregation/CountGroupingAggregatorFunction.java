@@ -389,7 +389,6 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
             countArray = new int[totalLen * 120 / 100];
         }
         final int[] sourceCounts = ((CountPartitionedAgg) source).subs[partition];
-        int end = offset + length;
         System.arraycopy(sourceCounts, 0, countArray, dstIds[offset], length);
     }
 
