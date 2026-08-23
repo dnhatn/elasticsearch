@@ -49,6 +49,11 @@ public interface LongArray extends BigArray, Writeable {
     void fill(long fromIndex, long toIndex, long value);
 
     /**
+     * Fill all slots with zero.
+     */
+    void clear();
+
+    /**
      * Alternative of {@link #readFrom(StreamInput)} where the written bytes are loaded into an existing {@link LongArray}
      */
     void fillWith(StreamInput in) throws IOException;

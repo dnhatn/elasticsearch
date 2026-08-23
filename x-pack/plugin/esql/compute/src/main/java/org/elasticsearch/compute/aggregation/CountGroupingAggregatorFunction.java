@@ -406,7 +406,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     }
 
     public void clear() {
-        counts.fill(0, counts.size(), 0L);
+        counts.clear();
     }
 
     @Override

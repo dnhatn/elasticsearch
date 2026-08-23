@@ -315,6 +315,11 @@ public class BigArrays {
         }
 
         @Override
+        public void clear() {
+            Arrays.fill(array, (byte) 0);
+        }
+
+        @Override
         public void set(long index, byte[] buf, int offset, int len) {
             assert index >= 0 && index < size();
             System.arraycopy(buf, offset << 3, array, (int) index << 3, len << 3);

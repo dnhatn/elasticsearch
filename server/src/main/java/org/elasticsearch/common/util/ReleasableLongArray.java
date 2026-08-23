@@ -76,6 +76,11 @@ public class ReleasableLongArray implements LongArray {
     }
 
     @Override
+    public void clear() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long ramBytesUsed() {
         /*
          * If we return the size of the buffer that we've sliced

@@ -639,6 +639,11 @@ public class MockBigArrays extends BigArrays {
         }
 
         @Override
+        public void clear() {
+            in.clear();
+        }
+
+        @Override
         public void set(long index, byte[] buf, int offset, int len) {
             in.set(index, buf, offset, len);
         }

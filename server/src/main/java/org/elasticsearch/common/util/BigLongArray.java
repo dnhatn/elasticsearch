@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 import static org.elasticsearch.common.util.PageCacheRecycler.LONG_PAGE_SIZE;
 
@@ -92,6 +93,15 @@ final class BigLongArray extends AbstractBigByteArray implements LongArray {
                 fill(getPageForWriting(i), 0, LONG_PAGE_SIZE, value);
             }
             fill(getPageForWriting(toPage), 0, idxInPage(toIndex - 1) + 1, value);
+        }
+    }
+
+    @Override
+    public void clear() {
+        for (byte[] page : pages) {
+            if (page != null) {
+                Arrays.fill(page, (byte) 0);
+            }
         }
     }
 
