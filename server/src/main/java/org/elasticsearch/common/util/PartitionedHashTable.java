@@ -55,16 +55,22 @@ public interface PartitionedHashTable {
 
     /**
      * Callback invoked by {@link #splitPartition} whenever a partition has {@link #PARTITION_WRITE_BATCH} buffered entries,
-     * so the caller can split per-key state (e.g. aggregation states) using the same partitioning.
+     * so the caller can split per-key state (e.g. aggregation states) using the same partitioning. Partition {@code p}
+     * receives {@code partitionCounts[p]} entries from this batch, to be written to its state at positions
+     * {@code [partitionOffsets[p], partitionOffsets[p] + partitionCounts[p])}.
      */
     interface PartitionSplitter extends Releasable {
         /**
-         * @param idOffset         the id of the first key in this batch; the absolute id of an entry is {@code idOffset + ids[i]}
-         * @param shiftedIds       the ids of the keys, relative to {@code idOffset} and grouped by partition
+         * @param firstId          the id of the first key in this batch; the absolute id of an entry is
+         *                         {@code firstId + shiftedIds[i]}
+         * @param shiftedIds       the ids of the keys, relative to {@code firstId}; partition {@code p}'s ids are at
+         *                         {@code [p * PARTITION_WRITE_BATCH, p * PARTITION_WRITE_BATCH + partitionCounts[p])}
          * @param batchSize        the total number of ids in this batch
-         * @param idsPerPartitions the number of ids in each partition
+         * @param partitionCounts  the number of this batch's ids that fall into each partition
+         * @param partitionOffsets the number of ids each partition received in previous batches, i.e. the position
+         *                         within the partition where this batch's entries start
          */
-        void split(int idOffset, short[] shiftedIds, int batchSize, int[] idsPerPartitions);
+        void split(int firstId, short[] shiftedIds, int batchSize, int[] partitionCounts, int[] partitionOffsets);
     }
 
     /**

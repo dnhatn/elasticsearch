@@ -36,7 +36,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
@@ -260,12 +260,12 @@ public class HashAggregationOperator implements Operator {
                 return new HashAggregationOperator(
                     aggregatorMode,
                     aggregators,
-                    () -> wrapBlockHash(
-                        driverContext,
+                    dc -> wrapBlockHash(
+                        dc,
                         BlockHash.buildCategorizeBlockHash(
                             groups,
                             aggregatorMode,
-                            driverContext.blockFactory(),
+                            dc.blockFactory(),
                             analysisRegistry,
                             maxPageSize
                         )
@@ -280,7 +280,7 @@ public class HashAggregationOperator implements Operator {
             return new HashAggregationOperator(
                 aggregatorMode,
                 aggregators,
-                () -> wrapBlockHash(driverContext, BlockHash.build(groups, driverContext.blockFactory(), aggregationBatchSize, false)),
+                dc -> wrapBlockHash(driverContext, BlockHash.build(groups, dc.blockFactory(), aggregationBatchSize, false)),
                 partialEmitKeysThreshold,
                 partialEmitUniquenessThreshold,
                 maxPageSize,
@@ -303,12 +303,13 @@ public class HashAggregationOperator implements Operator {
         }
     }
 
-    protected final Supplier<BlockHash> blockHashSupplier;
+    protected final Function<DriverContext, BlockHash> blockHashSupplier;
     protected final AggregatorMode aggregatorMode;
     protected final List<GroupingAggregator.Factory> aggregatorFactories;
     protected final List<GroupingAggregator> aggregators;
     protected final int partialEmitKeysThreshold;
     protected final double partialEmitUniquenessThreshold;
+    protected final boolean supportPartitioning;
 
     protected final DriverContext driverContext;
 
@@ -362,7 +363,7 @@ public class HashAggregationOperator implements Operator {
     public HashAggregationOperator(
         AggregatorMode aggregatorMode,
         List<GroupingAggregator.Factory> aggregatorFactories,
-        Supplier<BlockHash> blockHashSupplier,
+        Function<DriverContext, BlockHash> blockHashSupplier,
         int partialEmitKeysThreshold,
         double partialEmitUniquenessThreshold,
         int maxPageSize,
@@ -383,7 +384,7 @@ public class HashAggregationOperator implements Operator {
         this.topAggregation = topAggregation;
         boolean success = false;
         try {
-            this.blockHash = blockHashSupplier.get();
+            this.blockHash = blockHashSupplier.apply(driverContext);
             for (GroupingAggregator.Factory a : aggregatorFactories) {
                 var groupingAggregator = a.apply(driverContext);
                 assert groupingAggregator.mode() == aggregatorMode : groupingAggregator.mode() + " != " + aggregatorMode;
@@ -395,6 +396,20 @@ public class HashAggregationOperator implements Operator {
                 close();
             }
         }
+        supportPartitioning = blockHash.supportPartition();
+    }
+
+    HashAggregationOperator fork(DriverContext driverContext) {
+        return new HashAggregationOperator(
+            aggregatorMode,
+            aggregatorFactories,
+            blockHashSupplier,
+            partialEmitKeysThreshold,
+            partialEmitUniquenessThreshold,
+            maxPageSize,
+            topAggregation,
+            driverContext
+        );
     }
 
     @Override
@@ -505,9 +520,13 @@ public class HashAggregationOperator implements Operator {
 
     private void maybeReinitializeAfterPeriodicallyEmitted() {
         if (rowsReceived > 0 && rowsAddedInCurrentBatch == 0) {
-            blockHash.close();
-            blockHash = null;
-            blockHash = blockHashSupplier.get();
+            if (blockHash.supportClear()) {
+                blockHash.clear();
+            } else {
+                blockHash.close();
+                blockHash = null;
+                blockHash = blockHashSupplier.apply(driverContext);
+            }
             for (int i = 0; i < aggregators.size(); i++) {
                 Releasables.close(aggregators.set(i, aggregatorFactories.get(i).apply(driverContext)));
             }
@@ -603,6 +622,16 @@ public class HashAggregationOperator implements Operator {
         if (condition == false) {
             throw new IllegalArgumentException(msg);
         }
+    }
+
+    @Override
+    public Operator tryPromote(DriverContext driverContext) {
+        if (aggregatorMode.isOutputPartial() == false
+            && blockHash.numKeys() >= ParallelHashAggregationOperator.PARTITION_THRESHOLD
+            && supportPartitioning) {
+            return new ParallelHashAggregationOperator(this, this::fork);
+        }
+        return this;
     }
 
     @Override
