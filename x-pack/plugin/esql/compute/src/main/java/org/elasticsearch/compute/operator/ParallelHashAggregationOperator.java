@@ -251,13 +251,13 @@ public final class ParallelHashAggregationOperator implements Operator {
             startWorkers();
         }
         long startHelping = System.nanoTime();
-        if (pendingRows >= PARTITION_THRESHOLD * 5) {
-            Page p = in.pollPage();
-            if (p != null) {
-                this.pendingRows.addAndGet(-p.getPositionCount());
-                workers[0].addPage(p);
-            }
-        }
+//        if (pendingRows >= PARTITION_THRESHOLD * 5 && pendingRows == prevPending) {
+//            Page p = in.pollPage();
+//            if (p != null) {
+//                this.pendingRows.addAndGet(-p.getPositionCount());
+//                workers[0].addPage(p);
+//            }
+//        }
         long addInputEnd = System.nanoTime();
         helpingNanos += (addInputEnd - startHelping);
         addInputNanos += (addInputEnd - addInputStart);
