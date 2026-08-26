@@ -400,7 +400,7 @@ public class HashAggregationOperator implements Operator {
     }
 
     HashAggregationOperator fork(DriverContext driverContext) {
-        return new HashAggregationOperator(
+        HashAggregationOperator op = new HashAggregationOperator(
             aggregatorMode,
             aggregatorFactories,
             blockHashSupplier,
@@ -410,6 +410,8 @@ public class HashAggregationOperator implements Operator {
             topAggregation,
             driverContext
         );
+        op.blockHash.ensureCapacity(op.blockHash.numKeys());
+        return op;
     }
 
     @Override

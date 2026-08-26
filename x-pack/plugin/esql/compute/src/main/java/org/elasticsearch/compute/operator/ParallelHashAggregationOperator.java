@@ -32,11 +32,11 @@ public final class ParallelHashAggregationOperator implements Operator {
     public static final int PARTITION_THRESHOLD = 256 * 1500;
     final Function<DriverContext, HashAggregationOperator> fork;
     final Executor executor;
-    final ExchangeBuffer in = new ExchangeBuffer(4096);
-    final ExchangeBuffer out = new ExchangeBuffer(4096);
+    final ExchangeBuffer in = new ExchangeBuffer(1024);
+    final ExchangeBuffer out = new ExchangeBuffer(1024);
     final AtomicLong pendingRows = new AtomicLong(0L);
     final Worker[] workers;
-    long lastLaunchPending = 0L;
+    long lastPendingRows = 0L;
     final PendingTasks pendingTasks;
     private final List<PartitionedKeyAndAggs> globalGens = new ArrayList<>();
     boolean finished = false;
@@ -45,14 +45,16 @@ public final class ParallelHashAggregationOperator implements Operator {
         this.fork = fork;
         this.executor = operator.driverContext.executor;
         this.workers = new Worker[8];
-        for (int i = 1; i < workers.length; i++) {
-            workers[i] = new Worker(
-                fork.apply(operator.driverContext.forkDriverContext()),
-                operator.driverContext.globalBreaker()
-            );
+        for (int i = 0; i < workers.length; i++) {
+            if (i == 1) {
+                workers[i] = new Worker(operator, operator.driverContext.globalBreaker());
+            } else {
+                workers[i] = new Worker(
+                    fork.apply(operator.driverContext.forkDriverContext()),
+                    operator.driverContext.globalBreaker()
+                );
+            }
         }
-        workers[0] = new Worker(operator, operator.driverContext.globalBreaker());
-        workers[0].splitPartition();
         pendingTasks = new PendingTasks(this::combinePartitions);
     }
 
@@ -240,22 +242,25 @@ public final class ParallelHashAggregationOperator implements Operator {
     public void addInput(Page page) {
         page.allowPassingToDifferentDriver();
         in.addPage(page);
-        long pendingPages = pendingRows.addAndGet(page.getPositionCount());
-        long addedPages = pendingPages - lastLaunchPending;
-        if (addedPages >= PARTITION_THRESHOLD / 4) {
-            lastLaunchPending = pendingPages;
-            startPartition();
+        final long pendingRows = this.pendingRows.addAndGet(page.getPositionCount());
+        final long newRows = pendingRows - lastPendingRows;
+        if (newRows >= PARTITION_THRESHOLD / 4) {
+            lastPendingRows = pendingRows;
+            startWorkers();
         }
-        Page p;
-        if (pendingPages >= PARTITION_THRESHOLD * 5) {
-            while (pendingRows.get() > PARTITION_THRESHOLD * 5 && (p = in.pollPage()) != null) {
-                pendingRows.addAndGet(-p.getPositionCount());
+        if (pendingRows >= PARTITION_THRESHOLD * 5) {
+            Page p;
+            while (this.pendingRows.get() > PARTITION_THRESHOLD * 5 && (p = in.pollPage()) != null) {
+                this.pendingRows.addAndGet(-p.getPositionCount());
                 workers[0].addPage(p);
             }
         }
     }
 
-    void startPartition() {
+    int triggers = 0;
+
+    void startWorkers() {
+        triggers++;
         Worker selected = null;
         for (int i = 1; i < workers.length; i++) {
             var w = workers[i];
@@ -297,10 +302,8 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     void combinePartitions() {
         for (Worker w : workers) {
-            synchronized (globalGens) {
-                globalGens.addAll(w.localGens);
-                w.localGens.clear();
-            }
+            globalGens.addAll(w.localGens);
+            w.localGens.clear();
         }
         for (Worker w : workers) {
             executor.execute(new AbstractRunnable() {
@@ -321,13 +324,14 @@ public final class ParallelHashAggregationOperator implements Operator {
     public void finish() {
         finished = true;
         in.finish(false);
-        if (pendingRows.get() > PARTITION_THRESHOLD / 2) {
-            startPartition();
+        if (pendingRows.get() > PARTITION_THRESHOLD / 4) {
+            startWorkers();
         }
         Page page;
+        Worker worker = workers[0];
         while ((page = in.pollPage()) != null) {
             pendingRows.addAndGet(-page.getPositionCount());
-            workers[0].addPage(page);
+            worker.addPage(page);
         }
         pendingTasks.finishTask();
     }
@@ -358,6 +362,7 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     @Override
     public void close() {
+        System.err.println("--> triggered workers " + triggers);
         for (Worker w : workers) {
             w.close();
         }
