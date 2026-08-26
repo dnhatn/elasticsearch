@@ -44,7 +44,7 @@ public final class ExchangeSinkHandler {
 
     public ExchangeSinkHandler(BlockFactory blockFactory, int maxBufferSize, LongSupplier nowInMillis) {
         this.blockFactory = blockFactory;
-        this.buffer = new ExchangeBuffer(maxBufferSize);
+        this.buffer = new ExchangeBuffer(10 * 1024);
         this.completionFuture = SubscribableListener.newForked(buffer::addCompletionListener);
         this.nowInMillis = nowInMillis;
         this.lastUpdatedInMillis = new AtomicLong(nowInMillis.getAsLong());

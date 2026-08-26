@@ -19,7 +19,7 @@ public final class DirectExchange {
     private final AtomicInteger pendingSources = new AtomicInteger(0);
 
     public DirectExchange(int bufferSize) {
-        this.buffer = new ExchangeBuffer(bufferSize);
+        this.buffer = new ExchangeBuffer(10  * 1024);
     }
 
     public ExchangeSource exchangeSource() {

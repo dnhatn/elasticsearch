@@ -67,7 +67,7 @@ public final class ExchangeSourceHandler {
      * @param fetchExecutor      the executor used to fetch pages.
      */
     public ExchangeSourceHandler(int maxBufferSize, Executor fetchExecutor) {
-        this.buffer = new ExchangeBuffer(maxBufferSize);
+        this.buffer = new ExchangeBuffer(10 * 1024);
         this.fetchExecutor = fetchExecutor;
         this.outstandingSinks = new PendingInstances(() -> buffer.finish(false));
         this.outstandingSources = new PendingInstances(() -> finishEarly(true, ActionListener.noop()));
