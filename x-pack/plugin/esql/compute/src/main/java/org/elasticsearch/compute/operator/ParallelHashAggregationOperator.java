@@ -240,6 +240,7 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     @Override
     public void addInput(Page page) {
+        long addInputStart = System.nanoTime();
         page.allowPassingToDifferentDriver();
         in.addPage(page);
         final long pendingRows = this.pendingRows.addAndGet(page.getPositionCount());
@@ -255,6 +256,8 @@ public final class ParallelHashAggregationOperator implements Operator {
                 workers[0].addPage(p);
             }
         }
+        long addInputEnd = System.nanoTime();
+        addInputNanos += (addInputEnd - addInputStart);
     }
 
     int triggers = 0;
@@ -322,6 +325,7 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     @Override
     public void finish() {
+        long finishStart = System.nanoTime();
         finished = true;
         in.finish(false);
         if (pendingRows.get() > PARTITION_THRESHOLD / 8) {
@@ -334,7 +338,17 @@ public final class ParallelHashAggregationOperator implements Operator {
             worker.addPage(page);
         }
         pendingTasks.finishTask();
+        long finishEnd = System.nanoTime();
+        System.err.println("--> finish took " + (finishEnd - finishStart));
     }
+
+    @Override
+    public Status status() {
+        return workers[1].operator.status();
+    }
+
+    long addInputNanos = 0L;
+
 
     @Override
     public Page getOutput() {
@@ -362,7 +376,7 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     @Override
     public void close() {
-        System.err.println("--> triggered workers " + triggers);
+        System.err.println("--> triggered workers " + triggers + " addInput=" + addInputNanos);
         for (Worker w : workers) {
             w.close();
         }
