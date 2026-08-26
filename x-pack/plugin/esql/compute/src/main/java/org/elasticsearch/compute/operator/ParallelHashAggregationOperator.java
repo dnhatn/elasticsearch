@@ -245,7 +245,8 @@ public final class ParallelHashAggregationOperator implements Operator {
         in.addPage(page);
         final long pendingRows = this.pendingRows.addAndGet(page.getPositionCount());
         final long newRows = pendingRows - lastPendingRows;
-        if (newRows >= PARTITION_THRESHOLD / 8) {
+        // better to have something like 1/4 and 3/4
+        if (newRows >= PARTITION_THRESHOLD / 4) {
             lastPendingRows = pendingRows;
             startWorkers();
         }
@@ -328,7 +329,7 @@ public final class ParallelHashAggregationOperator implements Operator {
         long finishStart = System.nanoTime();
         finished = true;
         in.finish(false);
-        if (pendingRows.get() > PARTITION_THRESHOLD / 8) {
+        if (pendingRows.get() > PARTITION_THRESHOLD / 4) {
             startWorkers();
         }
         Page page;
