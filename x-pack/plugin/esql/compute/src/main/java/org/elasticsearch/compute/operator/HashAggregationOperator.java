@@ -410,7 +410,6 @@ public class HashAggregationOperator implements Operator {
             topAggregation,
             driverContext
         );
-        op.blockHash.ensureCapacity(op.blockHash.numKeys());
         return op;
     }
 

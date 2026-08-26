@@ -42,6 +42,7 @@ public final class ParallelHashAggregationOperator implements Operator {
     boolean finished = false;
 
     public ParallelHashAggregationOperator(HashAggregationOperator operator, Function<DriverContext, HashAggregationOperator> fork) {
+        long startTime = System.nanoTime();
         this.fork = fork;
         this.executor = operator.driverContext.executor;
         this.workers = new Worker[8];
@@ -56,6 +57,9 @@ public final class ParallelHashAggregationOperator implements Operator {
             }
         }
         pendingTasks = new PendingTasks(this::combinePartitions);
+        startFirst(workers[1]);
+        System.err.println("init took [" + (System.nanoTime() - startTime) + "]ns");
+
     }
 
     record MultiPartitionedState(GroupingAggregatorFunction.PartitionedGroupingState[] subs)
@@ -94,10 +98,18 @@ public final class ParallelHashAggregationOperator implements Operator {
         private final CircuitBreaker globalBreaker;
         int[][] allGenIds = null;
         AtomicBoolean running = new AtomicBoolean(false);
+        boolean initialized = false;
 
         Worker(HashAggregationOperator operator, CircuitBreaker globalBreaker) {
             this.operator = operator;
             this.globalBreaker = globalBreaker;
+        }
+
+        void init() {
+            if (initialized) {
+                return;
+            }
+            operator.blockHash.ensureCapacity(PARTITION_THRESHOLD);
         }
 
         void splitPartition() {
@@ -266,6 +278,36 @@ public final class ParallelHashAggregationOperator implements Operator {
     int triggers = 0;
     long helpingNanos = 0L;
 
+    void startFirst(Worker worker) {
+        worker.running.set(true);
+        executor.execute(new AbstractRunnable() {
+            @Override
+            public void onFailure(Exception e) {
+
+            }
+            @Override
+            public void onAfter() {
+                worker.running.set(false);
+            }
+
+            @Override
+            protected void doRun() throws Exception {
+                pendingTasks.newTask();
+                try {
+                    worker.splitPartition();
+                    Page page;
+                    while ((page = in.pollPage()) != null) {
+                        pendingRows.addAndGet(-page.getPositionCount());
+                        worker.addPage(page);
+                    }
+                } finally {
+                    worker.running.set(false);
+                    pendingTasks.finishTask();
+                }
+            }
+        });
+    }
+
     void startWorkers() {
         triggers++;
         Worker selected = null;
@@ -294,10 +336,17 @@ public final class ParallelHashAggregationOperator implements Operator {
             protected void doRun() throws Exception {
                 pendingTasks.newTask();
                 try {
+                    worker.init();
                     Page page;
                     while ((page = in.pollPage()) != null) {
                         pendingRows.addAndGet(-page.getPositionCount());
                         worker.addPage(page);
+                    }
+                    if (in.isFinished()) {
+                        if (worker.operator.blockHash.numKeys() > 0) {
+                            worker.splitPartition();
+                        }
+                        // spin and wait for combine
                     }
                 } finally {
                     worker.running.set(false);
@@ -332,6 +381,7 @@ public final class ParallelHashAggregationOperator implements Operator {
         long finishStart = System.nanoTime();
         finished = true;
         in.finish(false);
+        // resume all workers
         if (pendingRows.get() > PARTITION_THRESHOLD / 4) {
             startWorkers();
         }
@@ -342,6 +392,7 @@ public final class ParallelHashAggregationOperator implements Operator {
             worker.addPage(page);
         }
         pendingTasks.finishTask();
+        // TODO: we also need to split
         long finishEnd = System.nanoTime();
         System.err.println("--> finish took " + (finishEnd - finishStart));
     }
@@ -356,6 +407,7 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     @Override
     public Page getOutput() {
+        // if ready, then can help one partition if needed
         return out.pollPage();
     }
 
