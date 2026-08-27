@@ -250,7 +250,7 @@ public final class ParallelHashAggregationOperator implements Operator {
                 partitionedKeys.releasePartition(p);
             }
             long aggsStarted = System.nanoTime();
-            combineAggsNanos += (aggsStarted - keyStarted);
+            combineKeysNanos += (aggsStarted - keyStarted);
 
             for (int i = 0; i < operator.aggregators.size(); i++) {
                 Releasables.close(operator.aggregators.set(i, operator.aggregatorFactories.get(i).apply(operator.driverContext)));
@@ -264,8 +264,7 @@ public final class ParallelHashAggregationOperator implements Operator {
                     partitioned.subs[i].releasePartition(p);
                 }
             }
-            long emitStarted = System.nanoTime();
-            this.combineAggsNanos += (emitStarted - aggsStarted);
+            this.combineAggsNanos += (System.nanoTime() - aggsStarted);
             operator.emit();
             Page page;
             while ((page = operator.getOutput()) != null) {
@@ -296,7 +295,9 @@ public final class ParallelHashAggregationOperator implements Operator {
         // better to have something like 1/4 and 3/4
         if (newRows >= PARTITION_THRESHOLD / 4) {
             lastPendingRows = pendingRows;
-            startWorkers();
+            if(startWorkers()){
+                triggers++;
+            }
         }
 //        if (pendingRows >= PARTITION_THRESHOLD * 5 && pendingRows == prevPending) {
 //            Page p = in.pollPage();
@@ -341,8 +342,7 @@ public final class ParallelHashAggregationOperator implements Operator {
         });
     }
 
-    void startWorkers() {
-        triggers++;
+    boolean startWorkers() {
         Worker selected = null;
         for (int i = 1; i < workers.length; i++) {
             var w = workers[i];
@@ -352,7 +352,7 @@ public final class ParallelHashAggregationOperator implements Operator {
             }
         }
         if (selected == null) {
-            return;
+            return false;
         }
         Worker worker = selected;
         executor.execute(new AbstractRunnable() {
@@ -387,6 +387,7 @@ public final class ParallelHashAggregationOperator implements Operator {
                 }
             }
         });
+        return true;
     }
 
     void combinePartitions() {
@@ -473,12 +474,20 @@ public final class ParallelHashAggregationOperator implements Operator {
         long keysCombined = 0L;
         long aggsCombined = 0L;
         long splitNanos = 0L;
+        long emitNanos = 0L;
+        long addAggs = 0L;
+        long hashNanos = 0L;
         for (Worker worker : workers) {
             keysCombined += worker.combineKeysNanos;
             aggsCombined += worker.combineAggsNanos;
             splitNanos += worker.splitNanos;
+            HashAggregationOperator.Status status = (HashAggregationOperator.Status) worker.operator.status();
+            emitNanos += status.emitNanos();
+            addAggs += status.aggregationNanos();
+            hashNanos += status.hashNanos();
         }
         System.err.println("--> keys combined [" + keysCombined + "] aggs combined [" + aggsCombined + "] split nanos [" + splitNanos + "]");
+        System.err.println("--> aggs " + addAggs + " hash " + hashNanos + " emit " + emitNanos);
         Releasables.close(globalGens);
         Releasables.close(workers);
     }
