@@ -11,6 +11,7 @@ import org.apache.lucene.util.ArrayUtil;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.util.PartitionedHashTable;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
+import org.elasticsearch.compute.aggregation.CountGroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.GroupingAggregator;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.blockhash.BlockHash;
@@ -197,10 +198,19 @@ public final class ParallelHashAggregationOperator implements Operator {
                 Releasables.close(partitionKeys, splitter);
             }
             operator.blockHash.clear();
-            for (int i = 0; i < operator.aggregators.size(); i++) {
-                Releasables.close(operator.aggregators.set(i, operator.aggregatorFactories.get(i).apply(operator.driverContext)));
-            }
+            resetAggs();
             splitNanos += (System.nanoTime() - startTime);
+        }
+
+        private void resetAggs() {
+            for (int i = 0; i < operator.aggregators.size(); i++) {
+                GroupingAggregator aggregator = operator.aggregators.get(i);
+                if (aggregator.aggregatorFunction() instanceof CountGroupingAggregatorFunction count) {
+                    count.clear();
+                } else {
+                    Releasables.close(operator.aggregators.set(i, operator.aggregatorFactories.get(i).apply(operator.driverContext)));
+                }
+            }
         }
 
         void addPage(Page page) {
@@ -252,9 +262,7 @@ public final class ParallelHashAggregationOperator implements Operator {
             long aggsStarted = System.nanoTime();
             combineKeysNanos += (aggsStarted - keyStarted);
 
-            for (int i = 0; i < operator.aggregators.size(); i++) {
-                Releasables.close(operator.aggregators.set(i, operator.aggregatorFactories.get(i).apply(operator.driverContext)));
-            }
+            resetAggs();
             for (int i = 0; i < operator.aggregators.size(); i++) {
                 GroupingAggregatorFunction af = operator.aggregators.get(i).aggregatorFunction();
                 for (int g = 0; g < numGens; g++) {

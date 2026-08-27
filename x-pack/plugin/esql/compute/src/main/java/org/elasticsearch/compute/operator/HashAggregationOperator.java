@@ -14,6 +14,7 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.compute.Describable;
 import org.elasticsearch.compute.aggregation.AggregatorMode;
+import org.elasticsearch.compute.aggregation.CountGroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.FilteredGroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.GroupingAggregator;
 import org.elasticsearch.compute.aggregation.GroupingAggregatorEvaluationContext;
@@ -529,7 +530,11 @@ public class HashAggregationOperator implements Operator {
                 blockHash = blockHashSupplier.apply(driverContext);
             }
             for (int i = 0; i < aggregators.size(); i++) {
-                Releasables.close(aggregators.set(i, aggregatorFactories.get(i).apply(driverContext)));
+                if(aggregators.get(i).aggregatorFunction() instanceof CountGroupingAggregatorFunction count) {
+                    count.clear();
+                } else {
+                    Releasables.close(aggregators.set(i, aggregatorFactories.get(i).apply(driverContext)));
+                }
             }
         }
     }

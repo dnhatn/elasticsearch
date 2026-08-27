@@ -11,7 +11,6 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.PriorityQueue;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.breaker.CircuitBreaker;
-import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.common.util.PartitionedHashTable;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BooleanBlock;
@@ -36,7 +35,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         new IntermediateStateDesc("seen", ElementType.BOOLEAN)
     );
 
-    private int[] counts = new int[400_000];
+    private int[] counts = new int[500_000];
     private final List<Integer> channels;
     private final DriverContext driverContext;
     private final boolean countAll;
@@ -369,6 +368,10 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         sb.append("channels=").append(channels);
         sb.append("]");
         return sb.toString();
+    }
+
+    public void clear() {
+        Arrays.fill(counts, 0);
     }
 
     @Override
