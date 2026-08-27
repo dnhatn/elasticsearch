@@ -32,7 +32,7 @@ public final class ParallelHashAggregationOperator implements Operator {
     public static final int PARTITION_THRESHOLD = 256 * 1500;
     final Function<DriverContext, HashAggregationOperator> fork;
     final Executor executor;
-    final ExchangeBuffer in = new ExchangeBuffer(256);
+    final ExchangeBuffer in = new ExchangeBuffer(1024);
     final ExchangeBuffer out = new ExchangeBuffer(10 * 1024);
     final AtomicLong pendingRows = new AtomicLong(0L);
     final Worker[] workers;
@@ -84,7 +84,29 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     final AtomicInteger nextPartition = new AtomicInteger(-1);
     final AtomicInteger completedPartitions = new AtomicInteger(0);
-    final AtomicLong combineNanos = new AtomicLong();
+
+    static class CombineTime {
+        long keyNanos;
+        long aggNanos;
+        long emitNanos;
+
+        synchronized void add(long keyNanos,long aggNanos, long emitNanos) {
+            this.keyNanos += keyNanos;
+            this.aggNanos += aggNanos;
+            this.emitNanos += emitNanos;
+        }
+
+        @Override
+        public String toString() {
+            synchronized (this) {
+                return "CombineTime{" +
+                    "keyNanos=" + keyNanos +
+                    ", aggNanos=" + aggNanos +
+                    ", emitNanos=" + emitNanos +
+                    '}';
+            }
+        }
+    }
 
     record PartitionedKeyAndAggs(PartitionedHashTable.PartitionedHashKeys keys, MultiPartitionedState aggs) implements Releasable {
         @Override
@@ -100,6 +122,9 @@ public final class ParallelHashAggregationOperator implements Operator {
         int[][] allGenIds = null;
         AtomicBoolean running = new AtomicBoolean(false);
         boolean initialized = false;
+        long combineKeysNanos = 0L;
+        long combineAggsNanos = 0L;
+        long splitNanos = 0L;
 
         Worker(HashAggregationOperator operator, CircuitBreaker globalBreaker) {
             this.operator = operator;
@@ -110,10 +135,12 @@ public final class ParallelHashAggregationOperator implements Operator {
             if (initialized) {
                 return;
             }
+            initialized = true;
             operator.blockHash.ensureCapacity(PARTITION_THRESHOLD);
         }
 
         void splitPartition() {
+            long startTime = System.nanoTime();
             int partitionSize = Math.ceilDiv(operator.blockHash.numKeys(), PartitionedHashTable.NUM_PARTITIONS);
             List<GroupingAggregatorFunction.GroupingStatePartitioner> splitters = new ArrayList<>(operator.aggregators.size());
             boolean succes = false;
@@ -173,6 +200,7 @@ public final class ParallelHashAggregationOperator implements Operator {
             for (int i = 0; i < operator.aggregators.size(); i++) {
                 Releasables.close(operator.aggregators.set(i, operator.aggregatorFactories.get(i).apply(operator.driverContext)));
             }
+            splitNanos += (System.nanoTime() - startTime);
         }
 
         void addPage(Page page) {
@@ -184,17 +212,17 @@ public final class ParallelHashAggregationOperator implements Operator {
 
         void combinePartitions() {
             int p;
-            long start = System.nanoTime();
             while ((p = nextPartition.incrementAndGet()) < PartitionedHashTable.NUM_PARTITIONS) {
                 combinePartition(p);
                 if (completedPartitions.incrementAndGet() >= PartitionedHashTable.NUM_PARTITIONS) {
                     out.finish(false);
                 }
             }
-            combineNanos.addAndGet(System.nanoTime() - start);
         }
 
         void combinePartition(final int p) {
+            var keyStarted = System.nanoTime();
+
             final int numGens = globalGens.size();
             int totalKeys = 0;
             for (PartitionedKeyAndAggs partitioned : globalGens) {
@@ -221,6 +249,9 @@ public final class ParallelHashAggregationOperator implements Operator {
                 operator.rowsAddedInCurrentBatch += numKeys;
                 partitionedKeys.releasePartition(p);
             }
+            long aggsStarted = System.nanoTime();
+            combineAggsNanos += (aggsStarted - keyStarted);
+
             for (int i = 0; i < operator.aggregators.size(); i++) {
                 Releasables.close(operator.aggregators.set(i, operator.aggregatorFactories.get(i).apply(operator.driverContext)));
             }
@@ -233,6 +264,8 @@ public final class ParallelHashAggregationOperator implements Operator {
                     partitioned.subs[i].releasePartition(p);
                 }
             }
+            long emitStarted = System.nanoTime();
+            this.combineAggsNanos += (emitStarted - aggsStarted);
             operator.emit();
             Page page;
             while ((page = operator.getOutput()) != null) {
@@ -265,7 +298,6 @@ public final class ParallelHashAggregationOperator implements Operator {
             lastPendingRows = pendingRows;
             startWorkers();
         }
-        long startHelping = System.nanoTime();
 //        if (pendingRows >= PARTITION_THRESHOLD * 5 && pendingRows == prevPending) {
 //            Page p = in.pollPage();
 //            if (p != null) {
@@ -274,12 +306,10 @@ public final class ParallelHashAggregationOperator implements Operator {
 //            }
 //        }
         long addInputEnd = System.nanoTime();
-        helpingNanos += (addInputEnd - startHelping);
         addInputNanos += (addInputEnd - addInputStart);
     }
 
     int triggers = 0;
-    long helpingNanos = 0L;
 
     void startFirst(Worker worker) {
         worker.running.set(true);
@@ -439,8 +469,16 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     @Override
     public void close() {
-        System.err.println("--> combine nanos " + combineNanos.get());
-        System.err.println("--> triggered workers " + triggers + " addInput=" + addInputNanos + " helping=" + helpingNanos);
+        System.err.println("--> triggered workers " + triggers + " addInput=" + addInputNanos);
+        long keysCombined = 0L;
+        long aggsCombined = 0L;
+        long splitNanos = 0L;
+        for (Worker worker : workers) {
+            keysCombined += worker.combineKeysNanos;
+            aggsCombined += worker.combineAggsNanos;
+            splitNanos += worker.splitNanos;
+        }
+        System.err.println("--> keys combined [" + keysCombined + "] aggs combined [" + aggsCombined + "] split nanos [" + splitNanos + "]");
         Releasables.close(globalGens);
         Releasables.close(workers);
     }
