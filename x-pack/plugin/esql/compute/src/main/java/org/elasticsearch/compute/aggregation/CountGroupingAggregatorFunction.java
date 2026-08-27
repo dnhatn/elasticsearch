@@ -36,7 +36,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         new IntermediateStateDesc("seen", ElementType.BOOLEAN)
     );
 
-    private LongArray counts;
+    private int[] counts = new int[400_000];
     private final List<Integer> channels;
     private final DriverContext driverContext;
     private final boolean countAll;
@@ -48,7 +48,6 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     CountGroupingAggregatorFunction(List<Integer> channels, DriverContext driverContext) {
         this.channels = channels;
         this.driverContext = driverContext;
-        this.counts = driverContext.bigArrays().newLongArray(256);
         this.countAll = channels.isEmpty();
     }
 
@@ -292,11 +291,8 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     }
 
     private void accumulateCount(int groupId, long value) {
-        if (groupId < counts.size()) {
-            counts.increment(groupId, value);
-        } else {
-            counts = driverContext.bigArrays().grow(counts, groupId + 1);
-            counts.set(groupId, value);
+        if (groupId >= counts.length) {
+            counts = ArrayUtil.grow(counts, groupId + 1);
         }
     }
 
@@ -305,8 +301,8 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
             final int positionCount = selectedInPage.getPositionCount();
             for (int i = 0; i < positionCount; i++) {
                 final int si = selectedInPage.getInt(i);
-                if (si < counts.size()) {
-                    builder.appendLong(counts.get(si));
+                if (si < counts.length) {
+                    builder.appendLong(counts[0]);
                 } else {
                     builder.appendLong(0L);
                 }
@@ -346,7 +342,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
             }
             for (int i = 0; i < positionCount; i++) {
                 final int groupId = selected.getInt(i);
-                final long count = groupId < counts.size() ? counts.get(groupId) : 0L;
+                final long count = groupId < counts.length ? counts[groupId] : 0L;
                 pq.insertWithOverflow(new GroupIdAndCount(groupId, count));
             }
             final int[] topGroupIds = new int[pq.size()];
@@ -377,7 +373,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
 
     @Override
     public void close() {
-        counts.close();
+
     }
 
     @Override
@@ -424,12 +420,12 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         private static final String BREAKER_LABEL = "CountGroupingStatePartitioner";
 
         private final CircuitBreaker breaker;
-        private final LongArray src;
+        private final int[] src;
         private long[] buffer = new long[0]; // TODO: share the buffer
         private long[][] longValues;
         private int[][] intValues;
 
-        CountGroupingStatePartitioner(CircuitBreaker breaker, LongArray src, int estimateSizePerPartition) {
+        CountGroupingStatePartitioner(CircuitBreaker breaker, int[] src, int estimateSizePerPartition) {
             this.breaker = breaker;
             this.src = src;
             final int cap = ArrayUtil.oversize(Math.max(PartitionedHashTable.PARTITION_WRITE_BATCH, estimateSizePerPartition), Integer.BYTES);
@@ -445,9 +441,11 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
             if (buffer.length < batchSize) {
                 buffer = new long[ArrayUtil.oversize(batchSize, Long.BYTES)];
             }
-            final int readLen = (int) Math.clamp(src.size() - firstId, 0L, batchSize);
+            final int readLen = (int) Math.clamp(src.length - firstId, 0L, batchSize);
             if (readLen > 0) {
-                src.bulkGet(firstId, buffer, 0, readLen);
+                for (int i = 0; i < readLen; i++) {
+                    buffer[i] = src[firstId + i];
+                }
             }
             if (readLen < batchSize) {
                 Arrays.fill(buffer, readLen, batchSize, 0L);
@@ -586,19 +584,19 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
             return;
         }
         final CountPartitionedGroupingState state = (CountPartitionedGroupingState) partitioned;
-        if (counts.size() <= maxGroupId) {
-            counts = driverContext.bigArrays().grow(counts, maxGroupId);
+        if (counts.length <= maxGroupId) {
+            counts = ArrayUtil.grow(counts, maxGroupId + 1);
         }
         final int[] ints = state.intValues != null ? state.intValues[partition] : null;
         final long[] longs = state.longValues != null ? state.longValues[partition] : null;
         assert ints != null || longs != null : "partition already released";
         if (ints != null) {
             for (int i = 0; i < length; i++) {
-                counts.increment(mergedIds[i], ints[i]);
+                counts[mergedIds[i]] += ints[i];
             }
         } else {
             for (int i = 0; i < length; i++) {
-                counts.increment(mergedIds[i], longs[i]);
+                counts[mergedIds[i]] += (int)longs[i];
             }
         }
     }
