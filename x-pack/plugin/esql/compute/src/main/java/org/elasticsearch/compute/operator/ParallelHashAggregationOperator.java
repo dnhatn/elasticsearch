@@ -32,7 +32,7 @@ public final class ParallelHashAggregationOperator implements Operator {
     public static final int PARTITION_THRESHOLD = 256 * 1500;
     final Function<DriverContext, HashAggregationOperator> fork;
     final Executor executor;
-    final ExchangeBuffer in = new ExchangeBuffer(10 * 1024);
+    final ExchangeBuffer in = new ExchangeBuffer(256);
     final ExchangeBuffer out = new ExchangeBuffer(10 * 1024);
     final AtomicLong pendingRows = new AtomicLong(0L);
     final Worker[] workers;
@@ -423,7 +423,7 @@ public final class ParallelHashAggregationOperator implements Operator {
         if (finished) {
             return out.waitForReading();
         } else {
-            return NOT_BLOCKED;
+            return in.waitForWriting();
         }
     }
 
