@@ -84,6 +84,7 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     final AtomicInteger nextPartition = new AtomicInteger(-1);
     final AtomicInteger completedPartitions = new AtomicInteger(0);
+    final AtomicLong combineNanos = new AtomicLong();
 
     record PartitionedKeyAndAggs(PartitionedHashTable.PartitionedHashKeys keys, MultiPartitionedState aggs) implements Releasable {
         @Override
@@ -183,12 +184,14 @@ public final class ParallelHashAggregationOperator implements Operator {
 
         void combinePartitions() {
             int p;
+            long start = System.nanoTime();
             while ((p = nextPartition.incrementAndGet()) < PartitionedHashTable.NUM_PARTITIONS) {
                 combinePartition(p);
                 if (completedPartitions.incrementAndGet() >= PartitionedHashTable.NUM_PARTITIONS) {
                     out.finish(false);
                 }
             }
+            combineNanos.addAndGet(System.nanoTime() - start);
         }
 
         void combinePartition(final int p) {
@@ -357,6 +360,7 @@ public final class ParallelHashAggregationOperator implements Operator {
     }
 
     void combinePartitions() {
+        System.err.println("--> from partial finish for combine [" + (System.nanoTime() - partialFinish) + "]");
         for (Worker w : workers) {
             globalGens.addAll(w.localGens);
             w.localGens.clear();
@@ -376,11 +380,14 @@ public final class ParallelHashAggregationOperator implements Operator {
         }
     }
 
+    long partialFinish = 0;
+
     @Override
     public void finish() {
         long finishStart = System.nanoTime();
         finished = true;
         in.finish(false);
+        partialFinish = finishStart;
         // resume all workers
         if (pendingRows.get() > PARTITION_THRESHOLD / 4) {
             startWorkers();
@@ -432,10 +439,10 @@ public final class ParallelHashAggregationOperator implements Operator {
 
     @Override
     public void close() {
+        System.err.println("--> combine nanos " + combineNanos.get());
         System.err.println("--> triggered workers " + triggers + " addInput=" + addInputNanos + " helping=" + helpingNanos);
-        for (Worker w : workers) {
-            w.close();
-        }
+        Releasables.close(globalGens);
+        Releasables.close(workers);
     }
 
     private static class PendingTasks {
