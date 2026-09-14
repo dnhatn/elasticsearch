@@ -201,6 +201,10 @@ public class BytesRefTopNSet implements Releasable {
         return order.reverseMul() * lhs.compareTo(rhs) < 0;
     }
 
+    public void clear() {
+        count = 0;
+    }
+
     @Override
     public void close() {
         Releasables.close(values);

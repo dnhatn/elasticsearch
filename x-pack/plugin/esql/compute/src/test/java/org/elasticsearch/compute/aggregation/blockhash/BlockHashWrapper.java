@@ -58,6 +58,11 @@ public abstract class BlockHashWrapper extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        blockHash.clear();
+    }
+
+    @Override
     public void close() {
         blockHash.close();
     }

@@ -143,6 +143,12 @@ public class CategorizeBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        seenNull = false;
+        categorizer.clear();
+    }
+
+    @Override
     public void close() {
         Releasables.close(evaluator, categorizer);
     }

@@ -20,6 +20,8 @@ import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.mvdedupe.MultivalueDedupeBoolean;
 import org.elasticsearch.core.ReleasableIterator;
 
+import java.util.Arrays;
+
 import static org.elasticsearch.compute.operator.mvdedupe.MultivalueDedupeBoolean.FALSE_ORD;
 import static org.elasticsearch.compute.operator.mvdedupe.MultivalueDedupeBoolean.NULL_ORD;
 import static org.elasticsearch.compute.operator.mvdedupe.MultivalueDedupeBoolean.TRUE_ORD;
@@ -145,6 +147,11 @@ final class BooleanBlockHash extends BlockHash {
             }
         }
         return numKeys;
+    }
+
+    @Override
+    public void clear() {
+        Arrays.fill(everSeen, false);
     }
 
     @Override

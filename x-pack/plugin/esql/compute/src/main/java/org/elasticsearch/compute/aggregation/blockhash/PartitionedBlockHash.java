@@ -23,6 +23,4 @@ public abstract class PartitionedBlockHash extends BlockHash implements Partitio
     public static boolean supportPartitioning() {
         return SwissHashFactory.getInstance() != null;
     }
-
-    public abstract void clear();
 }

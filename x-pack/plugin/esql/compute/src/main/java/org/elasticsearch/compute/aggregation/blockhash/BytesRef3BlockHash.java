@@ -212,6 +212,11 @@ final class BytesRef3BlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        finalHash.clear();
+    }
+
+    @Override
     public String toString() {
         return String.format(
             Locale.ROOT,

@@ -338,4 +338,9 @@ public abstract class BlockHash implements Releasable, SeenGroupIds {
     public void ensureCapacity(int size) {
 
     }
+
+    /**
+     * Removes all keys. Implementations may keep allocated capacity so refilling avoids resizes.
+     */
+    public abstract void clear();
 }

@@ -121,6 +121,10 @@ public class LongTopNSet implements Releasable {
         return count;
     }
 
+    public void clear() {
+        count = 0;
+    }
+
     private static class LongBinarySearcher extends BinarySearcher {
 
         final LongArray array;

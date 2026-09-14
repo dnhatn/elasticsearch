@@ -61,6 +61,10 @@ public class CategorizationBytesRefHash implements Releasable {
         return (int) hash;
     }
 
+    public void clear() {
+        bytesRefHash.clear();
+    }
+
     @Override
     public void close() {
         bytesRefHash.close();

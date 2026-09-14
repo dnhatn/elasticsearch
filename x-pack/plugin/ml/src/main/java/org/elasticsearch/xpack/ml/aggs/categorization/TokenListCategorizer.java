@@ -349,6 +349,17 @@ public class TokenListCategorizer implements Accountable {
         return categoriesByNumMatches.size();
     }
 
+    /**
+     * Removes all categories, keeping allocated capacity for reuse.
+     */
+    public void clear() {
+        categoriesById.clear();
+        categoriesByNumMatches.clear();
+        categoriesByNumMatchesContentsSize = 0;
+        cacheRamUsage(0);
+        bytesRefHash.clear();
+    }
+
     private TokenListCategory addCategoryMatch(
         int unfilteredLength,
         List<TokenAndWeight> weightedTokenIds,

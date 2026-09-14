@@ -376,6 +376,14 @@ public final class TimeSeriesBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        this.minTimestamp = Long.MAX_VALUE;
+        this.maxTimestamp = Long.MIN_VALUE;
+        tsidHash.clear();
+        finalHash.clear();
+    }
+
+    @Override
     public BitArray seenGroupIds(BigArrays bigArrays) {
         return new SeenGroupIds.Range(0, Math.toIntExact(finalHash.size())).seenGroupIds(bigArrays);
     }

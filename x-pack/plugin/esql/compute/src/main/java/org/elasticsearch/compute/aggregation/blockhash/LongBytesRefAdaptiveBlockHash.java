@@ -88,6 +88,12 @@ public final class LongBytesRefAdaptiveBlockHash extends AdaptiveBlockHash {
         return bytesBlock.asVector();
     }
 
+    @Override
+    public void clear() {
+        // no need to change the fallback, if we have falled back, then it's likely to switch to the fallback again
+        current.clear();
+    }
+
     // for testing
     int effectiveEmitBatchSize() {
         if (current instanceof BytesRefLongVectorOnlyBlockHash) {
@@ -441,6 +447,12 @@ public final class LongBytesRefAdaptiveBlockHash extends AdaptiveBlockHash {
         @Override
         public BitArray seenGroupIds(BigArrays bigArrays) {
             return new SeenGroupIds.Range(0, numKeys()).seenGroupIds(bigArrays);
+        }
+
+        @Override
+        public void clear() {
+            bytesHash.clear();
+            longLongHash.clear();
         }
 
         @Override

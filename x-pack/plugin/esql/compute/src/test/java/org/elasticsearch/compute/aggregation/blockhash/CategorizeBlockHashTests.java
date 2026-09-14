@@ -153,6 +153,85 @@ public class CategorizeBlockHashTests extends BlockHashTestCase {
         }
     }
 
+    public void testClear() {
+        BlockHash.CategorizeDef categorizeDef = getCategorizeDef();
+        try (var hash = new CategorizeBlockHash(blockFactory, 0, AggregatorMode.SINGLE, categorizeDef, analysisRegistry)) {
+            Page page1 = pageOf("Connected to 10.1.0.1", "Connected to 10.1.0.2", "Connection error", null);
+            try {
+                hash.add(page1, expectGroupIds(1, 1, 2, 0));
+            } finally {
+                page1.releaseBlocks();
+            }
+            switch (categorizeDef.outputFormat()) {
+                case REGEX -> assertHashState(hash, true, ".*?Connected.+?to.*?", ".*?Connection.+?error.*?");
+                case TOKENS -> assertHashState(hash, true, "Connected to", "Connection error");
+            }
+
+            hash.clear();
+            assertThat(hash.numKeys(), equalTo(0));
+            assertFalse(hash.seenNull());
+            try (IntVector nonEmpty = hash.nonEmpty()) {
+                assertThat(nonEmpty.getPositionCount(), equalTo(0));
+            }
+
+            // categories and ordinals restart from scratch, so "Disconnected" now gets ordinal 1
+            Page page2 = pageOf("Disconnected", "Connected to 10.2.0.1", "Connected to 10.2.0.2", "Disconnected");
+            try {
+                hash.add(page2, expectGroupIds(1, 2, 2, 1));
+            } finally {
+                page2.releaseBlocks();
+            }
+            switch (categorizeDef.outputFormat()) {
+                case REGEX -> assertHashState(hash, false, ".*?Disconnected.*?", ".*?Connected.+?to.*?");
+                case TOKENS -> assertHashState(hash, false, "Disconnected", "Connected to");
+            }
+        }
+    }
+
+    private Page pageOf(String... values) {
+        try (BytesRefBlock.Builder builder = blockFactory.newBytesRefBlockBuilder(values.length)) {
+            for (String value : values) {
+                if (value == null) {
+                    builder.appendNull();
+                } else {
+                    builder.appendBytesRef(new BytesRef(value));
+                }
+            }
+            return new Page(builder.build());
+        }
+    }
+
+    private static GroupingAggregatorFunction.AddInput expectGroupIds(int... expected) {
+        return new GroupingAggregatorFunction.AddInput() {
+            private void addBlock(IntBlock groupIds) {
+                assertEquals(expected.length, groupIds.getPositionCount());
+                for (int i = 0; i < expected.length; i++) {
+                    assertEquals(expected[i], groupIds.getInt(i));
+                }
+            }
+
+            @Override
+            public void add(int positionOffset, IntArrayBlock groupIds) {
+                addBlock(groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntBigArrayBlock groupIds) {
+                addBlock(groupIds);
+            }
+
+            @Override
+            public void add(int positionOffset, IntVector groupIds) {
+                addBlock(groupIds.asBlock());
+            }
+
+            @Override
+            public void close() {
+                fail("hashes should not close AddInput");
+            }
+        };
+    }
+
     public void testCategorizeRawMultivalue() {
         BlockHash.CategorizeDef categorizeDef = getCategorizeDef();
 

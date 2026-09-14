@@ -628,13 +628,7 @@ public class HashAggregationOperator implements Operator {
 
     void clearCurrentBatch() {
         rowsAddedInCurrentBatch = 0;
-        if (blockHash instanceof PartitionedBlockHash partitionedBlockHash) {
-            partitionedBlockHash.clear();
-        } else {
-            blockHash.close();
-            blockHash = null;
-            blockHash = blockHashSupplier.apply(driverContext);
-        }
+        blockHash.clear();
         for (int i = 0; i < aggregators.size(); i++) {
             Releasables.close(aggregators.set(i, aggregatorFactories.get(i).apply(driverContext)));
         }

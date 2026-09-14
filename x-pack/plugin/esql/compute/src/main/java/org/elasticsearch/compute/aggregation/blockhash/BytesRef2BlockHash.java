@@ -191,6 +191,14 @@ final class BytesRef2BlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        hash1.clear();
+        hash2.clear();
+        finalHash.clear();
+        assert numKeys() == 0 : numKeys() + " > " + 0;
+    }
+
+    @Override
     public String toString() {
         return String.format(
             Locale.ROOT,

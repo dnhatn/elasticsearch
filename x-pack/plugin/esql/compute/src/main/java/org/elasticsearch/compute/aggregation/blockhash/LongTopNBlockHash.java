@@ -300,6 +300,13 @@ final class LongTopNBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        hasNull = false;
+        hash.clear();
+        topValues.clear();
+    }
+
+    @Override
     public void close() {
         Releasables.close(hash, topValues);
     }

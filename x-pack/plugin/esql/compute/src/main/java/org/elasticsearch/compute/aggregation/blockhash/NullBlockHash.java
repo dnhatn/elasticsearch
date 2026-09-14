@@ -79,6 +79,11 @@ final class NullBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        seenNull = false;
+    }
+
+    @Override
     public void close() {
         // Nothing to close
     }

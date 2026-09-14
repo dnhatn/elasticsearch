@@ -480,13 +480,13 @@ $if(partitioned)$
         }
     }
 
+$endif$
     @Override
     public void clear() {
         seenNull = false;
         hash.clear();
     }
 
-$endif$
     @Override
     public void close() {
 $if(BytesRef)$

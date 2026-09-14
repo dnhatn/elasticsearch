@@ -113,6 +113,11 @@ final class LongLongBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        hash.clear();
+    }
+
+    @Override
     public BitArray seenGroupIds(BigArrays bigArrays) {
         return new SeenGroupIds.Range(0, Math.toIntExact(hash.size())).seenGroupIds(bigArrays);
     }

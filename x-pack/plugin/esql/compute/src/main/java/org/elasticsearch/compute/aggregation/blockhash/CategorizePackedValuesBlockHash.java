@@ -162,6 +162,12 @@ public class CategorizePackedValuesBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        categorizeBlockHash.clear();
+        packedValuesBlockHash.clear();
+    }
+
+    @Override
     public void close() {
         Releasables.close(categorizeBlockHash, packedValuesBlockHash);
     }

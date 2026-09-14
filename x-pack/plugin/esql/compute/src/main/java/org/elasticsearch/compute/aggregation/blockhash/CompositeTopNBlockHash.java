@@ -273,6 +273,13 @@ final class CompositeTopNBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        longTopValues.clear();
+        bytesRefTopValues.clear();
+        inner.clear();
+    }
+
+    @Override
     public String toString() {
         return "CompositeTopNBlockHash{primaryChannel=" + primaryChannel + ", primaryType=" + primaryType + ", limit=" + limit + "}";
     }

@@ -140,6 +140,12 @@ final class DoubleRangeBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        seenNull = false;
+        hash.clear();
+    }
+
+    @Override
     public void close() {
         hash.close();
     }

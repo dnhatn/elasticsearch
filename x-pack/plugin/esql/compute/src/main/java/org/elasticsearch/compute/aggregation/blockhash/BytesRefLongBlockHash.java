@@ -257,6 +257,12 @@ public final class BytesRefLongBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        bytesHash.clear();
+        finalHash.clear();
+    }
+
+    @Override
     public String toString() {
         return "BytesRefLongBlockHash{keys=[BytesRefKey[channel="
             + bytesChannel

@@ -495,6 +495,13 @@ final class BytesRefTopNBlockHash extends BlockHash {
     }
 
     @Override
+    public void clear() {
+        hasNull = false;
+        hash.clear();
+        topValues.clear();
+    }
+
+    @Override
     public BitArray seenGroupIds(BigArrays bigArrays) {
         BitArray seenGroups = new BitArray(1, bigArrays);
         if (hasNull) {
