@@ -387,7 +387,7 @@ public class Replace extends EsqlScalarFunction implements AnyNullIsNull {
     /**
      * Executes a Replace without surpassing the memory limit.
      */
-    private static BytesRef safeReplace(BytesRef strBytesRef, Pattern regex, BytesRef newStrBytesRef) {
+    static BytesRef safeReplace(BytesRef strBytesRef, Pattern regex, BytesRef newStrBytesRef) {
         try {
             return doReplace(strBytesRef, regex, newStrBytesRef);
         } catch (StackOverflowError e) {

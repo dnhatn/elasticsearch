@@ -9,6 +9,8 @@ package org.elasticsearch.xpack.esql.expression.function.scalar.string;
 
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
+import org.elasticsearch.common.breaker.CircuitBreaker;
+import org.elasticsearch.common.bytes.MixHash64;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BytesRefBlock;
 import org.elasticsearch.compute.data.BytesRefVector;
@@ -18,9 +20,11 @@ import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.expression.ExpressionEvaluator;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Warnings;
+import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 
+import java.util.Arrays;
 import java.util.regex.Pattern;
 
 /**
@@ -64,6 +68,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
     private final byte[] literalPrefix;
     private final BytesRef newStr;
     private final DriverContext driverContext;
+    private final ReplaceResultCache cache;
     private Warnings warnings;
 
     ReplaceConstantOrdinalEvaluator(
@@ -72,6 +77,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
         Pattern regex,
         byte[] literalPrefix,
         BytesRef newStr,
+        ReplaceResultCache cache,
         DriverContext driverContext
     ) {
         this.source = source;
@@ -80,6 +86,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
         this.literalPrefix = literalPrefix;
         this.newStr = newStr;
         this.driverContext = driverContext;
+        this.cache = cache;
     }
 
     @Override
@@ -113,7 +120,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
                 BytesRef entry = dictionary.getBytesRef(i, scratch);
                 BytesRef replaced;
                 try {
-                    replaced = Replace.process(entry, regex, literalPrefix, newStr);
+                    replaced = process(entry);
                 } catch (IllegalArgumentException e) {
                     // Bail to the per-row path so warnings are emitted from the row that triggered the failure
                     // (matching the legacy evaluator's behavior).
@@ -159,7 +166,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
                 }
                 BytesRef strVal = strBlock.getBytesRef(strBlock.getFirstValueIndex(p), strScratch);
                 try {
-                    result.appendBytesRef(Replace.process(strVal, regex, literalPrefix, newStr));
+                    result.appendBytesRef(process(strVal));
                 } catch (IllegalArgumentException e) {
                     warnings().registerException(e);
                     result.appendNull();
@@ -167,6 +174,23 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
             }
             return result.build();
         }
+    }
+
+    private BytesRef process(BytesRef strVal) {
+        if (literalPrefix.length > 0 && Replace.startsWith(strVal, literalPrefix) == false) {
+            return strVal;
+        }
+        if (strVal.length == 0 || strVal.length > ReplaceResultCache.MAX_KEY_LENGTH) {
+            return Replace.safeReplace(strVal, regex, newStr);
+        }
+        int offset = cache.slotOffset(strVal);
+        BytesRef cached = cache.get(offset, strVal);
+        if (cached != null) {
+            return cached;
+        }
+        BytesRef replaced = Replace.safeReplace(strVal, regex, newStr);
+        cache.put(offset, strVal, replaced);
+        return replaced;
     }
 
     @Override
@@ -180,12 +204,12 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
 
     @Override
     public String toString() {
-        return "ReplaceConstantOrdinalEvaluator[" + "str=" + str + ", regex=" + regex + ", newStr=" + newStr + "]";
+        return "ReplaceConstantOrdinalEvaluator[" + "str=" + str + ", regex=" + regex + ", newStr=" + newStr + ", cache=" + cache + "]";
     }
 
     @Override
     public void close() {
-        Releasables.closeExpectNoException(str);
+        Releasables.closeExpectNoException(str, cache);
     }
 
     private Warnings warnings() {
@@ -193,6 +217,10 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
             this.warnings = driverContext.createWarnings(source);
         }
         return warnings;
+    }
+
+    ReplaceResultCache cache() {
+        return cache;
     }
 
     static final class Factory implements ExpressionEvaluator.Factory {
@@ -212,12 +240,100 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
 
         @Override
         public ReplaceConstantOrdinalEvaluator get(DriverContext context) {
-            return new ReplaceConstantOrdinalEvaluator(source, str.get(context), regex, literalPrefix, newStr, context);
+            final ReplaceResultCache cache = new ReplaceResultCache(context.breaker());
+            boolean success = false;
+            try {
+                var evaluator = new ReplaceConstantOrdinalEvaluator(source, str.get(context), regex, literalPrefix, newStr, cache, context);
+                success = true;
+                return evaluator;
+            } finally {
+                if (success == false) {
+                    cache.close();
+                }
+            }
         }
 
         @Override
         public String toString() {
             return "ReplaceConstantOrdinalEvaluator[" + "str=" + str + ", regex=" + regex + ", newStr=" + newStr + "]";
+        }
+    }
+
+    /**
+     * A fixed memoization table: fixed slots, fixed length for each slot, no policy so that cache misses are also cheap.
+     */
+    static final class ReplaceResultCache implements Releasable {
+        static final int SLOTS = 256;
+        static final int SLOT_BYTES = 256;
+        private static final int HEADER_BYTES = 2;
+        static final int MAX_PAYLOAD = SLOT_BYTES - HEADER_BYTES;
+        static final int MAX_KEY_LENGTH = MAX_PAYLOAD * 3 / 4;
+        private static final int SLOT_SHIFT = Integer.numberOfTrailingZeros(SLOT_BYTES);
+        private static final int SLOT_MASK = SLOTS - 1;
+        static final long RAM_BYTES_USED = (long) SLOTS * SLOT_BYTES;
+
+        static {
+            assert Integer.bitCount(SLOTS) == 1 && Integer.bitCount(SLOT_BYTES) == 1;
+            assert MAX_PAYLOAD <= 0xFF;
+        }
+
+        private final CircuitBreaker breaker;
+        private final byte[] bytes;
+        private final BytesRef view;
+        private long hits;
+        private long misses;
+
+        ReplaceResultCache(CircuitBreaker breaker) {
+            breaker.addEstimateBytesAndMaybeBreak(RAM_BYTES_USED, "ReplaceResultCache");
+            this.breaker = breaker;
+            this.bytes = new byte[SLOTS * SLOT_BYTES];
+            this.view = new BytesRef(bytes);
+        }
+
+        int slotOffset(BytesRef key) {
+            return ((int) MixHash64.hash64(key) & SLOT_MASK) << SLOT_SHIFT;
+        }
+
+        BytesRef get(int offset, BytesRef key) {
+            assert key.length > 0 && key.length <= MAX_KEY_LENGTH;
+            int keyLen = bytes[offset] & 0xFF;
+            if (keyLen != key.length
+                || Arrays.equals(
+                    bytes,
+                    offset + HEADER_BYTES,
+                    offset + HEADER_BYTES + keyLen,
+                    key.bytes,
+                    key.offset,
+                    key.offset + keyLen
+                ) == false) {
+                misses++;
+                return null;
+            }
+            hits++;
+            view.offset = offset + HEADER_BYTES + keyLen;
+            view.length = bytes[offset + 1] & 0xFF;
+            return view;
+        }
+
+        void put(int offset, BytesRef key, BytesRef value) {
+            assert key.length > 0 && key.length <= MAX_KEY_LENGTH;
+            if (key.length + value.length > MAX_PAYLOAD) {
+                return;
+            }
+            bytes[offset] = (byte) key.length;
+            bytes[offset + 1] = (byte) value.length;
+            System.arraycopy(key.bytes, key.offset, bytes, offset + HEADER_BYTES, key.length);
+            System.arraycopy(value.bytes, value.offset, bytes, offset + HEADER_BYTES + key.length, value.length);
+        }
+
+        @Override
+        public void close() {
+            breaker.addWithoutBreaking(-RAM_BYTES_USED);
+        }
+
+        @Override
+        public String toString() {
+            return "ReplaceResultCache[hits=" + hits + ", misses=" + misses + "]";
         }
     }
 }
