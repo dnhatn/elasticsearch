@@ -62,7 +62,6 @@ import java.util.regex.Pattern;
  * either shape.
  */
 final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
-    private static final Logger logger = LogManager.getLogger(ReplaceConstantOrdinalEvaluator.class);
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(ReplaceConstantOrdinalEvaluator.class);
 
     private final Source source;
@@ -212,7 +211,6 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
 
     @Override
     public void close() {
-        logger.debug("regex [{}] {}", regex, cache);
         Releasables.closeExpectNoException(str, cache);
     }
 
@@ -332,6 +330,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
 
         @Override
         public void close() {
+            System.err.println(this);
             breaker.addWithoutBreaking(-RAM_BYTES_USED);
         }
 
