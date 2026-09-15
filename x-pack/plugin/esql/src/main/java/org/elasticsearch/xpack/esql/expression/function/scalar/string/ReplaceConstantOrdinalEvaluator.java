@@ -7,8 +7,10 @@
 
 package org.elasticsearch.xpack.esql.expression.function.scalar.string;
 
+import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.UnicodeUtil;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.bytes.MixHash64;
 import org.elasticsearch.compute.data.Block;
@@ -22,12 +24,14 @@ import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Warnings;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
-import org.elasticsearch.logging.LogManager;
-import org.elasticsearch.logging.Logger;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static org.elasticsearch.xpack.esql.core.expression.function.scalar.ScalarFunction.MAX_BYTES_REF_RESULT_SIZE;
 
 /**
  * Hand-written {@link ExpressionEvaluator} for {@code REPLACE(str, regex, newStr)} when both
@@ -73,6 +77,18 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
     private final ReplaceResultCache cache;
     private Warnings warnings;
 
+    private final Matcher matcher;
+    private final String newStrString;
+    /** Group index when the replacement is exactly one group reference like {@code $1}, else -1. */
+    private final int singleGroup;
+    private final int constantReplacementLength;
+    private final int groupsInReplacement;
+    /** Result of the last {@link #doReplace}; valid only until the next call, callers copy it into a block immediately. */
+    private final BytesRef view = new BytesRef();
+    private final StringBuilder result = new StringBuilder();
+    private byte[] outBytes = BytesRef.EMPTY_BYTES;
+    private static final BytesRef EMPTY = new BytesRef(BytesRef.EMPTY_BYTES);
+
     ReplaceConstantOrdinalEvaluator(
         Source source,
         ExpressionEvaluator str,
@@ -89,6 +105,38 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
         this.newStr = newStr;
         this.driverContext = driverContext;
         this.cache = cache;
+        this.matcher = regex.matcher("");
+        this.newStrString = newStr.utf8ToString();
+        this.singleGroup = singleGroupReference(newStrString, matcher.groupCount());
+        int constantLength = newStrString.length();
+        int groups = 0;
+        for (int i = 0; i < newStrString.length(); i++) {
+            if (newStrString.charAt(i) == '$') {
+                groups++;
+                constantLength -= 2;
+                i++;
+            }
+        }
+        this.constantReplacementLength = constantLength;
+        this.groupsInReplacement = groups;
+    }
+
+    private static int singleGroupReference(String replacement, int groupCount) {
+        if (replacement.length() < 2 || replacement.charAt(0) != '$') {
+            return -1;
+        }
+        int group = 0;
+        for (int i = 1; i < replacement.length(); i++) {
+            char c = replacement.charAt(i);
+            if (c < '0' || c > '9') {
+                return -1;
+            }
+            group = group * 10 + (c - '0');
+            if (group > groupCount) {
+                return -1;
+            }
+        }
+        return group;
     }
 
     @Override
@@ -183,16 +231,72 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
             return strVal;
         }
         if (strVal.length == 0 || strVal.length > ReplaceResultCache.MAX_KEY_LENGTH) {
-            return Replace.safeReplace(strVal, regex, newStr);
+            return safeReplace(strVal);
         }
         int offset = cache.slotOffset(strVal);
         BytesRef cached = cache.get(offset, strVal);
         if (cached != null) {
             return cached;
         }
-        BytesRef replaced = Replace.safeReplace(strVal, regex, newStr);
+        BytesRef replaced = safeReplace(strVal);
         cache.put(offset, strVal, replaced);
         return replaced;
+    }
+
+    private BytesRef safeReplace(BytesRef in) {
+        try {
+            return doReplace(in);
+        } catch (StackOverflowError e) {
+            throw new IllegalArgumentException("Pattern nesting is too deep to evaluate", e);
+        }
+    }
+
+    /**
+     * Same semantics as {@link Replace#safeReplace}, specialised for a constant pattern and replacement: one reused
+     * {@link Matcher}, JDK UTF-8 decode, and when the replacement is a single group reference and the pattern matched the
+     * whole input exactly once, the result is a view into the input bytes instead of a rebuilt string.
+     */
+    private BytesRef doReplace(BytesRef in) {
+        String str = new String(in.bytes, in.offset, in.length, StandardCharsets.UTF_8);
+        Matcher m = matcher.reset(str);
+        if (m.find() == false) {
+            return in;
+        }
+        if (singleGroup >= 0 && m.start() == 0 && m.end() == str.length()) {
+            int groupStart = m.start(singleGroup);
+            int groupEnd = m.end(singleGroup);
+            if (m.find() == false) {
+                if (groupStart < 0) {
+                    return EMPTY;
+                }
+                view.bytes = in.bytes;
+                view.offset = in.offset + UnicodeUtil.calcUTF16toUTF8Length(str, 0, groupStart);
+                view.length = UnicodeUtil.calcUTF16toUTF8Length(str, groupStart, groupEnd - groupStart);
+                return view;
+            }
+            // A second (empty) match follows the full match; the general path must see both.
+            m.reset(str);
+            m.find();
+        }
+        StringBuilder result = this.result;
+        result.setLength(0);
+        do {
+            int matchSize = m.end() - m.start();
+            int potentialReplacementSize = constantReplacementLength + groupsInReplacement * matchSize;
+            int remainingStr = str.length() - m.end();
+            if (result.length() + potentialReplacementSize + remainingStr > MAX_BYTES_REF_RESULT_SIZE) {
+                throw new IllegalArgumentException(
+                    "Creating strings with more than [" + MAX_BYTES_REF_RESULT_SIZE + "] bytes is not supported"
+                );
+            }
+            m.appendReplacement(result, newStrString);
+        } while (m.find());
+        m.appendTail(result);
+        outBytes = ArrayUtil.grow(outBytes, UnicodeUtil.maxUTF8Length(result.length()));
+        view.bytes = outBytes;
+        view.offset = 0;
+        view.length = UnicodeUtil.UTF16toUTF8(result, 0, result.length(), outBytes);
+        return view;
     }
 
     @Override
