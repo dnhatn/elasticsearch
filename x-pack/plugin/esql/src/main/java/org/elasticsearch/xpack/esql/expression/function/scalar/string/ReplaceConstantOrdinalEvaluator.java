@@ -20,11 +20,15 @@ import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.expression.ExpressionEvaluator;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Warnings;
+import org.elasticsearch.common.breaker.CircuitBreaker;
+import org.elasticsearch.common.bytes.MixHash64;
+import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -97,6 +101,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
     private final AsciiSeq asciiSeq = new AsciiSeq();
     private byte[] outBytes = BytesRef.EMPTY_BYTES;
     private int outLen;
+    private final ReplaceResultCache cache;
 
     ReplaceConstantOrdinalEvaluator(
         Source source,
@@ -113,6 +118,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
         this.newStr = newStr;
         this.driverContext = driverContext;
         this.matcher = regex.matcher("");
+        this.cache = new ReplaceResultCache(driverContext.breaker());
 
         List<byte[]> literals = new ArrayList<>();
         List<Integer> groups = new ArrayList<>();
@@ -304,6 +310,20 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
         if (literalPrefix.length > 0 && Replace.startsWith(in, literalPrefix) == false) {
             return in;
         }
+        if (in.length == 0 || in.length > ReplaceResultCache.MAX_KEY_LENGTH) {
+            return safeReplace(in);
+        }
+        int slot = cache.slotOffset(in);
+        BytesRef cached = cache.get(slot, in);
+        if (cached != null) {
+            return cached;
+        }
+        BytesRef replaced = safeReplace(in);
+        cache.put(slot, in, replaced);
+        return replaced;
+    }
+
+    private BytesRef safeReplace(BytesRef in) {
         try {
             return doReplace(in);
         } catch (StackOverflowError e) {
@@ -429,7 +449,7 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
 
     @Override
     public void close() {
-        Releasables.closeExpectNoException(str);
+        Releasables.closeExpectNoException(str, cache);
     }
 
     private Warnings warnings() {
@@ -492,6 +512,78 @@ final class ReplaceConstantOrdinalEvaluator implements ExpressionEvaluator {
         @Override
         public String toString() {
             return new String(bytes, offset, length, StandardCharsets.ISO_8859_1);
+        }
+    }
+
+    /**
+     * Direct-mapped memoization table for the repeated head of the input: one fixed 256-byte slot per hash index holding
+     * {@code [keyLen][valueLen][key][value]}, key verified byte-for-byte on lookup, miss overwrites. Fixed 64 KB per
+     * evaluator, accounted once against the breaker. Short repeated inputs still pay the engine's full fixed per-row cost,
+     * so a hit on them is worth nearly a whole row.
+     */
+    static final class ReplaceResultCache implements Releasable {
+        static final int SLOTS = 256;
+        static final int SLOT_BYTES = 256;
+        private static final int HEADER_BYTES = 2;
+        static final int MAX_PAYLOAD = SLOT_BYTES - HEADER_BYTES;
+        static final int MAX_KEY_LENGTH = MAX_PAYLOAD * 3 / 4;
+        private static final int SLOT_SHIFT = Integer.numberOfTrailingZeros(SLOT_BYTES);
+        private static final int SLOT_MASK = SLOTS - 1;
+        static final long RAM_BYTES_USED = (long) SLOTS * SLOT_BYTES;
+
+        static {
+            assert Integer.bitCount(SLOTS) == 1 && Integer.bitCount(SLOT_BYTES) == 1;
+            assert MAX_PAYLOAD <= 0xFF;
+        }
+
+        private final CircuitBreaker breaker;
+        private final byte[] bytes;
+        private final BytesRef view;
+
+        ReplaceResultCache(CircuitBreaker breaker) {
+            breaker.addEstimateBytesAndMaybeBreak(RAM_BYTES_USED, "ReplaceResultCache");
+            this.breaker = breaker;
+            this.bytes = new byte[SLOTS * SLOT_BYTES];
+            this.view = new BytesRef(bytes);
+        }
+
+        int slotOffset(BytesRef key) {
+            return ((int) MixHash64.hash64(key) & SLOT_MASK) << SLOT_SHIFT;
+        }
+
+        BytesRef get(int offset, BytesRef key) {
+            assert key.length > 0 && key.length <= MAX_KEY_LENGTH;
+            int keyLen = bytes[offset] & 0xFF;
+            if (keyLen != key.length
+                || Arrays.equals(
+                    bytes,
+                    offset + HEADER_BYTES,
+                    offset + HEADER_BYTES + keyLen,
+                    key.bytes,
+                    key.offset,
+                    key.offset + keyLen
+                ) == false) {
+                return null;
+            }
+            view.offset = offset + HEADER_BYTES + keyLen;
+            view.length = bytes[offset + 1] & 0xFF;
+            return view;
+        }
+
+        void put(int offset, BytesRef key, BytesRef value) {
+            assert key.length > 0 && key.length <= MAX_KEY_LENGTH;
+            if (key.length + value.length > MAX_PAYLOAD) {
+                return;
+            }
+            bytes[offset] = (byte) key.length;
+            bytes[offset + 1] = (byte) value.length;
+            System.arraycopy(key.bytes, key.offset, bytes, offset + HEADER_BYTES, key.length);
+            System.arraycopy(value.bytes, value.offset, bytes, offset + HEADER_BYTES + key.length, value.length);
+        }
+
+        @Override
+        public void close() {
+            breaker.addWithoutBreaking(-RAM_BYTES_USED);
         }
     }
 
