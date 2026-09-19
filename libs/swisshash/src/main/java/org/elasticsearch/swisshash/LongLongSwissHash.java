@@ -851,6 +851,22 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable, P
 
     @Override
     public PartitionedHashKeys splitPartition(CircuitBreaker breaker, PartitionSplitter partitionSplitter) {
+        return splitPartition(breaker, null, partitionSplitter);
+    }
+
+    /**
+     * Chooses a key's partition in place of the hash, for tables whose keys refer into another table that was split first and must
+     * be partitioned consistently with it.
+     */
+    interface Partitioner {
+        int partition(long key1, long key2);
+    }
+
+    /**
+     * Like {@link #splitPartition(CircuitBreaker, PartitionSplitter)} but routing every key through {@code partitioner}; the keys are
+     * stored unchanged, so the caller rewrites any reference into the other table afterwards.
+     */
+    LongLongPartitionedHashKeys splitPartition(CircuitBreaker breaker, Partitioner partitioner, PartitionSplitter partitionSplitter) {
         final int[] batchPartitionCounts = new int[NUM_PARTITIONS];
         final short[] shiftedIds = new short[PARTITION_WRITE_BATCH * NUM_PARTITIONS];
         int batchStart = 0;
@@ -868,9 +884,14 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable, P
                 }
                 final long key1 = (long) LONG_HANDLE.get(keyPage, indexInPage);
                 final long key2 = (long) LONG_HANDLE.get(keyPage, indexInPage + Long.BYTES);
+                final int p;
+                if (partitioner != null) {
+                    p = partitioner.partition(key1, key2);
+                } else {
+                    p = partition(hash(key1, key2));
+                }
                 indexInPage += KEY_SIZE;
-                final long hash64 = hash(key1, key2);
-                final int p = partition(hash64);
+                assert p >= 0 && p < NUM_PARTITIONS : p;
                 if (batchPartitionCounts[p] == PARTITION_WRITE_BATCH) {
                     partitionedKeys.splitKeys(breaker, keyPages, batchStart, shiftedIds, batchPartitionCounts);
                     partitionSplitter.split(batchStart, shiftedIds, id - batchStart, batchPartitionCounts, partitionOffsets);
