@@ -46,6 +46,7 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
     private AddBytesBatchWork addBytesBatchWork = null;
     /** Created on first use; partitioning requires both underlying hashes to be swiss hashes. */
     private BytesLongPartitionedHash partitioned = null;
+    private int emptyId = -1;
     private final boolean reverseOutput;
 
     public LongBytesRefBlockHash(List<GroupSpec> specs, BlockFactory blockFactory, int emitBatchSize, boolean reverseOutput) {
@@ -94,7 +95,14 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
         try (var builder = blockFactory.newIntVectorFixedBuilder(positions)) {
             for (int i = 0; i < positions; i++) {
                 BytesRef v = bytesVector.getBytesRef(i, scratch);
-                builder.appendInt(Math.toIntExact(hashOrdToGroup(bytesHash.add(v))));
+                if (v.length == 0) {
+                    if (emptyId < 0) {
+                        emptyId = Math.toIntExact(hashOrdToGroup(bytesHash.add(v)));
+                    }
+                    builder.appendInt(emptyId);
+                } else {
+                    builder.appendInt(Math.toIntExact(hashOrdToGroup(bytesHash.add(v))));
+                }
             }
             return builder.build();
         }
@@ -373,7 +381,7 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
             + "b}";
     }
 
-    private static class AddBytesBatchWork {
+    private class AddBytesBatchWork {
         private static final int PREFETCH_BATCH = 64;
         private final PrefetchBarrier prefetchBarrier = new PrefetchBarrier();
         private final BlockFactory blockFactory;
@@ -396,12 +404,21 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
                     int batchSize = Math.min(PREFETCH_BATCH, positions - offset);
                     for (int i = 0; i < batchSize; i++) {
                         vector.getBytesRef(offset + i, batchKeys[i]);
-                        batchHashes[i] = BytesRefSwissHash.hash64(batchKeys[i]);
-                        dummy ^= swiss.prefetch(batchHashes[i]);
+                        if (batchKeys[i].length > 0) {
+                            batchHashes[i] = BytesRefSwissHash.hash64(batchKeys[i]);
+                            dummy ^= swiss.prefetch(batchHashes[i]);
+                        }
                     }
                     for (int i = 0; i < batchSize; i++) {
-                        final long id = swiss.addWithHash(batchKeys[i], batchHashes[i]);
-                        builder.appendInt(Math.toIntExact(hashOrdToGroup(id)));
+                        if (batchKeys[i].length == 0) {
+                            if (emptyId < 0) {
+                                emptyId = Math.toIntExact(hashOrdToGroup(bytesHash.add(batchKeys[i])));
+                            }
+                            builder.appendInt(emptyId);
+                        } else {
+                            final long id = swiss.addWithHash(batchKeys[i], batchHashes[i]);
+                            builder.appendInt(Math.toIntExact(hashOrdToGroup(id)));
+                        }
                     }
                 }
                 for (int i = 0; i < PREFETCH_BATCH; i++) {

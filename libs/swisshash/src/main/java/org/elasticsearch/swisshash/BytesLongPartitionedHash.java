@@ -55,8 +55,12 @@ public final class BytesLongPartitionedHash implements PartitionedHashTable, Rel
         }
     }
 
-    /** How the 8 partition bits are shared: a dominant bytes value spreads over {@code 2^SUB_BITS} partitions. */
-    static final int DICT_BITS = 4;
+    /**
+     * How the 8 partition bits are shared: a bytes value spreads over {@code 2^SUB_BITS} partitions, capping the skew a dominant value
+     * can cause at that fraction of its share, and is merged into that many partition dictionaries at combine. Missing and empty
+     * bytes, the usual dominant values, are spread over all partitions regardless, so the long bits only have to cover the rest.
+     */
+    static final int DICT_BITS = 5;
     static final int DICT_PARTITIONS = 1 << DICT_BITS;
     static final int SUB_BITS = Integer.numberOfTrailingZeros(NUM_PARTITIONS) - DICT_BITS;
     static final int SUB_MASK = (1 << SUB_BITS) - 1;
