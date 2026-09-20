@@ -46,7 +46,6 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
     private AddBytesBatchWork addBytesBatchWork = null;
     /** Created on first use; partitioning requires both underlying hashes to be swiss hashes. */
     private BytesLongPartitionedHash partitioned = null;
-    private int emptyId = -1;
     private final boolean reverseOutput;
 
     public LongBytesRefBlockHash(List<GroupSpec> specs, BlockFactory blockFactory, int emitBatchSize, boolean reverseOutput) {
@@ -95,14 +94,7 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
         try (var builder = blockFactory.newIntVectorFixedBuilder(positions)) {
             for (int i = 0; i < positions; i++) {
                 BytesRef v = bytesVector.getBytesRef(i, scratch);
-                if (v.length == 0) {
-                    if (emptyId < 0) {
-                        emptyId = Math.toIntExact(hashOrdToGroup(bytesHash.add(v)));
-                    }
-                    builder.appendInt(emptyId);
-                } else {
-                    builder.appendInt(Math.toIntExact(hashOrdToGroup(bytesHash.add(v))));
-                }
+                builder.appendInt(Math.toIntExact(hashOrdToGroup(bytesHash.add(v))));
             }
             return builder.build();
         }
@@ -410,15 +402,8 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
                         }
                     }
                     for (int i = 0; i < batchSize; i++) {
-                        if (batchKeys[i].length == 0) {
-                            if (emptyId < 0) {
-                                emptyId = Math.toIntExact(hashOrdToGroup(bytesHash.add(batchKeys[i])));
-                            }
-                            builder.appendInt(emptyId);
-                        } else {
-                            final long id = swiss.addWithHash(batchKeys[i], batchHashes[i]);
-                            builder.appendInt(Math.toIntExact(hashOrdToGroup(id)));
-                        }
+                        final long id = swiss.addWithHash(batchKeys[i], batchHashes[i]);
+                        builder.appendInt(Math.toIntExact(hashOrdToGroup(id)));
                     }
                 }
                 for (int i = 0; i < PREFETCH_BATCH; i++) {
