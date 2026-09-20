@@ -44,6 +44,8 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
     private final BytesRefHashTable bytesHash;
     private final LongIntBlockHash longIntHash;
     private AddBytesBatchWork addBytesBatchWork = null;
+    /** Created on first use; partitioning requires both underlying hashes to be swiss hashes. */
+    private BytesLongPartitionedHash partitioned = null;
     private final boolean reverseOutput;
 
     public LongBytesRefBlockHash(List<GroupSpec> specs, BlockFactory blockFactory, int emitBatchSize, boolean reverseOutput) {
@@ -341,7 +343,7 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
 
     @Override
     public void close() {
-        Releasables.close(bytesHash, longIntHash);
+        Releasables.close(bytesHash, longIntHash, partitioned);
         if (addBytesBatchWork != null) {
             addBytesBatchWork.prefetchBarrier.flush();
         }
@@ -420,10 +422,13 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
     }
 
     private BytesLongPartitionedHash partitioner() {
-        if (longIntHash.hash instanceof LongLongSwissHash == false || bytesHash instanceof BytesRefSwissHash == false) {
-            throw new UnsupportedOperationException(getClass().getSimpleName() + " doesn't support partitioning");
+        if (partitioned == null) {
+            if (longIntHash.hash instanceof LongLongSwissHash == false || bytesHash instanceof BytesRefSwissHash == false) {
+                throw new UnsupportedOperationException(getClass().getSimpleName() + " doesn't support partitioning");
+            }
+            partitioned = new BytesLongPartitionedHash((BytesRefSwissHash) bytesHash, (LongLongSwissHash) longIntHash.hash);
         }
-        return new BytesLongPartitionedHash((BytesRefSwissHash) bytesHash, (LongLongSwissHash) longIntHash.hash);
+        return partitioned;
     }
 
     @Override
