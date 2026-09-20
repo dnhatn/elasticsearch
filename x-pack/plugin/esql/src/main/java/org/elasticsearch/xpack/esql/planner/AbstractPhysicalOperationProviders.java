@@ -181,7 +181,15 @@ public abstract class AbstractPhysicalOperationProviders {
                 }
                 layout.append(groupAttributeLayout);
                 Layout.ChannelAndType groupInput = source.layout.get(sourceGroupAttribute.id());
-                groupSpecs.add(new GroupSpec(groupInput == null ? null : groupInput.channel(), sourceGroupAttribute, group, pushedTopN));
+                groupSpecs.add(
+                    new GroupSpec(
+                        groupInput == null ? null : groupInput.channel(),
+                        sourceGroupAttribute,
+                        group,
+                        pushedTopN,
+                        context.timeSeries()
+                    )
+                );
             }
 
             if (aggregatorMode.isOutputPartial()) {
@@ -452,11 +460,18 @@ public abstract class AbstractPhysicalOperationProviders {
     /**
      * The input configuration of this group.
      *
-     * @param channel The source channel of this group
-     * @param attribute The attribute, source of this group
-     * @param expression The expression being used to group
+     * @param channel         The source channel of this group
+     * @param attribute       The attribute, source of this group
+     * @param expression      The expression being used to group
+     * @param mayHaveOrdinals This values from this group maybe backed by ordinals/dictionary
      */
-    private record GroupSpec(Integer channel, Attribute attribute, Expression expression, @Nullable BlockHash.TopNDef topNDef) {
+    private record GroupSpec(
+        Integer channel,
+        Attribute attribute,
+        Expression expression,
+        @Nullable BlockHash.TopNDef topNDef,
+        boolean mayHaveOrdinals
+    ) {
         BlockHash.GroupSpec toHashGroupSpec() {
             if (channel == null) {
                 throw new EsqlIllegalArgumentException("planned to use ordinals but tried to use the hash instead");
@@ -465,7 +480,8 @@ public abstract class AbstractPhysicalOperationProviders {
                 channel,
                 elementType(),
                 Alias.unwrap(expression) instanceof Categorize categorize ? categorize.categorizeDef() : null,
-                topNDef
+                topNDef,
+                mayHaveOrdinals
             );
         }
 

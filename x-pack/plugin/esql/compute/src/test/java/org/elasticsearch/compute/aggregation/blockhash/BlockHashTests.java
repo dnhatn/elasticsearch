@@ -54,15 +54,19 @@ public class BlockHashTests extends BlockHashTestCase {
     @ParametersFactory
     public static List<Object[]> params() {
         List<Object[]> params = new ArrayList<>();
-        params.add(new Object[] { false });
-        params.add(new Object[] { true });
+        params.add(new Object[] { false, false });
+        params.add(new Object[] { false, true });
+        params.add(new Object[] { true, false });
+        params.add(new Object[] { true, true });
         return params;
     }
 
     private final boolean forcePackedHash;
+    private final boolean enableOrdinals;
 
-    public BlockHashTests(@Name("forcePackedHash") boolean forcePackedHash) {
+    public BlockHashTests(@Name("forcePackedHash") boolean forcePackedHash, @Name("enableOrdinals") boolean enableOrdinals) {
         this.forcePackedHash = forcePackedHash;
+        this.enableOrdinals = enableOrdinals;
     }
 
     public void testIntHash() {
@@ -1091,7 +1095,7 @@ public class BlockHashTests extends BlockHashTestCase {
                 assertThat(
                     ordsAndKeys.description(),
                     startsWith(
-                        forcePackedHash
+                        forcePackedHash || enableOrdinals == false
                             ? "PackedValuesBlockHash{groups=[0:LONG, 1:BYTES_REF], entries=4, size="
                             : "LongBytesRefBlockHash{keys=[LongKey[channel=0], BytesRefKey[channel=1]], entries=4, size="
                     )
@@ -1121,7 +1125,7 @@ public class BlockHashTests extends BlockHashTestCase {
                 assertThat(
                     ordsAndKeys.description(),
                     startsWith(
-                        forcePackedHash
+                        forcePackedHash || enableOrdinals == false
                             ? "PackedValuesBlockHash{groups=[0:LONG, 1:BYTES_REF], entries=5, size="
                             : "LongBytesRefBlockHash{keys=[LongKey[channel=0], BytesRefKey[channel=1]], entries=5, size="
                     )
@@ -1196,7 +1200,7 @@ public class BlockHashTests extends BlockHashTestCase {
                 assertThat(
                     ordsAndKeys.description(),
                     startsWith(
-                        forcePackedHash
+                        forcePackedHash || enableOrdinals == false
                             ? "PackedValuesBlockHash{groups=[0:LONG, 1:BYTES_REF], entries=10, size="
                             : "LongBytesRefBlockHash{keys=[LongKey[channel=0], BytesRefKey[channel=1]], entries=10, size="
                     )
@@ -1252,7 +1256,7 @@ public class BlockHashTests extends BlockHashTestCase {
                 assertThat(
                     ordsAndKeys.description(),
                     startsWith(
-                        forcePackedHash
+                        forcePackedHash || enableOrdinals == false
                             ? "PackedValuesBlockHash{groups=[0:LONG, 1:BYTES_REF], entries=" + expectedEntries[0] + ", size="
                             : "LongBytesRefBlockHash{keys=[LongKey[channel=0], BytesRefKey[channel=1]], entries="
                                 + expectedEntries[0]
@@ -1982,7 +1986,7 @@ public class BlockHashTests extends BlockHashTestCase {
     private BlockHash buildBlockHash(int emitBatchSize, Block... values) {
         List<BlockHash.GroupSpec> specs = new ArrayList<>(values.length);
         for (int c = 0; c < values.length; c++) {
-            specs.add(new BlockHash.GroupSpec(c, values[c].elementType()));
+            specs.add(new BlockHash.GroupSpec(c, values[c].elementType(), null, null, enableOrdinals));
         }
         return forcePackedHash
             ? new PackedValuesBlockHash(specs, blockFactory, emitBatchSize)

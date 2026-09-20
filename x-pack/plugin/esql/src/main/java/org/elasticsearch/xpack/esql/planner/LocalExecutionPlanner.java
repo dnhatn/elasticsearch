@@ -2506,7 +2506,7 @@ public class LocalExecutionPlanner {
 
         List<BlockHash.GroupSpec> groups = collapse.dimensions().stream().map(attribute -> {
             Layout.ChannelAndType input = layout.get(attribute.id());
-            return new BlockHash.GroupSpec(input.channel(), PlannerUtils.toElementType(input.type()));
+            return new BlockHash.GroupSpec(input.channel(), PlannerUtils.toElementType(input.type()), null, null, true);
         }).toList();
         int valueChannel = layout.get(collapse.value().id()).channel();
         int stepChannel = layout.get(collapse.step().id()).channel();

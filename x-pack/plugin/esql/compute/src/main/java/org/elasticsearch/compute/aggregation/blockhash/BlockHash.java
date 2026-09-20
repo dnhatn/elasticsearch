@@ -174,17 +174,27 @@ public abstract class BlockHash implements Releasable, SeenGroupIds {
         }
     }
 
-    public record GroupSpec(int channel, ElementType elementType, @Nullable CategorizeDef categorizeDef, @Nullable TopNDef topNDef) {
+    public record GroupSpec(
+        int channel,
+        ElementType elementType,
+        @Nullable CategorizeDef categorizeDef,
+        @Nullable TopNDef topNDef,
+        boolean mayHaveOrdinals
+    ) {
         public GroupSpec(int channel, ElementType elementType) {
-            this(channel, elementType, null, null);
+            this(channel, elementType, null, null, false);
         }
 
         public GroupSpec(int channel, ElementType elementType, CategorizeDef categorizeDef) {
-            this(channel, elementType, categorizeDef, null);
+            this(channel, elementType, categorizeDef, null, false);
         }
 
         public boolean isCategorize() {
             return categorizeDef != null;
+        }
+
+        public boolean mayHaveOrdinals() {
+            return mayHaveOrdinals;
         }
     }
 
@@ -245,9 +255,9 @@ public abstract class BlockHash implements Releasable, SeenGroupIds {
             } else if (g1.elementType == ElementType.INT && g2.elementType == ElementType.LONG) {
                 return new LongIntBlockHash(groups, blockFactory, emitBatchSize, true);
             }
-            if (g1.elementType() == ElementType.LONG && g2.elementType() == ElementType.BYTES_REF) {
+            if (g1.elementType() == ElementType.LONG && g2.elementType() == ElementType.BYTES_REF && g2.mayHaveOrdinals) {
                 return new LongBytesRefBlockHash(groups, blockFactory, emitBatchSize, false);
-            } else if (g1.elementType() == ElementType.BYTES_REF && g2.elementType() == ElementType.LONG) {
+            } else if (g1.elementType() == ElementType.BYTES_REF && g1.mayHaveOrdinals && g2.elementType() == ElementType.LONG) {
                 return new LongBytesRefBlockHash(groups, blockFactory, emitBatchSize, true);
             }
             // TODO: wire (LONG, LONG) with adaptive
