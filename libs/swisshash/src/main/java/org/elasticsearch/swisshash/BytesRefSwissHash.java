@@ -123,6 +123,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
     private SmallCore smallCore;
     private BigCore bigCore;
+    private int emptyId = -1;
 
     /**
      * Creates a new {@link BytesRefSwissHash} that manages its own {@link BytesRefArray}.
@@ -189,11 +190,16 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
      */
     @Override
     public long find(BytesRef key) {
-        final long hash = hash64(key);
         if (smallCore != null) {
-            return smallCore.find(key, hash);
+            return smallCore.find(key, hash64(key));
         } else {
-            return bigCore.find(key, hash);
+            if (key.length == 0) {
+                if (emptyId >= 0) {
+                    return emptyId;
+                }
+                return emptyId = bigCore.find(key, hash64(key));
+            }
+            return bigCore.find(key, hash64(key));
         }
     }
 
@@ -647,6 +653,14 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
         private int addWithHash(final BytesRef key, final long hash) {
             maybeGrow();
+            if (key.length == 0) {
+                if (emptyId < 0) {
+                    emptyId = bigCore.addImpl(key, hash);
+                    return emptyId;
+                } else {
+                    return -1 - emptyId;
+                }
+            }
             return bigCore.addImpl(key, hash);
         }
 
