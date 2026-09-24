@@ -1762,6 +1762,7 @@ public class ComputeService {
             // the planner will also set the driver parallelism in LocalExecutionPlanner.LocalExecutionPlan (used down below)
             // it's doing this in the planning of EsQueryExec (the source of the data)
             // see also EsPhysicalOperationProviders.sourcePhysicalOperation
+            long startTime = System.nanoTime();
             var localExecutionPlan = planner.plan(
                 context.description(),
                 context.foldCtx(),
@@ -1830,6 +1831,7 @@ public class ComputeService {
                 planningBytesRead,
                 approximationApplied
             );
+            System.err.println("--> planner#plan + creating drivers took " + (System.nanoTime() - startTime));
             driverRunner.executeDrivers(
                 task,
                 drivers,
