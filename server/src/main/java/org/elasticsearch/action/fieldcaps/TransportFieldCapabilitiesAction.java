@@ -32,7 +32,6 @@ import org.elasticsearch.action.support.RefCountingRunnable;
 import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.cluster.ProjectState;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
-import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.metadata.ProjectMetadata;
@@ -50,9 +49,6 @@ import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.core.Tuple;
-import org.elasticsearch.index.IndexMode;
-import org.elasticsearch.index.mapper.IndexFieldMapper;
-import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.injection.guice.Inject;
@@ -391,51 +387,23 @@ public class TransportFieldCapabilitiesAction extends HandledTransportAction<Fie
                 );
             }
         })) {
-            if (request.fields().length == 1
-                && request.fields()[0].equals(IndexFieldMapper.NAME)
-                && (request.indexFilter() == null || request.indexFilter() instanceof MatchAllQueryBuilder)) {
-                for (String indexName : concreteLocalIndices) {
-                    IndexMetadata indexMetadata = projectState.metadata().index(indexName);
-                    IndexFieldCapabilities indexFieldCapabilities = new IndexFieldCapabilities(
-                        IndexFieldMapper.NAME,
-                        IndexFieldMapper.CONTENT_TYPE,
-                        true,
-                        true,
-                        true,
-                        false,
-                        false,
-                        null,
-                        Map.of()
-                    );
-                    handleIndexResponse.accept(
-                        new FieldCapabilitiesIndexResponse(
-                            indexName,
-                            null,
-                            Map.of(IndexFieldMapper.NAME, indexFieldCapabilities),
-                            true,
-                            IndexMode.fromIndexSettingsWithoutValidation(indexMetadata.getSettings()),
-                            indexMetadata.getNumberOfShards()
-                        )
-                    );
-                }
-            } else {
-                final RequestDispatcher requestDispatcher = new RequestDispatcher(
-                    clusterService,
-                    transportService,
-                    projectResolver,
-                    indicesService.getCoordinatorRewriteContextProvider(() -> nowInMillis),
-                    task,
-                    request,
-                    localIndices,
-                    nowInMillis,
-                    concreteLocalIndices,
-                    singleThreadedExecutor,
-                    handleIndexResponse,
-                    handleIndexFailure,
-                    refs.acquire()::close
-                );
-                requestDispatcher.execute();
-            }
+            // local cluster
+            final RequestDispatcher requestDispatcher = new RequestDispatcher(
+                clusterService,
+                transportService,
+                projectResolver,
+                indicesService.getCoordinatorRewriteContextProvider(() -> nowInMillis),
+                task,
+                request,
+                localIndices,
+                nowInMillis,
+                concreteLocalIndices,
+                singleThreadedExecutor,
+                handleIndexResponse,
+                handleIndexFailure,
+                refs.acquire()::close
+            );
+            requestDispatcher.execute();
 
             // this is the cross cluster part of this API - we force the other cluster to not merge the results but instead
             // send us back all individual index results.

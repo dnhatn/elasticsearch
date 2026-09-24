@@ -18,6 +18,7 @@ import org.elasticsearch.action.NoShardAvailableActionException;
 import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ProjectState;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.project.ProjectResolver;
 import org.elasticsearch.cluster.routing.SearchShardRouting;
@@ -26,6 +27,8 @@ import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.util.concurrent.RunOnce;
+import org.elasticsearch.index.IndexMode;
+import org.elasticsearch.index.mapper.IndexFieldMapper;
 import org.elasticsearch.index.query.CoordinatorRewriteContextProvider;
 import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
@@ -123,7 +126,40 @@ final class RequestDispatcher {
             if (indexResult.nodeToShards.isEmpty() && indexResult.unmatchedShardIds.isEmpty()) {
                 onIndexFailure.accept(index, new NoShardAvailableActionException(null, "index [" + index + "] has no active shard copy"));
             } else {
-                this.indexSelectors.put(index, indexResult);
+                if (fieldCapsRequest.fields().length == 1 && fieldCapsRequest.fields()[0].equals(IndexFieldMapper.NAME)){
+                    Set<String> processIndices = new HashSet<>();
+                    IndexFieldCapabilities indexFieldCapabilities = new IndexFieldCapabilities(
+                        IndexFieldMapper.NAME,
+                        IndexFieldMapper.CONTENT_TYPE,
+                        true,
+                        true,
+                        true,
+                        false,
+                        false,
+                        null,
+                        Map.of()
+                    );
+                    for (List<ShardRouting> routing : indexResult.nodeToShards.values()) {
+                        for (ShardRouting shr : routing) {
+                            String indexName = shr.getIndexName();
+                            if (processIndices.add(indexName)) {
+                                IndexMetadata indexMetadata = project.metadata().index(indexName);
+                                onIndexResponse.accept(
+                                    new FieldCapabilitiesIndexResponse(
+                                        indexName,
+                                        null,
+                                        Map.of(IndexFieldMapper.NAME, indexFieldCapabilities),
+                                        true,
+                                        IndexMode.fromIndexSettingsWithoutValidation(indexMetadata.getSettings()),
+                                        indexMetadata.getNumberOfShards()
+                                    )
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    this.indexSelectors.put(index, indexResult);
+                }
             }
         }
     }
