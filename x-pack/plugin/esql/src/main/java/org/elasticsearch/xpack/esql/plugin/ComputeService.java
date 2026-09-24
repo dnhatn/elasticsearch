@@ -1659,6 +1659,8 @@ public class ComputeService {
         PlanTimeProfile planTimeProfile,
         ActionListener<DriverCompletionInfo> listener
     ) {
+        long startTime = System.nanoTime();
+        System.err.println("--> starting compute [" + context.description() + " ]" + startTime);
         QueryWarnings singleValueQueryWarnings = QueryWarnings.EMIT;
         var shardContexts = context.searchContexts()
             .map(csc -> context.retainSearchContexts() ? csc.newDetachedShardContext() : csc.shardContext(singleValueQueryWarnings));
@@ -1766,7 +1768,6 @@ public class ComputeService {
             // the planner will also set the driver parallelism in LocalExecutionPlanner.LocalExecutionPlan (used down below)
             // it's doing this in the planning of EsQueryExec (the source of the data)
             // see also EsPhysicalOperationProviders.sourcePhysicalOperation
-            long startTime = System.nanoTime();
             var localExecutionPlan = planner.plan(
                 context.description(),
                 context.foldCtx(),
@@ -1847,6 +1848,7 @@ public class ComputeService {
                         }
                     }
                     Releasables.close(drivers);
+                    System.err.println("--> completed compute [" + context.description() + " ]" + (System.nanoTime()));
                 })
             );
         } catch (Exception e) {
