@@ -69,6 +69,7 @@ public class RestEsqlQueryAction extends BaseRestHandler {
 
     @Override
     protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
+        System.err.println("--> receive rest request");
         EsqlQueryRequest esqlRequest;
         try (XContentParser parser = request.contentOrSourceParamParser()) {
             esqlRequest = RequestXContent.parseSync(parser);

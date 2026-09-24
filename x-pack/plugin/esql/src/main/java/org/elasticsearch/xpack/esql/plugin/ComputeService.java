@@ -966,6 +966,7 @@ public class ComputeService {
         PlanTimeProfile planTimeProfile,
         ActionListener<Result> listener
     ) {
+        System.err.println("--> coordinator - start executing plan " + System.nanoTime());
         assert ThreadPool.assertCurrentThreadPool(
             ThreadPool.Names.SYSTEM_READ,
             ThreadPool.Names.SEARCH,
@@ -1369,10 +1370,12 @@ public class ComputeService {
                                     return builder.build();
                                 });
                             }
+                            System.err.println("--> finished coordinator plan " + System.nanoTime());
                             l.onResponse(completionInfo);
                         })
                     )
                 ) {
+                    System.err.println("--> start running the coordinator plan");
                     runCompute(
                         rootTask,
                         new ComputeContext(
@@ -1397,6 +1400,7 @@ public class ComputeService {
                     // starts computes on data nodes on the main cluster
                     if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
                         final var dataNodesListener = localListener.acquireCompute();
+                        System.err.println("--> start sending plans to data nodes");
                         dataNodeComputeHandler.startComputeOnDataNodes(
                             sessionId,
                             LOCAL_CLUSTER,
@@ -1831,7 +1835,7 @@ public class ComputeService {
                 planningBytesRead,
                 approximationApplied
             );
-            System.err.println("--> planner#plan + creating drivers took " + (System.nanoTime() - startTime));
+            System.err.println("--> planner#plan + creating drivers took " + (System.nanoTime() - startTime) + " " + context.description());
             driverRunner.executeDrivers(
                 task,
                 drivers,
