@@ -1733,6 +1733,7 @@ public class ComputeService {
                     logicalPlanString = null;
                     approximationApplied = false;
                 } else {
+                    long localPlanStart = System.nanoTime();
                     var localPlanResult = PlannerUtils.localPlanWithLogical(
                         plannerSettings,
                         context.flags(),
@@ -1745,6 +1746,9 @@ public class ComputeService {
                     localPlan = localPlanResult.physicalPlan();
                     logicalPlanString = localPlanResult.logicalPlanString();
                     approximationApplied = localPlanResult.approximationApplied();
+                    System.err.println(
+                        "--> localPlanWithLogical took " + (System.nanoTime() - localPlanStart) + " " + context.description()
+                    );
                 }
             } else {
                 localPlan = plan;
@@ -1768,6 +1772,7 @@ public class ComputeService {
             // the planner will also set the driver parallelism in LocalExecutionPlanner.LocalExecutionPlan (used down below)
             // it's doing this in the planning of EsQueryExec (the source of the data)
             // see also EsPhysicalOperationProviders.sourcePhysicalOperation
+            long localExecutionPlannerStart = System.nanoTime();
             var localExecutionPlan = planner.plan(
                 context.description(),
                 context.foldCtx(),
@@ -1776,11 +1781,18 @@ public class ComputeService {
                 shardContexts,
                 context.singleNodeOptimizations()
             );
+            System.err.println(
+                "--> LocalExecutionPlanner.plan took " + (System.nanoTime() - localExecutionPlannerStart) + " " + context.description()
+            );
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug("Local execution plan for {}:\n{}", context.description(), localExecutionPlan.describe());
             }
             String driverSessionId = new TaskId(clusterService.localNode().getId(), task.getId()).toString();
+            long createDriversStart = System.nanoTime();
             var drivers = localExecutionPlan.createDrivers(driverSessionId);
+            System.err.println(
+                "--> LocalExecutionPlan.createDrivers took " + (System.nanoTime() - createDriversStart) + " " + context.description()
+            );
             // Note that the drivers themselves do not hold a reference to the search contexts, but rather, these are held (and therefore
             // incremented) by the source operators, and the DocVectors. Since The contexts are pre-created with a count of 1, and then
             // incremented by the relevant source operators, after creating the *data* drivers (and therefore, the source operators), we can
