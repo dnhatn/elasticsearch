@@ -257,7 +257,9 @@ public class IndexResolver {
         OriginalIndexExtractor originalIndexExtractor,
         ActionListener<Versioned<IndexResolution>> listener
     ) {
+        System.err.println("--> field-caps [" + Arrays.toString(request.fieldCapsRequest().fields()) + " started=" + System.nanoTime());
         client.execute(EsqlResolveFieldsAction.TYPE, request, listener.delegateFailureAndWrap((l, response) -> {
+            System.err.println("--> field-caps returned=" + System.nanoTime());
             if (routingInfoCapture != null) {
                 TargetProjects tp = request.getResolvedTargetProjects();
                 if (tp != null) {
@@ -359,6 +361,7 @@ public class IndexResolver {
         boolean trackUnmappedFieldIndices,
         OriginalIndexExtractor originalIndexExtractor
     ) {
+        System.err.println("--> started mergedMappings " + System.nanoTime());
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH_COORDINATION); // too expensive to run this on a transport worker
         List<FieldCapabilitiesIndexResponse> indexResponses = fieldsInfo.caps.getIndexResponses();
         int numberOfIndices = indexResponses.size();
@@ -448,6 +451,7 @@ public class IndexResolver {
             concreteIndices
         );
         var failures = EsqlCCSUtils.groupFailuresPerCluster(fieldsInfo.caps.getFailures());
+        System.err.println("--> ended mergedMappings " + System.nanoTime());
         return IndexResolution.valid(index, indexProperties.keySet(), failures);
     }
 
