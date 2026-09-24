@@ -144,6 +144,7 @@ abstract class DataNodeRequestSender {
             EsqlPlugin.externalBlobStorePool()
         );
         final long startTimeInNanos = System.nanoTime();
+        System.err.println("startComputeOnDataNodes");
         searchShards(concreteIndices, ActionListener.wrap(targetShards -> {
             try (var computeListener = new ComputeListener(runOnTaskFailure, listener.map(completionInfo -> {
                 final int totalSkipShards = targetShards.skippedShards() + skippedShards.get();
