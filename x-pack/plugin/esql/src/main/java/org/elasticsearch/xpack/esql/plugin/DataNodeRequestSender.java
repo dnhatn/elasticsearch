@@ -146,6 +146,7 @@ abstract class DataNodeRequestSender {
         final long startTimeInNanos = System.nanoTime();
         System.err.println("startComputeOnDataNodes");
         searchShards(concreteIndices, ActionListener.wrap(targetShards -> {
+            System.err.println("--> searchShards returned " + System.nanoTime());
             try (var computeListener = new ComputeListener(runOnTaskFailure, listener.map(completionInfo -> {
                 final int totalSkipShards = targetShards.skippedShards() + skippedShards.get();
                 final int failedShards = shardFailures.size();
@@ -161,7 +162,6 @@ abstract class DataNodeRequestSender {
                 );
             }))) {
                 pendingShardIds.addAll(order(targetShards));
-                System.err.println("--> search_shards took " + (System.nanoTime() - startTimeInNanos));
                 trySendingRequestsForPendingShards(targetShards, computeListener);
             }
         }, listener::onFailure));
@@ -195,6 +195,7 @@ abstract class DataNodeRequestSender {
     }
 
     private void trySendingRequestsForPendingShards(TargetShards targetShards, ComputeListener computeListener) {
+        System.err.println("--> trySendingRequestsForPendingShards " + System.nanoTime());
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH)
             || (rootTask.isCancelled() && Transports.isTransportThread(Thread.currentThread()));
         changed.set(true);

@@ -161,6 +161,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                 Map<Index, AliasFilter> aliasFilters,
                 NodeListener nodeListener
             ) {
+                System.err.println("--> started sendRequest" + System.nanoTime());
                 if (exchangeSource.isFinished()) {
                     nodeListener.onSkip();
                     return;
@@ -179,7 +180,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                 var childSessionId = computeService.newChildSession(sessionId);
                 // For each target node, first open a remote exchange on the remote node, then link the exchange source to
                 // the new remote exchange sink, and initialize the computation on the target node via data-node-request.
-                System.err.println("--> started sending data-node request " + System.nanoTime());
+                System.err.println("--> opening exchange " + System.nanoTime());
                 ExchangeService.openExchange(
                     transportService,
                     connection,
