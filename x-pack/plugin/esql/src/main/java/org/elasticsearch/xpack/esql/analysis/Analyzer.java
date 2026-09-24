@@ -22,6 +22,7 @@ import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.inference.TaskType;
 import org.elasticsearch.iplocation.api.DatabaseProperty;
 import org.elasticsearch.iplocation.api.IpDataLookupInfo;
+import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.xpack.core.enrich.EnrichPolicy;
@@ -270,6 +271,8 @@ import static org.elasticsearch.xpack.esql.type.EsqlDataTypeConverter.maybeParse
  * This class is part of the planner. Resolves references (such as variable and index names) and performs implicit casting.
  */
 public class Analyzer extends ParameterizedRuleExecutor<LogicalPlan, AnalyzerContext> {
+    private static final Logger log = LogManager.getLogger(Analyzer.class);
+
     // marker list of attributes for plans that do not have any concrete fields to return, but have other computed columns to return
     // ie from test | stats c = count(*)
     public static final String NO_FIELDS_NAME = "<no-fields>";
