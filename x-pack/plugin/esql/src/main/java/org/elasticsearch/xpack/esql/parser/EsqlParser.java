@@ -43,6 +43,11 @@ import static org.elasticsearch.xpack.esql.parser.ParserUtils.source;
 public class EsqlParser {
 
     private static final Logger log = LogManager.getLogger(EsqlParser.class);
+    private static final int CACHEABLE_QUERY_LENGTH = 1024;
+    private static final int CACHEABLE_PLAN_NODES = 20;
+    private static final CacheEntry[] CACHE = new CacheEntry[512];
+
+    private record CacheEntry(String id, EsqlStatement value) {}
 
     /**
      * Maximum number of characters in an ESQL query. Antlr may parse the entire
@@ -168,7 +173,31 @@ public class EsqlParser {
         if (log.isDebugEnabled()) {
             log.debug("Parsing as statement: {}", query);
         }
-        return invokeParser(query, params, inferenceSettings, viewName, EsqlBaseParser::statements, AstBuilder::statement);
+        int cacheIndex = -1;
+        if (viewName == null && params.size() == 0 && query.length() < CACHEABLE_QUERY_LENGTH) {
+            int hash = query.hashCode();
+            cacheIndex = (hash ^ (hash >>> 16)) & (CACHE.length - 1);
+            CacheEntry cached = CACHE[cacheIndex];
+            if (cached != null && cached.id().equals(query)) {
+                return cached.value();
+            }
+        }
+        EsqlStatement statement = invokeParser(
+            query,
+            params,
+            inferenceSettings,
+            viewName,
+            EsqlBaseParser::statements,
+            AstBuilder::statement
+        );
+        if (cacheIndex >= 0) {
+            int[] nodes = new int[1];
+            statement.plan().forEachDown(plan -> nodes[0]++);
+            if (nodes[0] < CACHEABLE_PLAN_NODES) {
+                CACHE[cacheIndex] = new CacheEntry(query, statement);
+            }
+        }
+        return statement;
     }
 
     private record ParserPipeline(CommonTokenStream tokenStream, EsqlBaseParser parser) {}
