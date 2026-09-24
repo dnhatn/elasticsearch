@@ -850,6 +850,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
         PlanTimeProfile planTimeProfile,
         ActionListener<DataNodeComputeResponse> listener
     ) {
+        System.err.println("runComputeOnDataNode " + System.nanoTime());
         final Map<ShardId, Exception> shardLevelFailures = new HashMap<>();
         try (
             ComputeListener computeListener = new ComputeListener(
