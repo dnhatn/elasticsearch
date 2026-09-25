@@ -14,7 +14,9 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.fieldcaps.FieldCapabilitiesFailure;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.action.support.SubscribableListener;
+import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.DatasetMapping;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.ProjectMetadata;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -2467,49 +2469,80 @@ public class EsqlSession {
         if (executionInfo.clusterAliases().isEmpty()) {
             // return empty resolution if the expression is pure CCS and resolved no remote clusters (like no-such-cluster*:index)
             listener.onResponse(result.withIndices(indexPattern, IndexResolution.empty(indexPattern.indexPattern())));
-        } else {
-            executionInfo.queryProfile().incFieldCapsCalls();
-            indexResolver.resolveMainIndicesVersioned(
-                indexPattern.indexPattern(),
-                result.fieldNames,
-                createQueryFilter(indexMode, requestFilter),
-                includeAllDimensions(indexMode, preAnalysis),
-                // TODO: In case of subqueries, the different main index resolutions don't know about each other's minimum version.
-                // This is bad because `FROM (FROM remote1:*) (FROM remote2:*)` can have different minimum versions
-                // while resolving each subquery's main index pattern. We'll determine the correct overall minimum transport version
-                // in the end because we keep updating the PreAnalysisResult after each resolution; but the EsIndex objects may be
-                // inconsistent with this version:
-                // The main index pattern from a subquery that we resolve first may have a higher min version in the field caps response
-                // than an index pattern that we resolve later.
-                // Thus, the EsIndex for `FROM remote1:*` may contain data types that aren't supported on the overall minimum version
-                // if we only find out that the overall version is actually lower when resolving `FROM remote2:*`.
-                result.minimumTransportVersion(),
-                preAnalysis.useAggregateMetricDoubleWhenNotSupported(),
-                preAnalysis.useDenseVectorWhenNotSupported(),
-                preAnalysis.hasTimeSeriesAggregation(),
-                trackUnmappedFieldIndices,
-                indicesExpressionGrouper,
-                listener.delegateFailureAndWrap((l, indexResolution) -> {
-                    EsqlCCSUtils.updateExecutionInfoWithUnavailableClusters(executionInfo, indexResolution.inner().failures());
-                    maybeRetryConcreteTimeSeriesResolution(indexPattern, indexMode, result, indexResolution, l, retryListener -> {
-                        executionInfo.queryProfile().incFieldCapsCalls();
-                        indexResolver.resolveMainIndicesVersioned(
-                            indexPattern.indexPattern(),
-                            result.fieldNames,
-                            requestFilter,
-                            false,
-                            indexResolution.minimumVersion(),
-                            preAnalysis.useAggregateMetricDoubleWhenNotSupported(),
-                            preAnalysis.useDenseVectorWhenNotSupported(),
-                            false,
-                            trackUnmappedFieldIndices,
-                            indicesExpressionGrouper,
-                            retryListener
-                        );
-                    });
-                })
-            );
-        }
+        } else if (result.fieldNames.equals(IndexResolver.INDEX_METADATA_FIELD)
+            && requestFilter == null
+            && executionInfo.clusterAliases().equals(Set.of(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY))) {
+                // HACK (latency experiment): the query references no mapped field, only metadata attributes whose types are fixed,
+                // so field_caps has nothing to tell us. Resolve the concrete indices and their index mode from local cluster state
+                // and skip the action entirely. Not security-aware: wildcard expansion here ignores index privileges.
+                System.err.println("--> field-caps skipped; resolving indices locally " + System.nanoTime());
+                ClusterState state = clusterService.state();
+                ProjectMetadata project = state.metadata().getProject();
+                String[] patterns = indexPattern.indexPattern().split(",");
+                String[] concrete = indexNameExpressionResolver.concreteIndexNames(state, IndexResolver.DEFAULT_OPTIONS, patterns);
+                Map<String, IndexProperties> indexProperties = new HashMap<>();
+                for (String name : concrete) {
+                    IndexMetadata indexMetadata = project.index(name);
+                    indexProperties.put(
+                        name,
+                        new IndexProperties(
+                            IndexMode.fromIndexSettingsWithoutValidation(indexMetadata.getSettings()),
+                            indexMetadata.getNumberOfShards()
+                        )
+                    );
+                }
+                EsIndex esIndex = new EsIndex(
+                    indexPattern.indexPattern(),
+                    Map.of(),
+                    indexProperties,
+                    Map.of(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, List.of(patterns)),
+                    Map.of(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, List.of(concrete))
+                );
+                System.err.println("--> local index resolution done " + System.nanoTime());
+                listener.onResponse(result.withIndices(indexPattern, IndexResolution.valid(esIndex, indexProperties.keySet(), Map.of())));
+            } else {
+                executionInfo.queryProfile().incFieldCapsCalls();
+                indexResolver.resolveMainIndicesVersioned(
+                    indexPattern.indexPattern(),
+                    result.fieldNames,
+                    createQueryFilter(indexMode, requestFilter),
+                    includeAllDimensions(indexMode, preAnalysis),
+                    // TODO: In case of subqueries, the different main index resolutions don't know about each other's minimum version.
+                    // This is bad because `FROM (FROM remote1:*) (FROM remote2:*)` can have different minimum versions
+                    // while resolving each subquery's main index pattern. We'll determine the correct overall minimum transport version
+                    // in the end because we keep updating the PreAnalysisResult after each resolution; but the EsIndex objects may be
+                    // inconsistent with this version:
+                    // The main index pattern from a subquery that we resolve first may have a higher min version in the field caps response
+                    // than an index pattern that we resolve later.
+                    // Thus, the EsIndex for `FROM remote1:*` may contain data types that aren't supported on the overall minimum version
+                    // if we only find out that the overall version is actually lower when resolving `FROM remote2:*`.
+                    result.minimumTransportVersion(),
+                    preAnalysis.useAggregateMetricDoubleWhenNotSupported(),
+                    preAnalysis.useDenseVectorWhenNotSupported(),
+                    preAnalysis.hasTimeSeriesAggregation(),
+                    trackUnmappedFieldIndices,
+                    indicesExpressionGrouper,
+                    listener.delegateFailureAndWrap((l, indexResolution) -> {
+                        EsqlCCSUtils.updateExecutionInfoWithUnavailableClusters(executionInfo, indexResolution.inner().failures());
+                        maybeRetryConcreteTimeSeriesResolution(indexPattern, indexMode, result, indexResolution, l, retryListener -> {
+                            executionInfo.queryProfile().incFieldCapsCalls();
+                            indexResolver.resolveMainIndicesVersioned(
+                                indexPattern.indexPattern(),
+                                result.fieldNames,
+                                requestFilter,
+                                false,
+                                indexResolution.minimumVersion(),
+                                preAnalysis.useAggregateMetricDoubleWhenNotSupported(),
+                                preAnalysis.useDenseVectorWhenNotSupported(),
+                                false,
+                                trackUnmappedFieldIndices,
+                                indicesExpressionGrouper,
+                                retryListener
+                            );
+                        });
+                    })
+                );
+            }
     }
 
     /**
