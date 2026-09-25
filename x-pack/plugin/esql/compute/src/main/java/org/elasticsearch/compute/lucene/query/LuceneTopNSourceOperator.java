@@ -287,45 +287,11 @@ public final class LuceneTopNSourceOperator extends LuceneOperator {
 
     private Page collect() throws IOException {
         assert doneCollecting == false;
-        long start = System.nanoTime();
-
+        // empty compute
         var scorer = getCurrentOrLoadNextScorer();
-
-        while (scorer != null) {
-            if (scorer.tags().isEmpty() == false) {
-                throw new UnsupportedOperationException("tags not supported by " + getClass());
-            }
-
-            try {
-                if (perShardCollector == null || perShardCollector.shardContext.index() != scorer.shardContext().index()) {
-                    perShardCollector = perShardCollectorProvider.newPerShardCollector(scorer.shardContext());
-                }
-                var leafCollector = perShardCollector.getLeafCollector(scorer.leafReaderContext());
-                scorer.scoreNextRange(leafCollector, scorer.leafReaderContext().reader().getLiveDocs(), NUM_DOCS_INTERVAL);
-            } catch (CollectionTerminatedException cte) {
-                // Lucene terminated early the collection (doing topN for an index that's sorted and the topN uses the same sorting)
-                scorer.markAsDone();
-            }
-
-            // check if the query has been cancelled.
-            driverContext.checkForEarlyTermination();
-
-            if (scorer.isDone()) {
-                var nextScorer = getCurrentOrLoadNextScorer();
-                if (nextScorer != null && nextScorer.shardContext().index() != scorer.shardContext().index()) {
-                    startEmitting();
-                    return emit();
-                }
-                scorer = nextScorer;
-            }
-
-            // When it takes a long time to start emitting pages we need to return back to the driver so we can update its status.
-            // Even if this should almost never happen, we want to update the driver status even when a query runs "forever".
-            if (System.nanoTime() - start > Driver.DEFAULT_STATUS_INTERVAL.getNanos()) {
-                return null;
-            }
+        if (scorer != null) {
+            scorer.markAsDone();
         }
-
         doneCollecting = true;
         startEmitting();
         return emit();
