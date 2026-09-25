@@ -22,6 +22,7 @@ import org.elasticsearch.cluster.routing.SplitShardCountSummary;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.logging.HeaderWarning;
+import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.compute.lucene.EmptyIndexedByShardId;
 import org.elasticsearch.compute.lucene.IndexedByShardId;
@@ -884,45 +885,57 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                     computeListener,
                     searchContexts
                 );
-                dataNodeRequestExecutor.start();
-                System.err.println("--> data batch 0 started; planning node_reduce " + System.nanoTime());
-                // run the node-level reduction
+                // HACK (latency experiment): plan and start the node-level reduction on a worker, before and in parallel with
+                // the data batch below. The reduce driver only needs the internal exchange and the external sink, both of
+                // which exist already; it will simply wait on the internal exchange until the data drivers produce pages.
                 var reductionListener = computeListener.acquireCompute();
-                computeService.runCompute(
-                    task,
-                    new ComputeContext(
-                        request.sessionId(),
-                        ComputeService.REDUCE_DESCRIPTION,
-                        request.clusterAlias(),
-                        flags,
-                        searchContexts.globalView(),
-                        request.configuration(),
-                        new FoldContext(request.pragmas().foldLimit().getBytes()),
-                        internalExchange::exchangeSource,
-                        () -> externalSink.createExchangeSink(() -> {}),
-                        request.retainSearchContexts(),
-                        request.singleNodeOptimizations()
-                    ),
-                    reducePlan,
-                    plannerSettings,
-                    // Local physical optimization is aimed at data nodes. For node-reduce-level reduction we precompute the final physical
-                    // plan and pass it in reducePlan. We don't need any additional optimizations.
-                    LocalPhysicalOptimization.DISABLED,
-                    planTimeProfile,
-                    ActionListener.wrap(resp -> {
-                        // don't return until all pages are fetched
-                        System.err.println("--> node_reduce drivers done; waiting for external sink drain " + System.nanoTime());
-                        externalSink.addCompletionListener(ActionListener.running(() -> {
-                            System.err.println("--> external sink drained " + System.nanoTime());
-                            exchangeService.finishSinkHandler(externalId, null);
-                            reductionListener.onResponse(resp);
-                        }));
-                    }, e -> {
+                final ComputeContext reduceContext = new ComputeContext(
+                    request.sessionId(),
+                    ComputeService.REDUCE_DESCRIPTION,
+                    request.clusterAlias(),
+                    flags,
+                    searchContexts.globalView(),
+                    request.configuration(),
+                    new FoldContext(request.pragmas().foldLimit().getBytes()),
+                    internalExchange::exchangeSource,
+                    () -> externalSink.createExchangeSink(() -> {}),
+                    request.retainSearchContexts(),
+                    request.singleNodeOptimizations()
+                );
+                System.err.println("--> submitting node_reduce to worker " + System.nanoTime());
+                transportService.getThreadPool().executor(EsqlPlugin.computePool()).execute(new AbstractRunnable() {
+                    @Override
+                    protected void doRun() {
+                        computeService.runCompute(
+                            task,
+                            reduceContext,
+                            reducePlan,
+                            plannerSettings,
+                            // Local physical optimization is aimed at data nodes. For node-reduce-level reduction we precompute the
+                            // final physical plan and pass it in reducePlan. We don't need any additional optimizations.
+                            LocalPhysicalOptimization.DISABLED,
+                            planTimeProfile,
+                            ActionListener.wrap(resp -> {
+                                // don't return until all pages are fetched
+                                System.err.println("--> node_reduce drivers done; waiting for external sink drain " + System.nanoTime());
+                                externalSink.addCompletionListener(ActionListener.running(() -> {
+                                    System.err.println("--> external sink drained " + System.nanoTime());
+                                    exchangeService.finishSinkHandler(externalId, null);
+                                    reductionListener.onResponse(resp);
+                                }));
+                            }, this::onFailure)
+                        );
+                    }
+
+                    @Override
+                    public void onFailure(Exception e) {
                         LOGGER.debug("Error in node-level reduction", e);
                         exchangeService.finishSinkHandler(externalId, e);
                         reductionListener.onFailure(e);
-                    })
-                );
+                    }
+                });
+                dataNodeRequestExecutor.start();
+                System.err.println("--> data batch 0 started " + System.nanoTime());
                 parentListener.onResponse(null);
             } catch (Exception e) {
                 exchangeService.finishSinkHandler(externalId, e);

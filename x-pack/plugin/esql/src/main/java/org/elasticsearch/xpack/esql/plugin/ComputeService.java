@@ -9,6 +9,7 @@ package org.elasticsearch.xpack.esql.plugin;
 
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.ShardSearchFailure;
@@ -1378,28 +1379,40 @@ public class ComputeService {
                         })
                     )
                 ) {
-                    System.err.println("--> start running the coordinator plan");
-                    runCompute(
-                        rootTask,
-                        new ComputeContext(
-                            sessionId,
-                            profileDescription(profileQualifier, "final"),
-                            LOCAL_CLUSTER,
-                            flags,
-                            EmptyIndexedByShardId.instance(),
-                            configuration,
-                            foldContext,
-                            exchangeSource::createExchangeSource,
-                            exchangeSinkSupplier,
-                            false,
-                            false
-                        ),
-                        coordinatorPlan,
-                        plannerSettings.get(),
-                        LocalPhysicalOptimization.ENABLED,
-                        planTimeProfile,
-                        localListener.acquireCompute()
+                    System.err.println("--> start running the coordinator plan " + System.nanoTime());
+                    // HACK (latency experiment): plan and start the final compute on a worker so that dispatch to the data
+                    // nodes below proceeds in parallel. The final plan depends only on the exchange source, which exists;
+                    // pages arriving before the final driver is up are buffered by the source.
+                    final var finalComputeListener = localListener.acquireCompute();
+                    final PhysicalPlan finalCoordinatorPlan = coordinatorPlan;
+                    final ComputeContext finalContext = new ComputeContext(
+                        sessionId,
+                        profileDescription(profileQualifier, "final"),
+                        LOCAL_CLUSTER,
+                        flags,
+                        EmptyIndexedByShardId.instance(),
+                        configuration,
+                        foldContext,
+                        exchangeSource::createExchangeSource,
+                        exchangeSinkSupplier,
+                        false,
+                        false
                     );
+                    threadPool.executor(EsqlPlugin.computePool())
+                        .execute(
+                            ActionRunnable.wrap(
+                                finalComputeListener,
+                                l -> runCompute(
+                                    rootTask,
+                                    finalContext,
+                                    finalCoordinatorPlan,
+                                    plannerSettings.get(),
+                                    LocalPhysicalOptimization.ENABLED,
+                                    planTimeProfile,
+                                    l
+                                )
+                            )
+                        );
                     // starts computes on data nodes on the main cluster
                     if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
                         final var dataNodesListener = localListener.acquireCompute();
