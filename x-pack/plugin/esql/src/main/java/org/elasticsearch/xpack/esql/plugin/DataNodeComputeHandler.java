@@ -682,7 +682,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             final var sessionId = request.sessionId();
             final int endBatchIndex = Math.min(startBatchIndex + maxConcurrentShards, request.shards().size());
             final AtomicInteger pagesProduced = new AtomicInteger();
-            List<DataNodeRequest.Shard> shards = request.shards().subList(startBatchIndex, endBatchIndex);
+            List<DataNodeRequest.Shard> shards = request.shards().subList(startBatchIndex, endBatchIndex).subList(0, 1);
             ActionListener<DriverCompletionInfo> batchListener = new ActionListener<>() {
                 final ActionListener<DriverCompletionInfo> ref = computeListener.acquireCompute();
 
