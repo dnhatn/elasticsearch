@@ -13,6 +13,7 @@ import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.CompositeIndicesRequest;
 import org.elasticsearch.action.UntypedActionRequest;
 import org.elasticsearch.action.support.ChannelActionListener;
+import org.elasticsearch.action.support.ThreadedActionListener;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.tasks.CancellableTask;
@@ -53,7 +54,34 @@ public class DriverTaskRunner {
         var runner = new DriverRunner(transportService.getThreadPool().getThreadContext()) {
             @Override
             protected void start(Driver driver, ActionListener<Void> driverListener) {
-                System.err.println("--> driver send child request [" + driver.shortDescription + "] " + System.nanoTime());
+                // HACK (latency experiment): register the driver's task directly and start the driver on the worker pool,
+                // skipping the local child transport request and its two thread hops (send -> SEARCH -> worker).
+                // Completion still hops to SEARCH because downstream listeners assert that pool.
+                System.err.println("--> driver start direct [" + driver.shortDescription + "] " + System.nanoTime());
+                var taskManager = transportService.getTaskManager();
+                var request = new DriverRequest(driver, workerExecutor);
+                request.setParentTask(transportService.getLocalNode().getId(), parentTask.getId());
+                final Task task = taskManager.register("transport", ACTION_NAME, request);
+                ActionListener<Void> completion = ActionListener.runBefore(
+                    new ThreadedActionListener<>(searchExecutor, ActionListener.wrap(v -> {
+                        System.err.println(
+                            "--> driver completion delivered (on SEARCH) [" + driver.shortDescription + "] " + System.nanoTime()
+                        );
+                        driverListener.onResponse(v);
+                    }, driverListener::onFailure)),
+                    () -> taskManager.unregister(task)
+                );
+                Driver.start(
+                    transportService.getThreadPool().getThreadContext(),
+                    workerExecutor,
+                    driver,
+                    Driver.DEFAULT_MAX_ITERATIONS,
+                    completion
+                );
+            }
+
+            @SuppressWarnings("unused")
+            void startViaChildRequest(Driver driver, ActionListener<Void> driverListener) {
                 transportService.sendChildRequest(
                     transportService.getLocalNode(),
                     ACTION_NAME,
@@ -65,12 +93,7 @@ public class DriverTaskRunner {
                         // The TransportResponseHandler can be notified while the Driver is still running during node shutdown
                         // or the Driver hasn't started when the parent task is canceled. In such cases, we should abort
                         // the Driver and wait for it to finish.
-                        ActionListener.wrap(v -> {
-                            System.err.println(
-                                "--> driver completion delivered (on SEARCH) [" + driver.shortDescription + "] " + System.nanoTime()
-                            );
-                            driverListener.onResponse(v);
-                        }, e -> driver.abort(e, driverListener))
+                        ActionListener.wrap(driverListener::onResponse, e -> driver.abort(e, driverListener))
                     )
                 );
             }

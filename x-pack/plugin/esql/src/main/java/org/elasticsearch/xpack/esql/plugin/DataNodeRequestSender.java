@@ -10,6 +10,7 @@ package org.elasticsearch.xpack.esql.plugin;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
+import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.NoShardAvailableActionException;
 import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.search.SearchShardsGroup;
@@ -17,14 +18,18 @@ import org.elasticsearch.action.search.SearchShardsRequest;
 import org.elasticsearch.action.search.SearchShardsResponse;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.action.support.TransportActions;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodeRole;
 import org.elasticsearch.cluster.project.ProjectResolver;
+import org.elasticsearch.cluster.routing.IndexRoutingTable;
+import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
 import org.elasticsearch.cluster.routing.SplitShardCountSummary;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.breaker.CircuitBreakingException;
 import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
+import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.compute.operator.DriverCompletionInfo;
 import org.elasticsearch.compute.operator.FailureCollector;
 import org.elasticsearch.index.Index;
@@ -503,6 +508,46 @@ abstract class DataNodeRequestSender {
      * to a situation where the column structure (i.e., matched data types) differs depending on the query.
      */
     void searchShards(Set<String> concreteIndices, ActionListener<TargetShards> listener) {
+        // HACK (latency experiment): resolve shard targets straight from the local routing table instead of going through
+        // the search_shards action. No coordinator rewrite / can_match, no alias filters, nothing reported as skipped.
+        final TargetShards targetShards;
+        try {
+            var project = projectResolver.getProjectState(clusterService.state());
+            Map<ShardId, TargetShard> shards = new HashMap<>();
+            for (String index : concreteIndices) {
+                IndexMetadata indexMetadata = project.metadata().index(index);
+                IndexRoutingTable indexRouting = project.routingTable().index(index);
+                if (indexMetadata == null || indexRouting == null) {
+                    continue;
+                }
+                for (int i = 0; i < indexRouting.size(); i++) {
+                    IndexShardRoutingTable shardRouting = indexRouting.shard(i);
+                    List<DiscoveryNode> allocatedNodes = new ArrayList<>();
+                    shardRouting.allShards()
+                        .filter(shard -> shard.active() && shard.isSearchable())
+                        .forEach(shard -> allocatedNodes.add(project.cluster().nodes().get(shard.currentNodeId())));
+                    ShardId shardId = shardRouting.shardId();
+                    shards.put(
+                        shardId,
+                        new TargetShard(shardId, allocatedNodes, AliasFilter.EMPTY, SplitShardCountSummary.forSearch(indexMetadata, i))
+                    );
+                }
+            }
+            targetShards = new TargetShards(shards, shards.size(), 0);
+        } catch (Exception e) {
+            listener.onFailure(e);
+            return;
+        }
+        // the rest of the sender asserts it runs on SEARCH, which the transport response path used to guarantee
+        if (ThreadPool.Names.SEARCH.equals(EsExecutors.executorName(Thread.currentThread()))) {
+            listener.onResponse(targetShards);
+        } else {
+            searchExecutor.execute(ActionRunnable.supply(listener, () -> targetShards));
+        }
+    }
+
+    @SuppressWarnings("unused")
+    void searchShardsViaAction(Set<String> concreteIndices, ActionListener<TargetShards> listener) {
         ActionListener<SearchShardsResponse> searchShardsListener = listener.map(resp -> {
             Map<String, DiscoveryNode> nodes = newHashMap(resp.getNodes().size());
             for (DiscoveryNode node : resp.getNodes()) {
