@@ -287,14 +287,13 @@ public final class LuceneTopNSourceOperator extends LuceneOperator {
 
     private Page collect() throws IOException {
         assert doneCollecting == false;
-        // empty compute
         var scorer = getCurrentOrLoadNextScorer();
         if (scorer != null) {
             scorer.markAsDone();
+        } else {
+            doneCollecting = true;
         }
-        doneCollecting = true;
-        startEmitting();
-        return emit();
+        return null;
     }
 
     private boolean isEmitting() {
