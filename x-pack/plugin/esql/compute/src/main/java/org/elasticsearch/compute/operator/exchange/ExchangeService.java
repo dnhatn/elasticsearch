@@ -315,7 +315,13 @@ public final class ExchangeService extends AbstractLifecycleComponent {
         @Override
         public void messageReceived(ExchangeRequest request, TransportChannel channel, Task exchangeTask) {
             final String exchangeId = request.exchangeId();
-            ActionListener<ExchangeResponse> listener = new ChannelActionListener<>(channel);
+            System.err.println(
+                "--> exchange fetch received [" + exchangeId + "] sourcesFinished=" + request.sourcesFinished() + " " + System.nanoTime()
+            );
+            ActionListener<ExchangeResponse> listener = new ChannelActionListener<ExchangeResponse>(channel).map(r -> {
+                System.err.println("--> exchange fetch responding [" + exchangeId + "] finished=" + r.finished() + " " + System.nanoTime());
+                return r;
+            });
             final ExchangeSinkHandler sinkHandler = sinks.get(exchangeId);
             if (sinkHandler == null) {
                 listener.onResponse(new ExchangeResponse(blockFactory, null, true));
@@ -453,6 +459,15 @@ public final class ExchangeService extends AbstractLifecycleComponent {
                 }
                 listener = ActionListener.runAfter(listener, () -> blockFactory.breaker().addWithoutBreaking(-reservedBytes));
             }
+            System.err.println(
+                "--> exchange fetch send [" + exchangeId + "] allSourcesFinished=" + allSourcesFinished + " " + System.nanoTime()
+            );
+            listener = listener.map(r -> {
+                System.err.println(
+                    "--> exchange fetch response (on SEARCH) [" + exchangeId + "] finished=" + r.finished() + " " + System.nanoTime()
+                );
+                return r;
+            });
             transportService.sendChildRequest(
                 connection,
                 EXCHANGE_ACTION_NAME,

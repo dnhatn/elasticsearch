@@ -53,6 +53,7 @@ public class DriverTaskRunner {
         var runner = new DriverRunner(transportService.getThreadPool().getThreadContext()) {
             @Override
             protected void start(Driver driver, ActionListener<Void> driverListener) {
+                System.err.println("--> driver send child request [" + driver.shortDescription + "] " + System.nanoTime());
                 transportService.sendChildRequest(
                     transportService.getLocalNode(),
                     ACTION_NAME,
@@ -64,7 +65,12 @@ public class DriverTaskRunner {
                         // The TransportResponseHandler can be notified while the Driver is still running during node shutdown
                         // or the Driver hasn't started when the parent task is canceled. In such cases, we should abort
                         // the Driver and wait for it to finish.
-                        ActionListener.wrap(driverListener::onResponse, e -> driver.abort(e, driverListener))
+                        ActionListener.wrap(v -> {
+                            System.err.println(
+                                "--> driver completion delivered (on SEARCH) [" + driver.shortDescription + "] " + System.nanoTime()
+                            );
+                            driverListener.onResponse(v);
+                        }, e -> driver.abort(e, driverListener))
                     )
                 );
             }
@@ -124,6 +130,7 @@ public class DriverTaskRunner {
     private record DriverRequestHandler(TransportService transportService) implements TransportRequestHandler<DriverRequest> {
         @Override
         public void messageReceived(DriverRequest request, TransportChannel channel, Task task) {
+            System.err.println("--> driver request received (on SEARCH) [" + request.driver.shortDescription + "] " + System.nanoTime());
             var listener = new ChannelActionListener<ActionResponse.Empty>(channel);
             Driver.start(
                 transportService.getThreadPool().getThreadContext(),

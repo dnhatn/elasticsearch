@@ -124,8 +124,11 @@ public final class EsqlResponseListener extends RestRefCountedChunkedToXContentL
 
     @Override
     protected void processResponse(EsqlQueryResponse esqlQueryResponse) throws IOException {
+        System.err.println("--> rest response received from transport " + System.nanoTime());
         logPartialFailures(channel.request().rawPath(), channel.request().params(), esqlQueryResponse.getExecutionInfo());
-        channel.sendResponse(buildResponse(esqlQueryResponse));
+        RestResponse restResponse = buildResponse(esqlQueryResponse);
+        System.err.println("--> rest response built, sending " + System.nanoTime());
+        channel.sendResponse(restResponse);
     }
 
     private RestResponse buildResponse(EsqlQueryResponse esqlResponse) throws IOException {

@@ -1195,6 +1195,7 @@ public class ComputeService {
         long splitDiscoveryStart,
         SiblingPlacement placement
     ) {
+        System.err.println("--> executePlanAfterDiscovery (after SEARCH hop) " + System.nanoTime());
         final ExternalDistributionResult distributionResult;
         try {
             // SEARCH-thread CPU after the IO hop (distribution / coalesce). Footer and probe CPU
@@ -1224,6 +1225,7 @@ public class ComputeService {
         Map<String, OriginalIndices> clusterToConcreteIndices = getIndices(resolvedPlan, EsRelation::concreteIndices);
         boolean hasConcreteIndices = clusterToConcreteIndices.values().stream().anyMatch(indices -> indices.indices().length > 0);
         var coordinatorAndDataNode = PlannerUtils.breakPlanBetweenCoordinatorAndDataNode(resolvedPlan, configuration);
+        System.err.println("--> plan split coordinator/data done " + System.nanoTime());
         PhysicalPlan coordinatorPlan = coordinatorAndDataNode.v1();
         try {
             ensureNoRemoteFetchBoundary("coordinator", coordinatorPlan);
@@ -1325,6 +1327,7 @@ public class ComputeService {
          */
         List<Attribute> outputAttributes = resolvedPlan.output();
         var exchangeSource = new ExchangeSourceHandler(configuration.pragmas().exchangeBufferSize(), searchExecutor);
+        System.err.println("--> exchange source created " + System.nanoTime());
         // Releases retained sessions on every data node at query end. Fetch operators also release the sessions
         // they actually fetch from (the winning nodes), earlier. The overlap is intentional and safe: release is
         // idempotent, and this releaser is the only one that reaches nodes whose rows lost the global TopN.

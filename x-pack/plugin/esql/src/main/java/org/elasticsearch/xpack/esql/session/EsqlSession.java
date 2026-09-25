@@ -402,6 +402,7 @@ public class EsqlSession {
         PlanRunner planRunner,
         ActionListener<Versioned<Result>> listener
     ) {
+        System.err.println("--> session execute start " + System.nanoTime());
         executionInfo.queryProfile().planning().start();
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH);
         assert executionInfo != null : "Null EsqlExecutionInfo";
@@ -603,14 +604,17 @@ public class EsqlSession {
                     );
 
                     var columnMetadata = new Holder<Map<NameId, Map<String, Object>>>();
+                    System.err.println("--> pre-optimize start " + System.nanoTime());
                     SubscribableListener.<LogicalPlan>newForked(l -> preOptimizedPlan(plan, logicalPlanPreOptimizer, planTimeProfile, l))
-                        .<LogicalPlan>andThen(
-                            (l, p) -> preMapper.preMapper(
+                        .<LogicalPlan>andThen((l, p) -> {
+                            System.err.println("--> logical optimize start " + System.nanoTime());
+                            preMapper.preMapper(
                                 new Versioned<>(optimizedPlan(p, logicalPlanOptimizer, planTimeProfile), minimumVersion),
                                 l
-                            )
-                        )
+                            );
+                        })
                         .<Result>andThen((l, p) -> {
+                            System.err.println("--> logical optimize + premapper done " + System.nanoTime());
                             columnMetadata.set(
                                 createColumnMetadata(
                                     p,
@@ -2697,6 +2701,7 @@ public class EsqlSession {
             }
             TimeSpanMarker analysisProfile = executionInfo.queryProfile().analysis();
             analysisProfile.start();
+            System.err.println("--> analysis start " + System.nanoTime());
             LogicalPlan plan = analyzedPlan(
                 parsed,
                 unmappedResolution,
@@ -2707,6 +2712,7 @@ public class EsqlSession {
                 preserveViewBoundaries
             );
             analysisProfile.stop();
+            System.err.println("--> analysis done " + System.nanoTime());
             LOGGER.debug("Analyzed plan ({}):\n{}", description, plan);
             // Analysis succeeded on the first attempt. For unmapped_fields=nullify/load we intentionally do NOT re-resolve without the
             // request filter to recover a field that is mapped only in a filter-pruned index: once the filter prunes an index we keep it
@@ -2749,6 +2755,7 @@ public class EsqlSession {
         // Capture the optimized plan before mapping so a failure in physical planning still
         // surfaces it in the failure log.
         planSnapshot = planSnapshot.withOptimized(optimizedPlan);
+        System.err.println("--> physical plan start " + System.nanoTime());
         PhysicalPlan physicalPlan = optimizedPhysicalPlan(optimizedPlan, physicalPlanOptimizer, planTimeProfile);
         physicalPlan = PlannerUtils.integrateEsFilterIntoFragment(
             physicalPlan,
@@ -2756,6 +2763,7 @@ public class EsqlSession {
             physicalPlanOptimizer.context().minimumVersion()
         );
         physicalPlan = EstimatesRowSize.estimateRowSize(0, physicalPlan);
+        System.err.println("--> physical plan done " + System.nanoTime());
         // Overwrite on each call so a failure during subplan execution surfaces the most recent
         // physical plan we built.
         planSnapshot = planSnapshot.withPhysical(physicalPlan);

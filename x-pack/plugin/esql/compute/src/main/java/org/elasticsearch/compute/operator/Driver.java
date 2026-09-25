@@ -545,8 +545,10 @@ public class Driver implements Releasable, Describable {
         AbstractRunnable task = new AbstractRunnable() {
             @Override
             protected void doRun() {
+                System.err.println("--> driver run (on worker) [" + driver.shortDescription + "] " + System.nanoTime());
                 SubscribableListener<Void> fut = driver.run(maxTime, maxIterations, currentTimeNanosSupplier);
                 if (driver.isFinished()) {
+                    System.err.println("--> driver finished [" + driver.shortDescription + "] " + System.nanoTime());
                     onComplete(listener);
                     return;
                 }

@@ -266,6 +266,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                                 groupTask,
                                 TransportRequestOptions.EMPTY,
                                 new ActionListenerResponseHandler<>(computeListener.acquireCompute().map(r -> {
+                                    System.err.println("--> data node response received on coordinator " + System.nanoTime());
                                     nodeResponseRef.set(r);
                                     return r.completionInfo();
                                 }), in -> new DataNodeComputeResponse(in, threadContext), searchExecutor)
@@ -717,6 +718,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                 configuration,
                 request.aliasFilters(),
                 ActionListener.wrap(acquiredSearchContexts -> {
+                    System.err.println("--> search contexts acquired " + System.nanoTime());
                     assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH);
                     if (acquiredSearchContexts.isEmpty()) {
                         batchListener.onResponse(DriverCompletionInfo.EMPTY);
@@ -852,12 +854,10 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
     ) {
         System.err.println("runComputeOnDataNode " + System.nanoTime());
         final Map<ShardId, Exception> shardLevelFailures = new HashMap<>();
-        try (
-            ComputeListener computeListener = new ComputeListener(
-                computeService.cancelQueryOnFailure(task),
-                listener.map(profiles -> new DataNodeComputeResponse(profiles, shardLevelFailures))
-            )
-        ) {
+        try (ComputeListener computeListener = new ComputeListener(computeService.cancelQueryOnFailure(task), listener.map(profiles -> {
+            System.err.println("--> data node response sending " + System.nanoTime());
+            return new DataNodeComputeResponse(profiles, shardLevelFailures);
+        }))) {
             var parentListener = computeListener.acquireAvoid();
             final LocalExchange internalExchange = new LocalExchange(request.pragmas().exchangeBufferSize());
             try {
@@ -885,6 +885,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                     searchContexts
                 );
                 dataNodeRequestExecutor.start();
+                System.err.println("--> data batch 0 started; planning node_reduce " + System.nanoTime());
                 // run the node-level reduction
                 var reductionListener = computeListener.acquireCompute();
                 computeService.runCompute(
@@ -910,7 +911,9 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
                     planTimeProfile,
                     ActionListener.wrap(resp -> {
                         // don't return until all pages are fetched
+                        System.err.println("--> node_reduce drivers done; waiting for external sink drain " + System.nanoTime());
                         externalSink.addCompletionListener(ActionListener.running(() -> {
+                            System.err.println("--> external sink drained " + System.nanoTime());
                             exchangeService.finishSinkHandler(externalId, null);
                             reductionListener.onResponse(resp);
                         }));
@@ -991,6 +994,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             listener.onFailure(new IllegalStateException("expected exchange sink for a remote compute; got " + request.plan()));
             return;
         }
+        System.err.println("--> reduction plan computed " + System.nanoTime());
         request = new DataNodeRequest(
             nodeReduceSessionId, // internal session
             request.configuration(),
