@@ -330,6 +330,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
     @Override
     protected void doExecute(Task task, EsqlQueryRequest request, ActionListener<EsqlQueryResponse> listener) {
         // workaround for https://github.com/elastic/elasticsearch/issues/97916 - TODO remove this when we can
+        System.err.println("--> transport doExecute (before SEARCH fork) " + System.nanoTime());
         requestExecutor.execute(
             ActionRunnable.wrap(
                 listener.<EsqlQueryResponse>delegateFailureAndWrap(ActionListener::respondAndRelease),
@@ -339,6 +340,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
     }
 
     private void doExecuteForked(Task task, EsqlQueryRequest request, ActionListener<EsqlQueryResponse> listener) {
+        System.err.println("--> transport doExecuteForked (on SEARCH) " + System.nanoTime());
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH);
         if (requestIsAsync(request)) {
             asyncTaskManagementService.asyncExecute(request, request.waitForCompletionTimeout(), request.keepOnCompletion(), listener);
@@ -411,10 +413,12 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             externalSourceConcurrency(),
             ((CancellableTask) task)::isCancelled,
             ActionListener.wrap(result -> {
+                System.err.println("--> transport result received " + System.nanoTime());
                 recordCCSTelemetry(task, executionInfo, request, null);
                 planExecutor.metrics().recordTook(executionInfo.overallTook().millis());
                 collectMetrics(result.inner());
                 var response = toResponse(task, request, request.profile(), result);
+                System.err.println("--> transport response built " + System.nanoTime());
                 assert response.isAsync() == request.async() : "The response must be async if the request was async";
 
                 if (response.isAsync()) {
