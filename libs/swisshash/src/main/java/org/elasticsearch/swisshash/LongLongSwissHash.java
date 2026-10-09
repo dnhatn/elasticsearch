@@ -25,6 +25,7 @@ import org.elasticsearch.core.Releasables;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -646,22 +647,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable, P
 
         private void appendKeys(long[] keys, int[] ids, int len) {
             assert size == 0 : size;
-            int pageIndex = 0;
-            byte[] keyPage = keyPages[0];
-            int indexInPage = 0;
             for (int id = 0; id < len; id++) {
-                long key1 = keys[id * 2];
-                long key2 = keys[id * 2 + 1];
-                long hash = hash(key1, key2);
+                long hash = hash(keys[id * 2], keys[id * 2 + 1]);
                 insert((int) hash, control(hash), id);
-                if (indexInPage == PageCacheRecycler.PAGE_SIZE_IN_BYTES) {
-                    keyPage = keyPages[++pageIndex];
-                    indexInPage = 0;
-                }
-                LONG_HANDLE.set(keyPage, indexInPage, key1);
-                LONG_HANDLE.set(keyPage, indexInPage + Long.BYTES, key2);
-                indexInPage += KEY_SIZE;
             }
+            copyKeys(keys, 0, len);
             for (int i = 0; i < len; i++) {
                 ids[i] = i;
             }
@@ -680,33 +670,73 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable, P
                 appendKeys(keys, ids, len);
                 return true;
             }
-            int offset = 0;
-            long dummy = 0;
-            while (offset < len) {
-                final int chunkSize = Math.min(len - offset, CHUNK_SIZE);
-                // compute hashes and fetch id page refs
-                for (int i = 0; i < chunkSize; i++) {
-                    final int absIdx = (offset + i) * 2;
-                    final long hash = hash(keys[absIdx], keys[absIdx + 1]);
-                    batchHashes[i] = hash;
-                    batchPagesRefs[i] = idPages[((int) hash & mask) >> ID_PAGE_SHIFT];
-                }
-                // touch controls and id-hash data to warm caches
-                for (int i = 0; i < chunkSize; i++) {
-                    final int group = ((int) batchHashes[i]) & mask;
-                    dummy ^= controlData[group];
-                    dummy ^= batchPagesRefs[i][idOffset(group) & PAGE_MASK];
-                }
-                // insert using pre-computed hashes
-                for (int r = 0; r < chunkSize; r++) {
-                    final int absIdx = (offset + r) * 2;
-                    final int id = addImpl(keys[absIdx], keys[absIdx + 1], batchHashes[r]);
-                    ids[offset + r] = id >= 0 ? id : -1 - id;
-                }
-                offset += chunkSize;
+            for (int i = 0; i < len; i++) {
+                long k1 = keys[i * 2];
+                long k2 = keys[i * 2 + 1];
+                long hash = hash(k1, k2);
+                int id = addImplWithoutKeys(k1, k2, hash, preSize);
+                ids[i] = id >= 0 ? id : -1 - id;
             }
-            SINK_HANDLE.setOpaque(this, dummy);
-            return size == preSize + len;
+            if (size == preSize + len) {
+                copyKeys(keys, preSize, len);
+                return true;
+            }
+            for (int i = 0; i < len; i++) {
+                final int id = ids[i];
+                if (id >= preSize) {
+                    setKeys(keyOffset(id), keys[i * 2], keys[i * 2 + 1]);
+                }
+            }
+            return false;
+        }
+
+        private int addImplWithoutKeys(final long key1, final long key2, final long hash, final int preSize) {
+            final byte control = control(hash);
+            final int storedHash = storedHash(hash);
+            int group = (int) hash & mask;
+            for (;;) {
+                final ByteVector vec = ByteVector.fromArray(BS, controlData, group);
+                long matches = vec.eq(control).toLong();
+                while (matches != 0) {
+                    final int checkSlot = (group + Long.numberOfTrailingZeros(matches)) & mask;
+                    final long packed = idAndHash(checkSlot);
+                    if ((int) packed == storedHash) {
+                        final int id = (int) (packed >>> 32);
+                        if (id < preSize && equalKeys(keyOffset(id), key1, key2)) {
+                            return -1 - id;
+                        }
+                    }
+                    matches &= matches - 1;
+                }
+                final long empty = vec.eq(EMPTY).toLong();
+                if (empty != 0) {
+                    final int insertSlot = (group + Long.numberOfTrailingZeros(empty)) & mask;
+                    final int id = size++;
+                    final long packed = ((long) id << 32) | Integer.toUnsignedLong(storedHash);
+                    final int idOffset = idOffset(insertSlot);
+                    LONG_HANDLE.set(idPages[idOffset >> PAGE_SHIFT], idOffset & PAGE_MASK, packed);
+                    insertAtSlot(insertSlot, control);
+                    return id;
+                }
+                group = (group + BYTE_VECTOR_LANES) & mask;
+            }
+        }
+
+        private void copyKeys(final long[] keys, final int firstId, final int count) {
+            int from = 0;
+            long keyOffset = keyOffset(firstId);
+            final long end = keyOffset + (long) count * KEY_SIZE;
+            while (keyOffset < end) {
+                final int indexInPage = Math.toIntExact(keyOffset & PAGE_MASK);
+                final int bytes = Math.toIntExact(Math.min(PageCacheRecycler.PAGE_SIZE_IN_BYTES - indexInPage, end - keyOffset));
+                final byte[] page = keyPages[Math.toIntExact(keyOffset >> PAGE_SHIFT)];
+                ByteBuffer.wrap(page)
+                    .order(ByteOrder.nativeOrder())
+                    .asLongBuffer()
+                    .put(indexInPage / Long.BYTES, keys, from, bytes / Long.BYTES);
+                from += bytes / Long.BYTES;
+                keyOffset += bytes;
+            }
         }
 
         private boolean equalKeys(final long keyOffset, final long key1, final long key2) {
