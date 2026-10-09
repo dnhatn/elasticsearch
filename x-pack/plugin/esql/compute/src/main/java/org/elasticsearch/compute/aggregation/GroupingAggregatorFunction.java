@@ -106,6 +106,10 @@ public interface GroupingAggregatorFunction extends Releasable {
          *                 or multivalued
          */
         void add(int positionOffset, IntVector groupIds);
+
+        default void addAllNewGroups(int positionOffset, IntVector groupIds) {
+            add(positionOffset, groupIds);
+        }
     }
 
     /**
@@ -148,6 +152,11 @@ public interface GroupingAggregatorFunction extends Releasable {
         }
 
         @Override
+        public void addAllNewGroups(int positionOffset, IntVector groupIds) {
+            fn.addIntermediateInputAllNewGroups(positionOffset, groupIds, page);
+        }
+
+        @Override
         public void close() {
 
         }
@@ -177,6 +186,10 @@ public interface GroupingAggregatorFunction extends Releasable {
      * Add data produced by {@link #prepareEvaluateIntermediate}.
      */
     void addIntermediateInput(int positionOffset, IntVector groupIdVector, Page page);
+
+    default void addIntermediateInputAllNewGroups(int positionOffset, IntVector groupIdVector, Page page) {
+        addIntermediateInput(positionOffset, groupIdVector, page);
+    }
 
     /**
      * View into the agg that's prepared to emit results. Built with a {@code selected} range.

@@ -518,10 +518,12 @@ public class HashAggregationOperator implements Operator {
             class AddInput implements GroupingAggregatorFunction.AddInput {
                 long hashStart = System.nanoTime();
                 long aggStart;
+                int numKeys = blockHash.numKeys();
 
                 @Override
                 public void add(int positionOffset, IntArrayBlock groupIds) {
                     startAggEndHash();
+                    numKeys = blockHash.numKeys();
                     for (GroupingAggregatorFunction.AddInput p : prepared) {
                         p.add(positionOffset, groupIds);
                     }
@@ -531,6 +533,7 @@ public class HashAggregationOperator implements Operator {
                 @Override
                 public void add(int positionOffset, IntBigArrayBlock groupIds) {
                     startAggEndHash();
+                    numKeys = blockHash.numKeys();
                     for (GroupingAggregatorFunction.AddInput p : prepared) {
                         p.add(positionOffset, groupIds);
                     }
@@ -541,8 +544,21 @@ public class HashAggregationOperator implements Operator {
                 public void add(int positionOffset, IntVector groupIds) {
                     startAggEndHash();
                     assert assertGroupAssignments(page, positionOffset, groupIds);
-                    for (GroupingAggregatorFunction.AddInput p : prepared) {
-                        p.add(positionOffset, groupIds);
+                    final int positionCount = groupIds.getPositionCount();
+                    final int newNumKeys = blockHash.numKeys();
+                    final boolean allNewGroups = positionCount > 0
+                        && newNumKeys - numKeys == positionCount
+                        && groupIds.getInt(positionCount - 1) - groupIds.getInt(0) == positionCount - 1;
+                    numKeys = newNumKeys;
+                    if (allNewGroups) {
+                        assert assertAllNewGroups(groupIds);
+                        for (GroupingAggregatorFunction.AddInput p : prepared) {
+                            p.addAllNewGroups(positionOffset, groupIds);
+                        }
+                    } else {
+                        for (GroupingAggregatorFunction.AddInput p : prepared) {
+                            p.add(positionOffset, groupIds);
+                        }
                     }
                     end();
                 }
@@ -688,6 +704,19 @@ public class HashAggregationOperator implements Operator {
     protected IntVector customizeSelected(GroupingAggregator aggregator, IntVector selected) {
         selected.incRef();
         return selected;
+    }
+
+    private static boolean assertAllNewGroups(IntVector groupIds) {
+        final int positionCount = groupIds.getPositionCount();
+        final int first = groupIds.getInt(0);
+        final boolean[] seen = new boolean[positionCount];
+        for (int i = 0; i < positionCount; i++) {
+            final int offset = groupIds.getInt(i) - first;
+            assert offset >= 0 && offset < positionCount && seen[offset] == false
+                : "group ids of an all-new chunk must be distinct and contiguous";
+            seen[offset] = true;
+        }
+        return true;
     }
 
     protected boolean assertGroupAssignments(Page page, int positionOffset, IntVector groupIds) {

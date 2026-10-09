@@ -51,6 +51,9 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     private int capacity;
     private int[][] intPages;
     private long[][] longPages;
+    private boolean allOnes = true;
+    private int onesGroupIdFrom = Integer.MAX_VALUE;
+    private int onesGroupIdUpTo;
 
     private final List<Integer> channels;
     private final DriverContext driverContext;
@@ -85,10 +88,12 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         Block valuesBlock = page.getBlock(blockIndex());
         if (countAll == false) {
             if (valuesBlock.areAllValuesNull()) {
+                migrateFromAllOnes();
                 return null;
             }
             Vector valuesVector = valuesBlock.asVector();
             if (valuesVector == null) {
+                migrateFromAllOnes();
                 return new AddInput() {
                     @Override
                     public void add(int positionOffset, IntArrayBlock groupIds) {
@@ -113,17 +118,29 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         return new AddInput() {
             @Override
             public void add(int positionOffset, IntArrayBlock groupIds) {
+                migrateFromAllOnes();
                 addRawInput(groupIds);
             }
 
             @Override
             public void add(int positionOffset, IntBigArrayBlock groupIds) {
+                migrateFromAllOnes();
                 addRawInput(groupIds);
             }
 
             @Override
             public void add(int positionOffset, IntVector groupIds) {
+                migrateFromAllOnes();
                 addRawInput(groupIds);
+            }
+
+            @Override
+            public void addAllNewGroups(int positionOffset, IntVector groupIds) {
+                if (allOnes) {
+                    trackAllOnes(groupIds);
+                } else {
+                    addRawInput(groupIds);
+                }
             }
 
             @Override
@@ -196,6 +213,29 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         }
     }
 
+    private void trackAllOnes(IntVector groupIds) {
+        onesGroupIdFrom = Math.min(groupIds.getInt(0), onesGroupIdFrom);
+        onesGroupIdUpTo = Math.max(groupIds.getInt(groupIds.getPositionCount() - 1) + 1, onesGroupIdUpTo);
+    }
+
+    private void migrateFromAllOnes() {
+        if (allOnes == false) {
+            return;
+        }
+        allOnes = false;
+        if (onesGroupIdUpTo <= onesGroupIdFrom) {
+            return;
+        }
+        ensureCapacity(onesGroupIdUpTo);
+        assert intPages != null;
+        for (int id = onesGroupIdFrom; id < onesGroupIdUpTo;) {
+            final int indexInPage = id & INT_PAGE_MASK;
+            final int n = Math.min(INTS_PER_PAGE - indexInPage, onesGroupIdUpTo - id);
+            Arrays.fill(intPages[id >>> INT_PAGE_SHIFT], indexInPage, indexInPage + n, 1);
+            id += n;
+        }
+    }
+
     /**
      * This method is called for count all.
      */
@@ -232,11 +272,12 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
 
     @Override
     public void selectedMayContainUnseenGroups(SeenGroupIds seenGroupIds) {
-        // no need to track seen groups, as count returns 0 for groups without values.
+        migrateFromAllOnes();
     }
 
     @Override
     public void addIntermediateInput(int positionOffset, IntArrayBlock groups, Page page) {
+        migrateFromAllOnes();
         assert channels.size() == intermediateBlockCount();
         assert page.getBlockCount() >= blockIndex() + intermediateStateDesc().size();
         LongVector count = page.<LongBlock>getBlock(channels.get(0)).asVector();
@@ -257,6 +298,7 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
 
     @Override
     public void addIntermediateInput(int positionOffset, IntBigArrayBlock groups, Page page) {
+        migrateFromAllOnes();
         assert channels.size() == intermediateBlockCount();
         assert page.getBlockCount() >= blockIndex() + intermediateStateDesc().size();
         LongVector count = page.<LongBlock>getBlock(channels.get(0)).asVector();
@@ -280,11 +322,22 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         assert channels.size() == intermediateBlockCount();
         assert page.getBlockCount() >= blockIndex() + intermediateStateDesc().size();
         LongVector count = page.<LongBlock>getBlock(channels.get(0)).asVector();
+        migrateFromAllOnes();
         BooleanVector seen = page.<BooleanBlock>getBlock(channels.get(1)).asVector();
         assert count.getPositionCount() == seen.getPositionCount();
         for (int groupPosition = 0; groupPosition < groups.getPositionCount(); groupPosition++) {
             accumulateCount(groups.getInt(groupPosition), count.getLong(groupPosition + positionOffset));
         }
+    }
+
+    @Override
+    public void addIntermediateInputAllNewGroups(int positionOffset, IntVector groups, Page page) {
+        LongVector count = page.<LongBlock>getBlock(channels.get(0)).asVector();
+        if (allOnes && count.isConstant() && count.getLong(0) == 1L) {
+            trackAllOnes(groups);
+            return;
+        }
+        addIntermediateInput(positionOffset, groups, page);
     }
 
     @Override
@@ -434,8 +487,12 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
     }
 
     private void evaluateFinal(Block[] blocks, int offset, IntVector selectedInPage) {
-        try (LongVector.Builder builder = driverContext.blockFactory().newLongVectorFixedBuilder(selectedInPage.getPositionCount())) {
-            final int positionCount = selectedInPage.getPositionCount();
+        final int positionCount = selectedInPage.getPositionCount();
+        if (allOnes) {
+            blocks[offset] = driverContext.blockFactory().newConstantLongBlockWith(1L, positionCount);
+            return;
+        }
+        try (LongVector.Builder builder = driverContext.blockFactory().newLongVectorFixedBuilder(positionCount)) {
             final int[][] pages = intPages;
             if (pages != null) {
                 final int capacity = this.capacity;
@@ -461,6 +518,9 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         if (positionCount <= limit) {
             selected.incRef();
             return selected;
+        }
+        if (allOnes) {
+            return selected.slice(0, limit);
         }
         record GroupIdAndCount(int groupId, long count) {
 
@@ -709,8 +769,45 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         }
     }
 
+    static final class AllOnesPartitionedState implements PartitionedState {
+        private AllOnesPartitionedState() {
+
+        }
+
+        @Override
+        public boolean hasAllValues(int partition) {
+            return true;
+        }
+
+        @Override
+        public void releasePartition(CircuitBreaker breaker, int partition) {}
+
+        @Override
+        public void releaseAll(CircuitBreaker breaker) {
+
+        }
+    }
+
     @Override
     public PartitionSplitter createPartitioningSplitter(CircuitBreaker breaker) {
+        if (allOnes) {
+            return new PartitionSplitter() {
+                @Override
+                public PartitionedState finish() {
+                    return new AllOnesPartitionedState();
+                }
+
+                @Override
+                public void split(int firstId, short[] shiftedIds, int batchSize, int[] batchPartitionCounts, int[] partitionOffsets) {
+
+                }
+
+                @Override
+                public void release(CircuitBreaker breaker) {
+
+                }
+            };
+        }
         return new CountPartitionSplitter(breaker);
     }
 
@@ -719,6 +816,20 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
         if (length == 0) {
             return;
         }
+        if (source instanceof AllOnesPartitionedState) {
+            if (appendOnly && allOnes) {
+                final int first = dstIds[0];
+                onesGroupIdFrom = Math.min(first, onesGroupIdFrom);
+                onesGroupIdUpTo = Math.max(first + length, onesGroupIdUpTo);
+                return;
+            }
+            migrateFromAllOnes();
+            for (int i = 0; i < length; i++) {
+                accumulateCount(dstIds[i], 1);
+            }
+            return;
+        }
+        migrateFromAllOnes();
         final CountPartitionedState state = (CountPartitionedState) source;
         if (state.ints != null) {
             final int[] src = state.ints[partition];
