@@ -680,32 +680,13 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable, P
                 appendKeys(keys, ids, len);
                 return true;
             }
-            int offset = 0;
-            long dummy = 0;
-            while (offset < len) {
-                final int chunkSize = Math.min(len - offset, CHUNK_SIZE);
-                // compute hashes and fetch id page refs
-                for (int i = 0; i < chunkSize; i++) {
-                    final int absIdx = (offset + i) * 2;
-                    final long hash = hash(keys[absIdx], keys[absIdx + 1]);
-                    batchHashes[i] = hash;
-                    batchPagesRefs[i] = idPages[((int) hash & mask) >> ID_PAGE_SHIFT];
-                }
-                // touch controls and id-hash data to warm caches
-                for (int i = 0; i < chunkSize; i++) {
-                    final int group = ((int) batchHashes[i]) & mask;
-                    dummy ^= controlData[group];
-                    dummy ^= batchPagesRefs[i][idOffset(group) & PAGE_MASK];
-                }
-                // insert using pre-computed hashes
-                for (int r = 0; r < chunkSize; r++) {
-                    final int absIdx = (offset + r) * 2;
-                    final int id = addImpl(keys[absIdx], keys[absIdx + 1], batchHashes[r]);
-                    ids[offset + r] = id >= 0 ? id : -1 - id;
-                }
-                offset += chunkSize;
+            for (int i = 0; i < len; i++) {
+                long k1 = keys[i * 2];
+                long k2 = keys[i * 2 + 1];
+                long hash = hash(k1, k2);
+                int id = addImpl(k1, k2, hash);
+                ids[i] = id >= 0 ? id : -1 - id;
             }
-            SINK_HANDLE.setOpaque(this, dummy);
             return size == preSize + len;
         }
 
