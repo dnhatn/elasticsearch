@@ -684,10 +684,39 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable, P
                 long k1 = keys[i * 2];
                 long k2 = keys[i * 2 + 1];
                 long hash = hash(k1, k2);
-                int id = addImpl(k1, k2, hash);
+                int id = MERGE_WITHOUT_CONTROLS ? addImplWithoutControls(k1, k2, hash, preSize) : addImpl(k1, k2, hash);
                 ids[i] = id >= 0 ? id : -1 - id;
             }
             return size == preSize + len;
+        }
+
+        static final boolean MERGE_WITHOUT_CONTROLS = true;
+        private static final int MERGE_PROBE_SLOTS = 16;
+
+        private int addImplWithoutControls(final long key1, final long key2, final long hash, final int preSize) {
+            final int storedHash = storedHash(hash);
+            int slot = (int) hash & mask;
+            for (;;) {
+                for (int j = 0; j < MERGE_PROBE_SLOTS; j++) {
+                    final int checkSlot = (slot + j) & mask;
+                    final int idOffset = idOffset(checkSlot);
+                    final byte[] idPage = idPages[idOffset >> PAGE_SHIFT];
+                    final long packed = (long) LONG_HANDLE.get(idPage, idOffset & PAGE_MASK);
+                    if (packed == 0L) {
+                        final int id = size++;
+                        LONG_HANDLE.set(idPage, idOffset & PAGE_MASK, ((long) id << 32) | Integer.toUnsignedLong(storedHash));
+                        setKeys(keyOffset(id), key1, key2);
+                        return id;
+                    }
+                    if ((int) packed == storedHash) {
+                        final int id = (int) (packed >>> 32);
+                        if (id < preSize && equalKeys(keyOffset(id), key1, key2)) {
+                            return -1 - id;
+                        }
+                    }
+                }
+                slot = (slot + MERGE_PROBE_SLOTS) & mask;
+            }
         }
 
         private boolean equalKeys(final long keyOffset, final long key1, final long key2) {
@@ -732,6 +761,11 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable, P
 
         void clear() {
             Arrays.fill(controlData, EMPTY);
+            if (MERGE_WITHOUT_CONTROLS) {
+                for (byte[] page : idPages) {
+                    Arrays.fill(page, (byte) 0);
+                }
+            }
             insertProbes = 0;
         }
     }
