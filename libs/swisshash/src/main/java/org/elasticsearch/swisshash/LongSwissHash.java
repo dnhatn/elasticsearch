@@ -799,7 +799,7 @@ public final class LongSwissHash extends SwissHash implements LongHashTable, Par
         }
 
         void splitKeys(CircuitBreaker breaker, byte[][] keyPages, int idOffset, short[] positions, int[] fills) {
-            assert NUM_PARTITIONS * PARTITION_WRITE_BATCH <= Short.MAX_VALUE + 1 : "shifted ids of one batch must fit in the short value range";
+            assert NUM_PARTITIONS * PARTITION_WRITE_BATCH < Short.MAX_VALUE : "shifted ids of one batch must fit in the short value range";
             for (int p = 0; p < NUM_PARTITIONS; p++) {
                 final int c = fills[p];
                 if (c == 0) {

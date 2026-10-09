@@ -28,7 +28,7 @@ public interface PartitionedHashTable {
      * The number of partitions a hash table is split into.
      * Ideally, we should choose the number of partitions dynamically depending on the hash table size.
      */
-    int NUM_PARTITIONS = 512;
+    int NUM_PARTITIONS = 256;
 
     /**
      * The mask applied to a key's hash to determine its partition.

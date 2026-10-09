@@ -1128,7 +1128,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
         @Override
         void splitKeys(CircuitBreaker breaker, BytesRefArray bytesRefs, BytesRef scratch, int idOffset, short[] positions, int[] fills) {
-            assert NUM_PARTITIONS * PARTITION_WRITE_BATCH <= Short.MAX_VALUE + 1 : "shifted ids of one batch must fit in the short value range";
+            assert NUM_PARTITIONS * PARTITION_WRITE_BATCH < Short.MAX_VALUE : "shifted ids of one batch must fit in the short value range";
             for (int p = 0; p < NUM_PARTITIONS; p++) {
                 final int c = fills[p];
                 if (c == 0) {
@@ -1239,7 +1239,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
 
         @Override
         void splitKeys(CircuitBreaker breaker, BytesRefArray bytesRefs, BytesRef scratch, int idOffset, short[] positions, int[] fills) {
-            assert NUM_PARTITIONS * PARTITION_WRITE_BATCH <= Short.MAX_VALUE + 1 : "shifted ids of one batch must fit in the short value range";
+            assert NUM_PARTITIONS * PARTITION_WRITE_BATCH < Short.MAX_VALUE : "shifted ids of one batch must fit in the short value range";
             for (int p = 0; p < NUM_PARTITIONS; p++) {
                 final int c = fills[p];
                 if (c == 0) {
