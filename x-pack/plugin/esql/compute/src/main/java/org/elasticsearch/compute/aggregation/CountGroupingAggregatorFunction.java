@@ -829,8 +829,14 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
             }
             return;
         }
-        migrateFromAllOnes();
         final CountPartitionedState state = (CountPartitionedState) source;
+        if (allOnes && appendOnly && allOnes(state, partition, length)) {
+            final int first = dstIds[0];
+            onesGroupIdFrom = Math.min(first, onesGroupIdFrom);
+            onesGroupIdUpTo = Math.max(first + length, onesGroupIdUpTo);
+            return;
+        }
+        migrateFromAllOnes();
         if (state.ints != null) {
             final int[] src = state.ints[partition];
             if (appendOnly && intPages != null) {
@@ -846,6 +852,25 @@ public class CountGroupingAggregatorFunction implements GroupingAggregatorFuncti
                 accumulateCount(dstIds[i], src[i]);
             }
         }
+    }
+
+    private static boolean allOnes(CountPartitionedState state, int partition, int length) {
+        if (state.ints != null) {
+            final int[] src = state.ints[partition];
+            for (int i = 0; i < length; i++) {
+                if (src[i] != 1) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        final long[] src = state.longs[partition];
+        for (int i = 0; i < length; i++) {
+            if (src[i] != 1L) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void appendInts(int[] src, int firstId, int length) {

@@ -141,6 +141,8 @@ final class PartitionedHashAggregations extends AbstractRefCounted implements Re
         private final CircuitBreaker breaker;
         private int[][] allGenIds = null;
         private boolean[] appendOnly;
+        long keysNanos;
+        long aggsNanos;
 
         Combiner(HashAggregationOperator op) {
             this.op = op;
@@ -159,6 +161,7 @@ final class PartitionedHashAggregations extends AbstractRefCounted implements Re
             }
             // Combine keys from every generation first, then combine each aggregation across all generations.
             // This keeps accesses to the hash table and aggregation state cache-friendly.
+            final long keysStart = System.nanoTime();
             for (int g = 0; g < numGens; g++) {
                 PartitionedKeyAndAggs partitioned = generations.get(g);
                 var partitionedKeys = partitioned.keys;
@@ -170,6 +173,8 @@ final class PartitionedHashAggregations extends AbstractRefCounted implements Re
                 }
                 partitionedKeys.releasePartition(breaker, p);
             }
+            final long aggsStart = System.nanoTime();
+            keysNanos += aggsStart - keysStart;
             // now combine aggregations
             List<GroupingAggregator> aggregators = op.aggregators;
             for (int i = 0; i < aggregators.size(); i++) {
@@ -189,6 +194,7 @@ final class PartitionedHashAggregations extends AbstractRefCounted implements Re
                     agg.releasePartition(breaker, p);
                 }
             }
+            aggsNanos += System.nanoTime() - aggsStart;
             return true;
         }
 

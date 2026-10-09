@@ -31,7 +31,11 @@ public class HashAggregationOperatorStatusTests extends AbstractWireSerializingT
             5,
             2002,
             60016,
-            7
+            7,
+            70018,
+            8,
+            30019,
+            40020
         );
         return new HashAggregationOperator.Status(500012, 200012, 123, 111, 222, 180017, 2, List.of(partitioning));
     }
@@ -66,7 +70,14 @@ public class HashAggregationOperatorStatusTests extends AbstractWireSerializingT
                 "inline_emit_rows" : 2002,
                 "inline_emit_nanos" : 60016,
                 "inline_emit_time" : "60micros",
-                "worker_tasks" : 7
+                "worker_tasks" : 7,
+                "combine_count" : 8,
+                "combine_nanos" : 70018,
+                "combine_time" : "70micros",
+                "combine_keys_nanos" : 30019,
+                "combine_keys_time" : "30micros",
+                "combine_aggs_nanos" : 40020,
+                "combine_aggs_time" : "40micros"
               }
             }""";
     }
@@ -95,6 +106,10 @@ public class HashAggregationOperatorStatusTests extends AbstractWireSerializingT
                     randomNonNegativeLong(),
                     randomNonNegativeLong(),
                     randomNegativeInt(),
+                    randomNonNegativeLong(),
+                    randomNonNegativeLong(),
+                    randomNonNegativeLong(),
+                    randomNonNegativeLong(),
                     randomNonNegativeLong(),
                     randomNonNegativeLong(),
                     randomNonNegativeLong(),
