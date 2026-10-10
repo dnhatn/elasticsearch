@@ -444,6 +444,9 @@ public class LongLongSwissHash extends SwissHash implements LongLongHashTable, P
                 idPages = new byte[idPagesNeeded][];
                 for (int i = 0; i < idPagesNeeded; i++) {
                     idPages[i] = grabPage();
+                    if (MERGE_WITHOUT_CONTROLS) {
+                        Arrays.fill(idPages[i], (byte) 0);
+                    }
                 }
                 assert idPages[(int) (((long) mask * ID_AND_HASH) >> PAGE_SHIFT)] != null;
                 success = true;
