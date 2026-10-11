@@ -227,6 +227,9 @@ tests:
 - class: org.elasticsearch.index.engine.MergeWithLowDiskSpaceIT
   method: testForceMergeIsBlockedThenUnblocked
   issue: https://github.com/elastic/elasticsearch/issues/161490
+- class: org.elasticsearch.cluster.metadata.MetadataCreateIndexServiceIT
+  method: testCreateIndexBatching
+  issue: https://github.com/elastic/elasticsearch/issues/161634
 
 # Examples:
 #
