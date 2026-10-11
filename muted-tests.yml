@@ -229,6 +229,9 @@ tests:
 - class: org.elasticsearch.xpack.test.rest.XPackRestIT
   method: test {yaml=api_key/30_update/Test update api key}
   issue: https://github.com/elastic/elasticsearch/issues/161612
+- class: org.elasticsearch.xpack.core.security.authc.AuthenticationSerializationTests
+  method: testWriteToWithCrossClusterAccessThrowsOnUnsupportedVersion
+  issue: https://github.com/elastic/elasticsearch/issues/161631
 
 # Examples:
 #
