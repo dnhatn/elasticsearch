@@ -17,6 +17,7 @@ import org.elasticsearch.compute.data.DocBlock;
 import org.elasticsearch.compute.data.DocVector;
 import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.Page;
+import org.elasticsearch.compute.data.PagePayload;
 import org.elasticsearch.compute.lucene.IndexedByShardId;
 import org.elasticsearch.compute.lucene.query.LuceneSourceOperator;
 import org.elasticsearch.compute.operator.AbstractPageMappingToIteratorOperator;
@@ -33,6 +34,7 @@ import org.elasticsearch.index.mapper.blockloader.ConstantNull;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.search.fetch.StoredFieldsSpec;
+import org.elasticsearch.search.internal.ScanCounters;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -373,10 +375,11 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
     protected ReleasableIterator<Page> receive(Page page) {
         acquireSourceLoadingReservation();
         DocVector docVector = page.<DocBlock>getBlock(docChannel).asVector();
-        return trackBytesRead(appendBlockArrays(page, valuesReader(docVector)));
+        // The blocks this loads are appended after the ones it was given, so the given count is where they start.
+        return trackBytesRead(page.getBlockCount(), appendBlockArrays(page, valuesReader(docVector)));
     }
 
-    private ReleasableIterator<Page> trackBytesRead(ReleasableIterator<Page> inner) {
+    private ReleasableIterator<Page> trackBytesRead(int loadedFrom, ReleasableIterator<Page> inner) {
         return new ReleasableIterator<>() {
             @Override
             public boolean hasNext() {
@@ -386,10 +389,15 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
             @Override
             public Page next() {
                 long bytesSnapshot = directoryBytesRead.getAsLong();
+                // One reading of the clock a page, which is the coarsest that still tells a decode from the rest.
+                long startNanos = System.nanoTime();
+                Page loaded = null;
                 try {
-                    return inner.next();
+                    loaded = inner.next();
+                    return loaded;
                 } finally {
                     recordBytesRead(bytesSnapshot);
+                    reportDecoded(loaded, loadedFrom, System.nanoTime() - startNanos);
                 }
             }
 
@@ -398,6 +406,21 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
                 inner.close();
             }
         };
+    }
+
+    /** Reports what the blocks loaded into {@code page} spell, and the time loading them took. */
+    private static void reportDecoded(Page page, int loadedFrom, long nanos) {
+        final ScanCounters counters = ScanCounters.reporting();
+        counters.decodeNanos(nanos);
+        if (page == null) {
+            return;
+        }
+        long decoded = 0;
+        for (int channel = loadedFrom; channel < page.getBlockCount(); channel++) {
+            final Block block = page.getBlock(channel);
+            decoded += PagePayload.of(block);
+        }
+        counters.decoded(decoded);
     }
 
     private void recordBytesRead(long bytesSnapshot) {
