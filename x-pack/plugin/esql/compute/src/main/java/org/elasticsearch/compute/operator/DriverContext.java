@@ -18,6 +18,7 @@ import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
+import org.elasticsearch.search.internal.ScanCounters;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -99,6 +100,12 @@ public class DriverContext {
      */
     private final List<BooleanSupplier> stopHooks = new CopyOnWriteArrayList<>();
 
+    /**
+     * What this driver has moved, counted by whoever moved it. An expression has no status of its own, so it
+     * reports here and the operator running it takes what was counted while it ran.
+     */
+    private final ScanCounters scanCounters = new ScanCounters();
+
     public DriverContext(BigArrays bigArrays, BlockFactory blockFactory, @Nullable LocalCircuitBreaker.SizeSettings localBreakerSettings) {
         this(bigArrays, blockFactory, localBreakerSettings, null, WarningsMode.COLLECT);
     }
@@ -130,6 +137,11 @@ public class DriverContext {
 
     public BigArrays bigArrays() {
         return bigArrays;
+    }
+
+    /** Where the work this driver runs reports what it moved. */
+    public ScanCounters scanCounters() {
+        return scanCounters;
     }
 
     /**

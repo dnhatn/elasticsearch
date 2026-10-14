@@ -15,6 +15,7 @@ import org.elasticsearch.compute.lucene.query.LuceneSourceOperatorStatusTests;
 import org.elasticsearch.compute.lucene.read.ValuesSourceReaderOperatorStatus;
 import org.elasticsearch.compute.lucene.read.ValuesSourceReaderOperatorStatusTests;
 import org.elasticsearch.compute.operator.exchange.ExchangeSinkOperator;
+import org.elasticsearch.search.internal.ScanCounts;
 import org.elasticsearch.test.AbstractWireSerializingTestCase;
 import org.elasticsearch.test.ESTestCase;
 
@@ -36,8 +37,9 @@ public class DriverProfileTests extends AbstractWireSerializingTestCase<DriverPr
             10000,
             12,
             List.of(
-                new OperatorStatus("LuceneSource", LuceneSourceOperatorStatusTests.simple()),
-                new OperatorStatus("ValuesSourceReader", ValuesSourceReaderOperatorStatusTests.simple())
+                // What each operator moved is counted by the driver, which is what the roll-up below adds up.
+                new OperatorStatus("LuceneSource", LuceneSourceOperatorStatusTests.simple(), new ScanCounts(0, 8192, 0)),
+                new OperatorStatus("ValuesSourceReader", ValuesSourceReaderOperatorStatusTests.simple(), new ScanCounts(16384, 0, 500000))
             ),
             new DriverSleeps(
                 Map.of("driver time", 1L),
@@ -64,19 +66,25 @@ public class DriverProfileTests extends AbstractWireSerializingTestCase<DriverPr
               "bytes_read" : 12288,
               "read_nanos" : 0,
               "read_cpu_nanos" : 0,
+              "bytes_decoded" : 16384,
+              "bytes_processed" : 8192,
+              "decode_nanos" : 500000,
               "iterations" : 12,
               "operators" : [
                 {
                   "operator" : "LuceneSource",
                   "status" :
-            """.stripTrailing() + " " + LuceneSourceOperatorStatusTests.simpleToJson().replace("\n", "\n      ") + """
+            """.stripTrailing() + " " + LuceneSourceOperatorStatusTests.simpleToJson().replace("\n", "\n      ") + "," + """
 
+                  "bytes_processed" : 8192
                 },
                 {
                   "operator" : "ValuesSourceReader",
                   "status" :
-            """.stripTrailing() + " " + ValuesSourceReaderOperatorStatusTests.simpleToJson().replace("\n", "\n      ") + """
+            """.stripTrailing() + " " + ValuesSourceReaderOperatorStatusTests.simpleToJson().replace("\n", "\n      ") + "," + """
 
+                  "bytes_decoded" : 16384,
+                  "decode_nanos" : 500000
                 }
               ],
               "sleeps" : {

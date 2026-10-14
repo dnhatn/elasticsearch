@@ -7,11 +7,13 @@
 
 package org.elasticsearch.compute.operator;
 
+import org.elasticsearch.TransportVersion;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.search.internal.ScanCounts;
 import org.elasticsearch.xcontent.ToXContentObject;
 import org.elasticsearch.xcontent.XContentBuilder;
 
@@ -22,17 +24,39 @@ import java.io.IOException;
  *
  * @param operator String representation of the {@link Operator}.
  * @param status Status as reported by the {@link Operator}.
+ * @param scanCounts What the work this operator did moved, as the driver counted it rather than the operator. An
+ *                   operator reports nothing of its own here: whatever ran while the driver was asking this
+ *                   operator for a page counted against it, however deep it ran.
  */
-public record OperatorStatus(String operator, @Nullable Operator.Status status) implements Writeable, ToXContentObject {
+public record OperatorStatus(String operator, @Nullable Operator.Status status, ScanCounts scanCounts)
+    implements
+        Writeable,
+        ToXContentObject {
+
+    private static final TransportVersion ESQL_SCAN_COUNTS = TransportVersion.fromName("esql_scan_counts");
+
+    /** As the one above, for an operator the driver counted nothing against. */
+    public OperatorStatus(String operator, @Nullable Operator.Status status) {
+        this(operator, status, ScanCounts.EMPTY);
+    }
 
     public static OperatorStatus readFrom(StreamInput in) throws IOException {
-        return new OperatorStatus(in.readString(), in.readOptionalNamedWriteable(Operator.Status.class));
+        final String operator = in.readString();
+        final Operator.Status status = in.readOptionalNamedWriteable(Operator.Status.class);
+        return new OperatorStatus(
+            operator,
+            status,
+            in.getTransportVersion().supports(ESQL_SCAN_COUNTS) ? ScanCounts.readFrom(in) : ScanCounts.EMPTY
+        );
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeString(operator);
         out.writeOptionalNamedWriteable(status != null && status.supportsVersion(out.getTransportVersion()) ? status : null);
+        if (out.getTransportVersion().supports(ESQL_SCAN_COUNTS)) {
+            scanCounts.writeTo(out);
+        }
     }
 
     @Override
@@ -42,6 +66,7 @@ public record OperatorStatus(String operator, @Nullable Operator.Status status) 
         if (status != null) {
             builder.field("status", status);
         }
+        scanCounts.toXContent(builder, params);
         return builder.endObject();
     }
 

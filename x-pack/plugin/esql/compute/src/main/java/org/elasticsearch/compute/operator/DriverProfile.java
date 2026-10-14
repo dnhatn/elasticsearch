@@ -16,6 +16,7 @@ import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.ChunkedToXContentHelper;
 import org.elasticsearch.common.xcontent.ChunkedToXContentObject;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.search.internal.ScanCounts;
 import org.elasticsearch.xcontent.ToXContent;
 
 import java.io.IOException;
@@ -107,6 +108,7 @@ public record DriverProfile(
             b.field("bytes_read", operators.stream().mapToLong(OperatorStatus::bytesRead).sum());
             b.field("read_nanos", operators.stream().mapToLong(OperatorStatus::readNanos).sum());
             b.field("read_cpu_nanos", operators.stream().mapToLong(OperatorStatus::readCpuNanos).sum());
+            operators.stream().map(OperatorStatus::scanCounts).reduce(ScanCounts.EMPTY, ScanCounts::plus).toXContent(b, p);
             b.field("iterations", iterations);
             return b;
         }),

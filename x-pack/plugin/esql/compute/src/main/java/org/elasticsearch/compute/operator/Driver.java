@@ -25,12 +25,15 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.rest.RestStatus;
+import org.elasticsearch.search.internal.ScanCounts;
 import org.elasticsearch.tasks.TaskCancelledException;
 
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -85,6 +88,12 @@ public class Driver implements Releasable, Describable {
     private final Supplier<String> description;
     protected List<Operator> activeOperators;
     private final List<OperatorStatus> statusOfCompletedOperators = new ArrayList<>();
+    /**
+     * What the work each operator did moved, counted by this driver rather than by the operator. Whatever runs while
+     * an operator is being asked for a page counts against that operator, however deep it runs, so an operator that
+     * moves bytes reports nothing of its own.
+     */
+    private final Map<Operator, ScanCounts> movedByOperator = new IdentityHashMap<>();
     /**
      * Operators that asked to be resnapshotted after {@code waitForAsyncActions}. Index is into
      * {@link #statusOfCompletedOperators}. Mutated only after {@link #isFinished()} when the
@@ -302,6 +311,19 @@ public class Driver implements Releasable, Describable {
         }
     }
 
+    /** Counts against {@code operator} whatever was reported since {@code before}, which is what its call moved. */
+    private void attribute(Operator operator, ScanCounts before) {
+        final ScanCounts moved = driverContext.scanCounters().snapshot().since(before);
+        if (moved.isEmpty() == false) {
+            movedByOperator.merge(operator, moved, ScanCounts::plus);
+        }
+    }
+
+    /** What {@code operator} moved, for the status it is reported in. */
+    private ScanCounts movedBy(Operator operator) {
+        return movedByOperator.getOrDefault(operator, ScanCounts.EMPTY);
+    }
+
     /**
      * Whether the driver has run the chain of operators to completion.
      */
@@ -329,6 +351,14 @@ public class Driver implements Releasable, Describable {
     }
 
     private IsBlockedResult runSingleLoopIteration(LongSupplier currentTimeNanosSupplier, long lastStatusUpdate) {
+        // Work this driver sets off reports what it moved here, wherever it runs from: an operator, an expression
+        // inside one, or a query an operator put to an index.
+        try (Releasable reportingHere = driverContext.scanCounters().reportHere()) {
+            return runOperators(currentTimeNanosSupplier, lastStatusUpdate);
+        }
+    }
+
+    private IsBlockedResult runOperators(LongSupplier currentTimeNanosSupplier, long lastStatusUpdate) {
         driverContext.checkForEarlyTermination();
         boolean movedPage = false;
 
@@ -352,7 +382,13 @@ public class Driver implements Releasable, Describable {
                     || nextOp instanceof LimitOperator
                     || nextOp instanceof PageToBatchPageOperator
                     || nextOp instanceof StreamingPageOperator : "next operator should not be finished yet: " + nextOp;
-                Page page = op.getOutput();
+                final ScanCounts movedBeforeOutput = driverContext.scanCounters().snapshot();
+                Page page;
+                try {
+                    page = op.getOutput();
+                } finally {
+                    attribute(op, movedBeforeOutput);
+                }
                 if (page == null) {
                     // No result, just move to the next iteration
                 } else if (page.getPositionCount() == 0 && page.batchMetadata() == null) {
@@ -366,10 +402,20 @@ public class Driver implements Releasable, Describable {
                         page.releaseBlocks();
                         throw e;
                     }
-                    nextOp.addInput(page);
+                    final ScanCounts movedBeforeInput = driverContext.scanCounters().snapshot();
+                    try {
+                        nextOp.addInput(page);
+                    } finally {
+                        attribute(nextOp, movedBeforeInput);
+                    }
                     movedPage = true;
                     Operator promoted = nextOp.tryPromote(driverContext);
                     if (promoted != nextOp) {
+                        // What the operator moved before it was promoted is still what this stage of the plan moved.
+                        final ScanCounts moved = movedByOperator.remove(nextOp);
+                        if (moved != null) {
+                            movedByOperator.merge(promoted, moved, ScanCounts::plus);
+                        }
                         activeOperators.set(iterator.nextIndex(), promoted);
                     }
                 }
@@ -425,7 +471,7 @@ public class Driver implements Releasable, Describable {
                 while (finishedOperators.hasNext()) {
                     Operator op = finishedOperators.next();
                     int statusIndex = statusOfCompletedOperators.size();
-                    statusOfCompletedOperators.add(new OperatorStatus(op.toString(), op.status()));
+                    statusOfCompletedOperators.add(new OperatorStatus(op.toString(), op.status(), movedBy(op)));
                     if (op instanceof SourceOperator sourceOperator) {
                         long now = currentTimeNanosSupplier.getAsLong();
                         // report one last time before closing
@@ -698,7 +744,7 @@ public class Driver implements Releasable, Describable {
         }
         for (PendingFinalStatus pending : pendingFinalStatus) {
             Operator op = pending.operator;
-            statusOfCompletedOperators.set(pending.index, new OperatorStatus(op.toString(), op.status()));
+            statusOfCompletedOperators.set(pending.index, new OperatorStatus(op.toString(), op.status(), movedBy(op)));
         }
         pendingFinalStatus.clear();
         updateStatus(0, 0, DriverStatus.Status.DONE, "driver done", System.nanoTime());
@@ -747,7 +793,7 @@ public class Driver implements Releasable, Describable {
                 prev.iterations() + extraIterations,
                 status,
                 List.copyOf(statusOfCompletedOperators),
-                activeOperators.stream().map(op -> new OperatorStatus(op.toString(), op.status())).toList(),
+                activeOperators.stream().map(op -> new OperatorStatus(op.toString(), op.status(), movedBy(op))).toList(),
                 sleeps
             );
         });
