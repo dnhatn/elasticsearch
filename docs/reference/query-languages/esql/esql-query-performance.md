@@ -454,6 +454,59 @@ The [**Query activity**](docs-content://deploy-manage/monitor/query-activity.md)
 
 When running an {{esql}} query through the [ES|QL query API](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-esql-query), set the `profile` body parameter to `true` to include a `profile` object in the response. The profile output is intended for human debugging and can help identify which parts of a query contribute to its runtime. The response format can change at any time, so use it for investigation rather than automation.
 
+The `profile` object holds one entry per *driver*. A driver is one pipeline of operators running over one slice of the data, and a query runs many of them: several reading data, one reducing per node, one producing the final result. Each driver reports the operators it ran, how long each took, and how much each moved.
+
+#### Read one driver as throughput
+
+Most of a driver's fields are counters. The useful reading is usually a rate, because a rate carries from one corpus to the next in a way that a wall-clock number does not.
+
+| To find out | Divide | By |
+| --- | --- | --- |
+| How fast storage gave up bytes | `bytes_read` | `read_nanos`, where the operator reports it |
+| How fast what was read was decoded | `bytes_decoded` | `decode_nanos` |
+| How fast a source decoded what it read | `source_bytes_loaded` | `process_nanos` |
+| How fast a predicate walked values | `bytes_processed` | that operator's `process_nanos` |
+| How fast rows moved through an operator | `rows_received` | that operator's `process_nanos` |
+| Where a driver's time went | each `process_nanos` | the driver's `took_nanos` |
+
+For example, a driver whose `ValuesSourceReaderOperator` reports `bytes_read` of 394 MiB against a `read_nanos` of 297 ms read storage at about 1.3 GiB/s, and if that operator's `process_nanos` is 905 ms out of a `took_nanos` of 1.05 s, then reading and decoding a column was 87% of that driver.
+
+Four things to keep in mind when reading these rates:
+
+* `read_nanos` is counted inside `process_nanos`, so a read rate and a decode rate computed this way overlap in time. They do not add up.
+* `bytes_read` counts bytes as storage holds them, before anything decompresses them. `bytes_decoded` is the volume those bytes turned into, which is what the next operator receives, and `bytes_processed` is the part of it something looked at.
+* `bytes_decoded` and `bytes_processed` are counted against the operator the driver was running when they moved, however deep they moved. A query the operator put to an index counts against that operator, not against whatever answered it, so the volume a full-text predicate walked appears on the operator that read the data.
+* Not every operator counts bytes. An operator reporting none is not necessarily moving none.
+
+#### Compare the drivers of one query
+
+A single driver tells you how fast one thread worked. Reading the drivers against each other tells you whether the work was spread evenly, and whether the threads were working or waiting.
+
+| To find out | Compute |
+| --- | --- |
+| A per-thread rate | A driver's bytes or rows divided by its own `took_nanos`. A driver runs on one thread at a time, so this is comparable to a single-threaded measurement. |
+| The rate of the query as a whole | The sum over drivers, divided by the span from the earliest `start_millis` to the latest `stop_millis`. |
+| Whether the drivers really overlapped | The sum of `took_nanos` divided by that span times the number of drivers. |
+| Whether a driver worked or waited | `took_nanos` minus `cpu_nanos`, with `sleeps` naming what it waited for and on which thread. |
+| An uneven split from a slow node | The volume each driver handled next to its rate. Equal rates and unequal volumes are a skewed slice; an equal volume at a lower rate is the node. |
+
+The last row distinguishes two problems that look identical in `took_nanos` alone: eight drivers decoding at the same rate where one handled a third of the data had an uneven slice, not slow hardware.
+
+Finally, `took_nanos` is each driver's own span, so the sum across drivers exceeds the query's wall clock whenever they ran at the same time. Only the span between the earliest `start_millis` and the latest `stop_millis` describes the query.
+
+#### Where a rate stops meaning anything
+
+Two shapes of query do not have a throughput. A rate computed for either one describes the data the query happened to match rather than how fast anything ran.
+
+**A query answered in two phases.** A phrase on a `match_only_text` field, and any query that narrows with an index and then confirms by re-reading values, decodes only the documents the first phase admitted. Its decoded volume is therefore a function of how selective that phase was, not of how fast anything decoded, and dividing it by a time says nothing. Read ratios instead, which are unaffected because the selectivity cancels:
+
+* `bytes_decoded` over `bytes_read`: how much value volume the first phase let through.
+* `bytes_processed` over `bytes_decoded`: how much of what was decoded was looked at.
+
+**A query over indexed structures.** `bytes_read` covers the postings, the terms dictionary and the skip data, so `bytes_read` over `documents_found` is a useful number: how much index was touched per hit, which shows a query that stopped being selective. A decoded or processed volume may be missing entirely, because what an index walks is doc identifiers and frequencies rather than values — the figure worth having there is documents visited, not bytes.
+
+In general, **a rate compares one tier with itself**, across runs or corpora, and does not rank tiers against each other. Index bytes and value bytes are both bytes and describe different work, which is why they are counted separately.
+
 ### Query logging
 
 ```{applies_to}
