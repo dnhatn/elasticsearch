@@ -10,12 +10,14 @@ package org.elasticsearch.xpack.esql.datasources;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.compute.data.Page;
+import org.elasticsearch.compute.data.PagePayload;
 import org.elasticsearch.compute.operator.IsBlockedResult;
 import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.compute.operator.SuppressedFailures;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
+import org.elasticsearch.search.internal.ScanCounters;
 import org.elasticsearch.xpack.esql.datasources.spi.ExternalFailures;
 import org.elasticsearch.xpack.esql.datasources.spi.FormatReaderStatus;
 import org.elasticsearch.xpack.esql.datasources.spi.SkipWarnings;
@@ -358,6 +360,9 @@ public final class AsyncExternalSourceBuffer {
         notifyNotFull();
         signalCompletionIfDrained();
         assert invariantsHold() : "buffer invariants violated after pollPage";
+        // The volume the format reader decoded, reported as it is handed on: this runs on the driver's thread,
+        // where it counts against the operator asking for it, while the read that filled the buffer did not.
+        ScanCounters.reporting().decoded(PagePayload.of(page));
         return page;
     }
 
