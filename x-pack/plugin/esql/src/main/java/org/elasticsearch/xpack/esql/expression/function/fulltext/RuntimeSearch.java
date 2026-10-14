@@ -32,6 +32,7 @@ import org.elasticsearch.index.analysis.AnalyzerScope;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
 import org.elasticsearch.index.mapper.TextFieldMapper;
 import org.elasticsearch.index.mapper.TokenStreamMatching;
+import org.elasticsearch.search.internal.ScanCounters;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 import org.elasticsearch.xpack.esql.evaluator.mapper.EvaluatorMapper;
 import org.elasticsearch.xpack.esql.planner.RuntimeSearchExecutionContext;
@@ -96,21 +97,28 @@ public final class RuntimeSearch {
         final var valueCount = fieldBlock.getValueCount(position);
         final var startIndex = fieldBlock.getFirstValueIndex(position);
 
-        for (int valueIndex = startIndex; valueIndex < startIndex + valueCount; valueIndex++) {
-            boolean foundMatch;
-            scratch = fieldBlock.getBytesRef(valueIndex, scratch);
-            // The analyzed token stream is matched directly; queries with options (or phrase queries under a
-            // non-standard analyzer, where position gaps matter) take the Lucene MemoryIndex path instead.
-            try (TokenStream stream = analyzer.tokenStream(CONTENT_FIELD, scratch.utf8ToString())) {
-                stream.reset();
-                foundMatch = matcher.matches(stream);
-                stream.end();
+        // The bytes this row was read for, added once it is answered rather than once a value.
+        long processed = 0;
+        try {
+            for (int valueIndex = startIndex; valueIndex < startIndex + valueCount; valueIndex++) {
+                boolean foundMatch;
+                scratch = fieldBlock.getBytesRef(valueIndex, scratch);
+                processed += scratch.length;
+                // The analyzed token stream is matched directly; queries with options (or phrase queries under a
+                // non-standard analyzer, where position gaps matter) take the Lucene MemoryIndex path instead.
+                try (TokenStream stream = analyzer.tokenStream(CONTENT_FIELD, scratch.utf8ToString())) {
+                    stream.reset();
+                    foundMatch = matcher.matches(stream);
+                    stream.end();
+                }
+                if (foundMatch) {
+                    return true;
+                }
             }
-            if (foundMatch) {
-                return true;
-            }
+            return false;
+        } finally {
+            ScanCounters.reporting().processed(processed);
         }
-        return false;
     }
 
     /**
@@ -246,10 +254,13 @@ public final class RuntimeSearch {
         // All values of the position form one document, like an indexed multivalued text field: query terms may
         // match across values, while the analyzer's position increment gap keeps phrases within a single value.
         memoryIndex.reset();
+        long processed = 0;
         for (int valueIndex = startIndex; valueIndex < startIndex + valueCount; valueIndex++) {
             scratch = fieldBlock.getBytesRef(valueIndex, scratch);
+            processed += scratch.length;
             memoryIndex.addField(CONTENT_FIELD, scratch.utf8ToString(), analyzer);
         }
+        ScanCounters.reporting().processed(processed);
         IndexSearcher searcher = memoryIndex.createSearcher();
 
         TopDocs topDocs = searcher.search(query, 1);
@@ -279,10 +290,13 @@ public final class RuntimeSearch {
         }
 
         memoryIndex.reset();
+        long processed = 0;
         for (int valueIndex = startIndex; valueIndex < startIndex + valueCount; valueIndex++) {
             scratch = fieldBlock.getBytesRef(valueIndex, scratch);
+            processed += scratch.length;
             memoryIndex.addField(CONTENT_FIELD, scratch.utf8ToString(), analyzer);
         }
+        ScanCounters.reporting().processed(processed);
         IndexSearcher searcher = memoryIndex.createSearcher();
         searcher.setSimilarity(BOOLEAN_SIMILARITY);
 

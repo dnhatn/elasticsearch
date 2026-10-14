@@ -48,6 +48,7 @@ import org.apache.lucene.util.automaton.ByteRunAutomaton;
 import org.elasticsearch.common.CheckedIntFunction;
 import org.elasticsearch.common.lucene.search.MultiPhrasePrefixQuery;
 import org.elasticsearch.common.lucene.search.Queries;
+import org.elasticsearch.search.internal.ScanCounters;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -699,8 +700,28 @@ public final class ReanalyzingTextQuery extends Query {
             if (valuesDocID != docID()) {
                 valuesDocID = docID();
                 values = valueFetcher.apply(docID());
+                report(values);
             }
             return values;
+        }
+
+        /**
+         * Reports what the column handed over for this document and what answering it walked. A document is read
+         * only to be answered here, and answering it walks the values it holds, so the two are the same volume
+         * however the answer is reached.
+         */
+        private static void report(List<Object> values) {
+            long volume = 0;
+            for (Object value : values) {
+                if (value instanceof BytesRef bytes) {
+                    volume += bytes.length;
+                } else if (value != null) {
+                    volume += value.toString().length();
+                }
+            }
+            final ScanCounters counters = ScanCounters.reporting();
+            counters.decoded(volume);
+            counters.processed(volume);
         }
 
         private float computeFreq() throws IOException {
