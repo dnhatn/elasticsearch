@@ -117,6 +117,17 @@ public final class Page implements Writeable, Releasable {
 
         this.blocks = Arrays.copyOf(prev.blocks, prev.blocks.length + toAdd.length);
         System.arraycopy(toAdd, 0, this.blocks, prev.blocks.length, toAdd.length);
+
+        // This page holds the blocks it was given and the ones appended, so it spells what they spelled plus what
+        // those spell. Taking the first part from the page appended to measures each block once however long the
+        // chain of operators appending to it, where measuring them again measures the first of them every time.
+        if (prev.payloadBytes >= 0) {
+            long appended = 0;
+            for (Block block : toAdd) {
+                appended += PagePayload.of(block);
+            }
+            this.payloadBytes = prev.payloadBytes + appended;
+        }
     }
 
     public Page(StreamInput in) throws IOException {

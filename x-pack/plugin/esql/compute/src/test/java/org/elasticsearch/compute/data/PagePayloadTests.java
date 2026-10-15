@@ -17,6 +17,8 @@ import org.elasticsearch.test.ESTestCase;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import static org.hamcrest.Matchers.greaterThan;
+
 /** The bytes a page's values spell. It is counted rather than estimated, so these compare it against the values that went in. */
 public class PagePayloadTests extends ESTestCase {
 
@@ -167,6 +169,30 @@ public class PagePayloadTests extends ESTestCase {
         ) {
             final Page page = new Page(text, numbers);
             assertEquals(3L * 4 + 3L * Integer.BYTES, PagePayload.of(page));
+        }
+    }
+
+    /**
+     * A page appended to spells what the blocks it ends up holding do, whether or not the page it was appended to
+     * had been measured. An operator chain appends to a page a stage at a time, so this is the shape the counters
+     * see; measuring the blocks of each page in such a chain again measures its first blocks once per stage.
+     */
+    public void testAnAppendedPageSpellsWhatAWholeOneDoes() {
+        final int positions = between(1, 10);
+        try (
+            BytesRefBlock text = blockFactory.newConstantBytesRefBlockWith(new BytesRef("word"), positions);
+            IntBlock numbers = blockFactory.newConstantIntBlockWith(7, positions);
+            LongBlock more = blockFactory.newConstantLongBlockWith(9L, positions)
+        ) {
+            final long whole = PagePayload.of(new Page(text, numbers, more));
+
+            Page measuredFirst = new Page(text);
+            assertThat(measuredFirst.payloadBytes(), greaterThan(0L));
+            measuredFirst = measuredFirst.appendBlock(numbers).appendBlock(more);
+            assertEquals(whole, measuredFirst.payloadBytes());
+
+            final Page neverMeasured = new Page(text).appendBlocks(new Block[] { numbers, more });
+            assertEquals(whole, neverMeasured.payloadBytes());
         }
     }
 }
