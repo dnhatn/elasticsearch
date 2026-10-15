@@ -362,7 +362,9 @@ public final class AsyncExternalSourceBuffer {
         assert invariantsHold() : "buffer invariants violated after pollPage";
         // The volume the format reader decoded, reported as it is handed on: this runs on the driver's thread,
         // where it counts against the operator asking for it, while the read that filled the buffer did not.
-        ScanCounters.reporting().decoded(PagePayload.of(page));
+        final ScanCounters counters = ScanCounters.reporting();
+        counters.decoded(PagePayload.of(page));
+        counters.documentsProcessed(page.getPositionCount());
         return page;
     }
 

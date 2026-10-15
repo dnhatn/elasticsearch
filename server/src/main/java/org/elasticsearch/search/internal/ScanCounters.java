@@ -60,6 +60,8 @@ public final class ScanCounters {
     private final LongAdder decoded = new LongAdder();
     private final LongAdder processed = new LongAdder();
     private final LongAdder decodeNanos = new LongAdder();
+    private final LongAdder documentsScanned = new LongAdder();
+    private final LongAdder documentsProcessed = new LongAdder();
 
     /** The bytes storage gave up turned into, which is the volume handed on. */
     public void decoded(long bytes) {
@@ -88,9 +90,27 @@ public final class ScanCounters {
         return decodeNanos.sum();
     }
 
+    /** Documents a search was asked to cover, which it reports for a range at a time rather than a document. */
+    public void documentsScanned(long documents) {
+        documentsScanned.add(documents);
+    }
+
+    public long documentsScanned() {
+        return documentsScanned.sum();
+    }
+
+    /** Documents something read to decide or to produce, of those it was asked to cover. */
+    public void documentsProcessed(long documents) {
+        documentsProcessed.add(documents);
+    }
+
+    public long documentsProcessed() {
+        return documentsProcessed.sum();
+    }
+
     /** What has been counted so far, as a report that can be carried. */
     public ScanCounts snapshot() {
-        return ScanCounts.of(decoded(), processed(), decodeNanos());
+        return new ScanCounts(0, 0, decoded(), processed(), decodeNanos(), documentsScanned(), documentsProcessed());
     }
 
     @Override

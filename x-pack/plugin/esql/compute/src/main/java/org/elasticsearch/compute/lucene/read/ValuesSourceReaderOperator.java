@@ -421,6 +421,7 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
             decoded += PagePayload.of(block);
         }
         counters.decoded(decoded);
+        counters.documentsProcessed(page.getPositionCount());
     }
 
     private void recordBytesRead(long bytesSnapshot) {

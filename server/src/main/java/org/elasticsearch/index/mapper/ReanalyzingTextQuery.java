@@ -629,6 +629,8 @@ public final class ReanalyzingTextQuery extends Query {
 
                 @Override
                 public boolean matches() throws IOException {
+                    // One document read to answer it, of those the approximation offered.
+                    ScanCounters.reporting().documentsProcessed(1);
                     return freq() > 0;
                 }
 

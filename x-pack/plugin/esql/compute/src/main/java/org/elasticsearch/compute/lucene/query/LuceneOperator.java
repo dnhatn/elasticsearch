@@ -40,6 +40,7 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.search.internal.LeafExecutionScope;
+import org.elasticsearch.search.internal.ScanCounters;
 import org.elasticsearch.xcontent.XContentBuilder;
 
 import java.io.IOException;
@@ -465,6 +466,9 @@ public abstract class LuceneOperator extends SourceOperator {
             // avoid overflow and limit the range
             numDocs = Math.min(maxPosition - position, numDocs);
             assert numDocs > 0 : "scorer was exhausted";
+            // The documents this scorer was asked to cover, counted for the range rather than for each of them:
+            // what it reads of them is its own, and the two together say what it got to skip.
+            ScanCounters.reporting().documentsScanned(numDocs);
             position = bulkScorer.score(collector, acceptDocs, position, Math.min(maxPosition, position + numDocs));
         }
 

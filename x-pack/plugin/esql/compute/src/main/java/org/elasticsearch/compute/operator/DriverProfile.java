@@ -110,8 +110,11 @@ public record DriverProfile(
             b.field("read_cpu_nanos", operators.stream().mapToLong(OperatorStatus::readCpuNanos).sum());
             // What each operator made and looked at adds up over the driver. What flowed through one of them is
             // what flowed through the next, so the volume a page carried is left to the operators it passed.
-            final ScanCounts counts = operators.stream().map(OperatorStatus::scanCounts).reduce(ScanCounts.EMPTY, ScanCounts::plus);
-            ScanCounts.of(counts.decoded(), counts.processed(), counts.decodeNanos()).toXContent(b, p);
+            operators.stream()
+                .map(OperatorStatus::scanCounts)
+                .map(ScanCounts::work)
+                .reduce(ScanCounts.EMPTY, ScanCounts::plus)
+                .toXContent(b, p);
             b.field("iterations", iterations);
             return b;
         }),

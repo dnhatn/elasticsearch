@@ -56,6 +56,8 @@ public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
             long decoded = 0;
             long decodeNanos = 0;
             long handedToOne = 0;
+            long scanned = 0;
+            long read = 0;
             for (DriverProfile driver : response.profile().drivers()) {
                 reported.append("  driver ")
                     .append(driver.description())
@@ -68,12 +70,16 @@ public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
                     decoded += counts.decoded();
                     decodeNanos += counts.decodeNanos();
                     handedToOne = Math.max(handedToOne, counts.bytesIn());
+                    scanned += counts.documentsScanned();
+                    read += counts.documentsProcessed();
                 }
             }
             assertThat("every value decoded is counted" + reported, decoded, greaterThanOrEqualTo(volume));
             assertThat("decoding them took time" + reported, decodeNanos, greaterThan(0L));
             // Whatever the values were read for was handed them, and says so without having been asked to count.
             assertThat("the operator the values were read for was handed them" + reported, handedToOne, greaterThanOrEqualTo(volume));
+            assertThat("the scan was asked to cover every document" + reported, scanned, greaterThanOrEqualTo((long) DOCS));
+            assertThat("the column read looked at every document" + reported, read, greaterThanOrEqualTo((long) DOCS));
         }
     }
 
@@ -98,14 +104,21 @@ public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
 
             final StringBuilder reported = new StringBuilder("\n");
             long processed = 0;
+            long scanned = 0;
+            long read = 0;
             for (DriverProfile driver : response.profile().drivers()) {
                 for (OperatorStatus operator : driver.operators()) {
                     final ScanCounts counts = operator.scanCounts();
                     reported.append("    ").append(operator.operator()).append(' ').append(counts).append('\n');
                     processed += counts.processed();
+                    scanned += counts.documentsScanned();
+                    read += counts.documentsProcessed();
                 }
             }
             assertThat("the predicate walked the values it was handed" + reported, processed, greaterThan(0L));
+            assertThat("it read a document to answer it" + reported, read, greaterThanOrEqualTo((long) DOCS));
+            // The two bracket what skipping came to: nothing is read that the search was not asked to cover.
+            assertThat("nothing was read that was not covered" + reported, scanned, greaterThanOrEqualTo(read));
         }
     }
 

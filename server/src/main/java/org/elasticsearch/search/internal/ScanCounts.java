@@ -26,37 +26,59 @@ import java.io.IOException;
  * {@link #decoded} is the part made here rather than passed along, and of what came in, {@link #processed} is the
  * part something actually looked at, which only the work itself can say.
  *
- * @param bytesIn     bytes handed to this place
- * @param bytesOut    bytes it handed on
- * @param decoded     of what it handed on, the bytes it turned storage into
- * @param processed   of what it was handed, the bytes it looked at
- * @param decodeNanos time spent turning what was read into bytes, so that a rate over them needs no arithmetic
- *                    against the time around it
+ * <p>The documents are those tiers in the other currency. {@link #documentsScanned} is what a search was asked to
+ * cover and {@link #documentsProcessed} is what something read to answer, which together bracket what skipping
+ * came to: nothing is found that was not read, and nothing is read that was not covered.
+ *
+ * @param bytesIn            bytes handed to this place
+ * @param bytesOut           bytes it handed on
+ * @param decoded            of what it handed on, the bytes it turned storage into
+ * @param processed          of what it was handed, the bytes it looked at
+ * @param decodeNanos        time spent turning what was read into bytes, so that a rate over them needs no
+ *                           arithmetic against the time around it
+ * @param documentsScanned   documents a search was asked to cover, however few of them it went on to read
+ * @param documentsProcessed documents something read to decide or to produce
  */
-public record ScanCounts(long bytesIn, long bytesOut, long decoded, long processed, long decodeNanos)
-    implements
-        Writeable,
-        ToXContentFragment {
+public record ScanCounts(
+    long bytesIn,
+    long bytesOut,
+    long decoded,
+    long processed,
+    long decodeNanos,
+    long documentsScanned,
+    long documentsProcessed
+) implements Writeable, ToXContentFragment {
 
-    public static final ScanCounts EMPTY = new ScanCounts(0, 0, 0, 0, 0);
-
-    /** What was made and looked at in one place, which is what its counters report. */
-    public static ScanCounts of(long decoded, long processed, long decodeNanos) {
-        return new ScanCounts(0, 0, decoded, processed, decodeNanos);
-    }
+    public static final ScanCounts EMPTY = new ScanCounts(0, 0, 0, 0, 0, 0, 0);
 
     /** Bytes handed to a place, which whoever handed them over counts. */
     public static ScanCounts handedIn(long bytes) {
-        return new ScanCounts(bytes, 0, 0, 0, 0);
+        return new ScanCounts(bytes, 0, 0, 0, 0, 0, 0);
     }
 
     /** Bytes a place handed on, which whoever took them counts. */
     public static ScanCounts handedOn(long bytes) {
-        return new ScanCounts(0, bytes, 0, 0, 0);
+        return new ScanCounts(0, bytes, 0, 0, 0, 0, 0);
+    }
+
+    /**
+     * What was made, read and looked at here, without what flowed through: the volume a page carried belongs to
+     * the places it passed, and adding it up over them describes nothing.
+     */
+    public ScanCounts work() {
+        return new ScanCounts(0, 0, decoded, processed, decodeNanos, documentsScanned, documentsProcessed);
     }
 
     public static ScanCounts readFrom(StreamInput in) throws IOException {
-        return new ScanCounts(in.readVLong(), in.readVLong(), in.readVLong(), in.readVLong(), in.readVLong());
+        return new ScanCounts(
+            in.readVLong(),
+            in.readVLong(),
+            in.readVLong(),
+            in.readVLong(),
+            in.readVLong(),
+            in.readVLong(),
+            in.readVLong()
+        );
     }
 
     @Override
@@ -66,6 +88,8 @@ public record ScanCounts(long bytesIn, long bytesOut, long decoded, long process
         out.writeVLong(decoded);
         out.writeVLong(processed);
         out.writeVLong(decodeNanos);
+        out.writeVLong(documentsScanned);
+        out.writeVLong(documentsProcessed);
     }
 
     /** The reports added, for a caller summing what several places moved. */
@@ -77,7 +101,9 @@ public record ScanCounts(long bytesIn, long bytesOut, long decoded, long process
                 bytesOut + other.bytesOut,
                 decoded + other.decoded,
                 processed + other.processed,
-                decodeNanos + other.decodeNanos
+                decodeNanos + other.decodeNanos,
+                documentsScanned + other.documentsScanned,
+                documentsProcessed + other.documentsProcessed
             );
     }
 
@@ -90,13 +116,21 @@ public record ScanCounts(long bytesIn, long bytesOut, long decoded, long process
                 bytesOut - before.bytesOut,
                 decoded - before.decoded,
                 processed - before.processed,
-                decodeNanos - before.decodeNanos
+                decodeNanos - before.decodeNanos,
+                documentsScanned - before.documentsScanned,
+                documentsProcessed - before.documentsProcessed
             );
     }
 
     /** Whether anything was counted, which a caller leaving the counts out of a report goes by. */
     public boolean isEmpty() {
-        return bytesIn == 0 && bytesOut == 0 && decoded == 0 && processed == 0 && decodeNanos == 0;
+        return bytesIn == 0
+            && bytesOut == 0
+            && decoded == 0
+            && processed == 0
+            && decodeNanos == 0
+            && documentsScanned == 0
+            && documentsProcessed == 0;
     }
 
     /** Writes the counts that were taken, leaving out the ones nobody reported. */
@@ -116,6 +150,12 @@ public record ScanCounts(long bytesIn, long bytesOut, long decoded, long process
         }
         if (decodeNanos > 0) {
             builder.field("decode_nanos", decodeNanos);
+        }
+        if (documentsScanned > 0) {
+            builder.field("documents_scanned", documentsScanned);
+        }
+        if (documentsProcessed > 0) {
+            builder.field("documents_processed", documentsProcessed);
         }
         return builder;
     }

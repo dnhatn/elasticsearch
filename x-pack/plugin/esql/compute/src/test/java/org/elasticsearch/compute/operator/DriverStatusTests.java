@@ -166,6 +166,8 @@ public class DriverStatusTests extends AbstractWireSerializingTestCase<DriverSta
                 randomNonNegativeLong(),
                 randomNonNegativeLong(),
                 randomNonNegativeLong(),
+                randomNonNegativeLong(),
+                randomNonNegativeLong(),
                 randomNonNegativeLong()
             );
     }

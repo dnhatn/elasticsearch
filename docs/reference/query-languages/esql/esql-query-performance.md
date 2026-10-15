@@ -469,6 +469,7 @@ Most of a driver's fields are counters. The useful reading is usually a rate, be
 | **How fast an operator produced its output** | `bytes_out` | that operator's `process_nanos` |
 | How fast something walked the values it was handed | `bytes_processed` | that operator's `process_nanos` |
 | How fast rows moved through an operator | `rows_received` | that operator's `process_nanos` |
+| How fast documents were read | `documents_processed` | that operator's `process_nanos` |
 | Where a driver's time went | each `process_nanos` | the driver's `took_nanos` |
 
 For example, a driver whose `ValuesSourceReaderOperator` reports `bytes_read` of 394 MiB against a `read_nanos` of 297 ms read storage at about 1.3 GiB/s, and if that operator's `process_nanos` is 905 ms out of a `took_nanos` of 1.05 s, then reading and decoding a column was 87% of that driver.
@@ -482,6 +483,19 @@ What to keep in mind when reading these rates:
 * `bytes_decoded` and `bytes_processed` are counted against the operator the driver was running when they moved, however deep they moved. A query the operator put to an index counts against that operator, not against whatever answered it, so the volume a full-text predicate walked appears on the operator that read the data.
 * A driver sums only what its operators made and looked at. The volume a page carried is left on the operators it passed, because the same bytes flow through every stage and a sum of them describes nothing.
 * A source operator hands on doc identifiers rather than values, so `bytes_out` for a plain scan counts the values the page carries, which is none of them.
+* `documents_scanned` is counted for a range of documents at a time rather than for each one, and it counts doc identifiers, so a segment with deleted documents covers a few more than it holds.
+
+#### What a query skipped
+
+Three document counts bracket the work a search avoided. `documents_scanned` is what it was asked to cover, `documents_processed` is what something read to decide or to produce, and `documents_found` is what matched. Nothing is read that was not covered, and nothing is found that was not read, so:
+
+* `documents_processed` over `documents_scanned`: how much of the data the query had to open. Small is an index doing its job.
+* `documents_found` over `documents_processed`: how many of the documents it opened were worth opening. Small means a predicate that rejects late — the shape where re-reading values dominates.
+* `bytes_processed` over `documents_processed`: the average size of what it read, which is what makes a decode rate comparable between corpora.
+
+A pushed-down query is the case worth reading this way. `COUNT(*)`, `MIN`, `MAX` and a filter answered by the index move no values at all, so their byte counts are empty by rights, and the document counts are the whole story: a large `documents_scanned` against a small `documents_found` is the pushdown working.
+
+What happens between the two counts is not measured. A query that covers ten million documents and reads a hundred thousand of them skipped the rest through postings, skip data or a competitive score, and the profile says how many it ended up reading, not which mechanism saved it.
 
 #### Compare the drivers of one query
 
