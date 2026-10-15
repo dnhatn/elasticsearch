@@ -1281,7 +1281,12 @@ public class RestEsqlIT extends RestEsqlTestCase {
             .entry("rows_emitted", greaterThanOrEqualTo(0L))
             .entry("bytes_read", greaterThanOrEqualTo(0L))
             .entry("read_nanos", greaterThanOrEqualTo(0L))
-            .entry("read_cpu_nanos", greaterThanOrEqualTo(0L));
+            .entry("read_cpu_nanos", greaterThanOrEqualTo(0L))
+            .entry("bytes_decoded", greaterThanOrEqualTo(0L))
+            .entry("bytes_processed", greaterThanOrEqualTo(0L))
+            .entry("decode_nanos", greaterThanOrEqualTo(0L))
+            .entry("documents_scanned", greaterThanOrEqualTo(0L))
+            .entry("documents_processed", greaterThanOrEqualTo(0L));
     }
 
     public void testProfileConditionalBlockLoader() throws IOException {
@@ -1430,7 +1435,7 @@ public class RestEsqlIT extends RestEsqlTestCase {
                         MapMatcher status = matchesMap().entry("total_slices", equalTo(1))
                             .entry("partitioning_strategies", matchesMap().entry("rest-esql-test:0", "SHARD"))
                             .extraOk();
-                        assertMap(o, matchesMap().entry("operator", startsWith(name)).entry("status", status));
+                        assertMap(o, matchesMap().entry("operator", startsWith(name)).entry("status", status).extraOk());
                     }
                 }
             }
@@ -1462,7 +1467,7 @@ public class RestEsqlIT extends RestEsqlTestCase {
                         MapMatcher status = matchesMap().entry("total_slices", equalTo(1))
                             .entry("partitioning_strategies", matchesMap().entry("rest-esql-test:0", "DOC"))
                             .extraOk();
-                        assertMap(o, matchesMap().entry("operator", startsWith(name)).entry("status", status));
+                        assertMap(o, matchesMap().entry("operator", startsWith(name)).entry("status", status).extraOk());
                     }
                 }
             }
@@ -1507,6 +1512,16 @@ public class RestEsqlIT extends RestEsqlTestCase {
         profile.put("read_nanos", ((Number) profile.get("read_nanos")).longValue());
         if (profile.containsKey("read_cpu_nanos")) {
             profile.put("read_cpu_nanos", ((Number) profile.get("read_cpu_nanos")).longValue());
+        }
+        for (String counter : new String[] {
+            "bytes_decoded",
+            "bytes_processed",
+            "decode_nanos",
+            "documents_scanned",
+            "documents_processed" }) {
+            if (profile.containsKey(counter)) {
+                profile.put(counter, ((Number) profile.get(counter)).longValue());
+            }
         }
     }
 
@@ -1586,8 +1601,8 @@ public class RestEsqlIT extends RestEsqlTestCase {
         if (status != null) {
             expectedOp = expectedOp.entry("status", status);
         }
-
-        assertMap(o, expectedOp);
+        // An operator also carries what it moved, which is checked where the volume is known.
+        assertMap(o, expectedOp.extraOk());
     }
 
     private MapMatcher basicProfile() {

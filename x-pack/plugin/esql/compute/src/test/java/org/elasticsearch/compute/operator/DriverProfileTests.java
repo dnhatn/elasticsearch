@@ -72,6 +72,7 @@ public class DriverProfileTests extends AbstractWireSerializingTestCase<DriverPr
               "read_nanos" : 0,
               "read_cpu_nanos" : 0,
               "bytes_decoded" : 16384,
+              "bytes_processed" : 0,
               "decode_nanos" : 500000,
               "documents_scanned" : 10000,
               "documents_processed" : 1024,
