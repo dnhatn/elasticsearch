@@ -1,0 +1,4 @@
+pr: 162145
+summary: Report the bytes and documents each operator moves
+area: ES|QL
+type: enhancement
