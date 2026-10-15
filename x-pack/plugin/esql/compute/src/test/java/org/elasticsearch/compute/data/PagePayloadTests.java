@@ -17,10 +17,7 @@ import org.elasticsearch.test.ESTestCase;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
-/**
- * The bytes a page's values spell, which a rate over a page is taken against. It is counted, not estimated, so
- * these compare it against the lengths of the values that went in.
- */
+/** The bytes a page's values spell. It is counted rather than estimated, so these compare it against the values that went in. */
 public class PagePayloadTests extends ESTestCase {
 
     private final BlockFactory blockFactory = BlockFactory.builder(BigArrays.NON_RECYCLING_INSTANCE)
@@ -92,8 +89,8 @@ public class PagePayloadTests extends ESTestCase {
     }
 
     /**
-     * A dictionary can hold the terms of a whole segment while a page names a few of them, and then the terms the
-     * page does not name are not read: the volume is the same, taken the other way.
+     * A dictionary can hold a whole segment's terms while a page names a few of them. The terms the page does not
+     * name are then not read, and the volume comes out the same.
      */
     public void testADictionaryOfMoreTermsThanThePageNamesIsNotMeasured() {
         final int terms = 1000;
@@ -114,8 +111,8 @@ public class PagePayloadTests extends ESTestCase {
     }
 
     /**
-     * Whatever shape a column arrives in, the volume is the one the values spell. A shape that answers for all of
-     * its values at once is taken at its word, so it has to say what walking them would.
+     * Whatever shape a column arrives in, the volume is what its values spell. A shape that answers for all of its
+     * values at once is taken at its word, so it has to agree with walking them.
      */
     public void testEveryShapeOfAColumnSpellsTheSame() {
         final RandomBlock random = RandomBlock.randomBlock(
@@ -154,10 +151,7 @@ public class PagePayloadTests extends ESTestCase {
         return array;
     }
 
-    /**
-     * A page is handed on by one operator and handed to the next, and both read what it carries, so it is measured
-     * once and says the same thing however often it is asked.
-     */
+    /** A page is measured once and gives the same answer however often it is asked. */
     public void testAPageIsMeasuredOnce() {
         try (BytesRefBlock block = blockFactory.newConstantBytesRefBlockWith(new BytesRef("word"), 5)) {
             final Page page = new Page(block);

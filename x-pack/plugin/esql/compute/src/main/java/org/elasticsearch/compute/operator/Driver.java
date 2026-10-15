@@ -89,10 +89,9 @@ public class Driver implements Releasable, Describable {
     protected List<Operator> activeOperators;
     private final List<OperatorStatus> statusOfCompletedOperators = new ArrayList<>();
     /**
-     * What each operator moved, counted by this driver rather than by the operator. The pages it hands over are the
-     * volume that flowed through, which this driver sees from outside; whatever runs while an operator is being
-     * asked for a page is what it did with that volume, however deep it runs. Either way an operator implements
-     * nothing.
+     * What each operator moved, counted by this driver rather than by the operator: the volume of the pages it
+     * hands over, which the driver sees from outside, and whatever the work reported while the driver was asking
+     * that operator for a page, however deep it ran.
      */
     private final Map<Operator, ScanCounts> movedByOperator = new IdentityHashMap<>();
     /**
@@ -312,12 +311,12 @@ public class Driver implements Releasable, Describable {
         }
     }
 
-    /** Counts against {@code operator} whatever was reported since {@code before}, which is what its call moved. */
+    /** Counts against {@code operator} whatever work reported since {@code before}. */
     private void attribute(Operator operator, ScanCounts before) {
         count(operator, driverContext.scanCounters().snapshot().since(before));
     }
 
-    /** Counts {@code moved} against {@code operator}, which is where the status it is reported in reads it. */
+    /** Adds {@code moved} to what {@code operator} has moved, which its status reports. */
     private void count(Operator operator, ScanCounts moved) {
         if (moved.isEmpty() == false) {
             movedByOperator.merge(operator, moved, ScanCounts::plus);
@@ -356,8 +355,8 @@ public class Driver implements Releasable, Describable {
     }
 
     private IsBlockedResult runSingleLoopIteration(LongSupplier currentTimeNanosSupplier, long lastStatusUpdate) {
-        // Work this driver sets off reports what it moved here, wherever it runs from: an operator, an expression
-        // inside one, or a query an operator put to an index.
+        // Work this driver sets off reports here, wherever it runs: an operator, an expression inside one, or a
+        // query an operator put to an index.
         try (Releasable reportingHere = driverContext.scanCounters().reportHere()) {
             return runOperators(currentTimeNanosSupplier, lastStatusUpdate);
         }
@@ -420,7 +419,7 @@ public class Driver implements Releasable, Describable {
                     movedPage = true;
                     Operator promoted = nextOp.tryPromote(driverContext);
                     if (promoted != nextOp) {
-                        // What the operator moved before it was promoted is still what this stage of the plan moved.
+                        // What the operator moved before it was promoted still belongs to this stage of the plan.
                         final ScanCounts moved = movedByOperator.remove(nextOp);
                         if (moved != null) {
                             movedByOperator.merge(promoted, moved, ScanCounts::plus);

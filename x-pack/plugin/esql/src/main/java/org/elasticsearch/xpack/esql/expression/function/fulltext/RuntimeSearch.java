@@ -97,7 +97,7 @@ public final class RuntimeSearch {
         final var valueCount = fieldBlock.getValueCount(position);
         final var startIndex = fieldBlock.getFirstValueIndex(position);
 
-        // The bytes this row was read for, added once it is answered rather than once a value.
+        // The bytes this row was read for, reported once the row is answered rather than once per value.
         long processed = 0;
         try {
             for (int valueIndex = startIndex; valueIndex < startIndex + valueCount; valueIndex++) {

@@ -39,13 +39,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 /**
- * The cost of taking a page's value volume, against the per-document cost of the column read that produces the
- * page: a column read reports what it decoded, and this is what reporting it costs.
+ * What taking a page's value volume costs, to compare against the per-document cost of the column read that
+ * produced the page.
  *
- * <p>{@link #payload} is one page measured once, which is what a producer pays. {@link #flow} is the same volume
- * followed through a plan, where a driver takes it as each operator hands the page on and as the next is handed
- * it: the page is measured where it is produced and where it is consumed, and the blocks it holds travel on into
- * the pages of the stages after it.
+ * <p>{@link #payload} measures one page, which is what a producer pays. {@link #flow} follows the same volume
+ * through a plan, measured as each operator hands the page on and as the next operator is handed it, with the
+ * blocks travelling into the pages of later stages.
  */
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
@@ -67,9 +66,8 @@ public class PagePayloadBenchmark {
         .build();
 
     /**
-     * The shapes a column read hands on: a column of short keywords, one of whole text values, one holding several
-     * values a document, one read as ordinals against a dictionary, one of a single repeated value, and a numeric
-     * column, whose volume is its width.
+     * The shapes a column read hands on: short keywords, whole text values, several values per document, ordinals
+     * against a dictionary, a single repeated value, and a numeric column, whose volume is its width.
      */
     @Param({ "keyword_8", "keyword_30", "text_1000", "keyword_mv_3", "ordinals_1000", "constant_30", "long" })
     public String shape;
@@ -90,7 +88,7 @@ public class PagePayloadBenchmark {
         });
     }
 
-    /** A column of {@code length} byte values, {@code valuesPerPosition} of them a document. */
+    /** A column of {@code length} byte values, {@code valuesPerPosition} per document. */
     private static Block bytes(int length, int valuesPerPosition) {
         final Random random = new Random(0);
         final int values = POSITIONS * valuesPerPosition;
@@ -110,7 +108,7 @@ public class PagePayloadBenchmark {
         );
     }
 
-    /** A column read against a dictionary of {@code terms} values, which is how a low cardinality column arrives. */
+    /** A column read against a dictionary of {@code terms} values, as a low cardinality column arrives. */
     private static Block ordinals(int length, int terms) {
         final Random random = new Random(0);
         final BytesRefArray dictionary = new BytesRefArray(terms, BigArrays.NON_RECYCLING_INSTANCE);
@@ -138,13 +136,10 @@ public class PagePayloadBenchmark {
         return PagePayload.of(page);
     }
 
-    /** The stages of a plan a page's values flow through, each handing the blocks it holds on to the next. */
+    /** The stages a page's values flow through, each handing the blocks it holds on to the next. */
     private static final int STAGES = 5;
 
-    /**
-     * What a driver pays to count the flow through a plan: the volume of every page it hands over, read as the
-     * output of one operator and the input of the next.
-     */
+    /** What a driver pays to count the flow: the volume of every page it hands over, read twice, once at each end. */
     @Benchmark
     @OperationsPerInvocation(POSITIONS)
     public long flow() {

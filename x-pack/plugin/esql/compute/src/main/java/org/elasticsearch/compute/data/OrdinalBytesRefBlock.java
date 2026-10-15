@@ -26,7 +26,7 @@ public final class OrdinalBytesRefBlock extends AbstractBlockRefCounted implemen
     private final IntBlock ordinals;
     private final BytesRefVector bytes;
 
-    /** What the terms this block's positions name spell, read once: a block outlives the page that holds it. */
+    /** What the terms this block's positions name spell, computed on first use. */
     private long totalValueBytes = -1;
 
     public OrdinalBytesRefBlock(IntBlock ordinals, BytesRefVector bytes) {
@@ -69,7 +69,7 @@ public final class OrdinalBytesRefBlock extends AbstractBlockRefCounted implemen
         return ordinals;
     }
 
-    /** The bytes the terms this block's positions name spell, taken once however often it is asked for. */
+    /** The bytes the terms this block's positions name spell. Measured once; a block outlives the page holding it. */
     long totalValueBytes() {
         long bytes = totalValueBytes;
         if (bytes < 0) {

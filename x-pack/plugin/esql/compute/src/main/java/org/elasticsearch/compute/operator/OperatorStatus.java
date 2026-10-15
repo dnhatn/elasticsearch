@@ -24,9 +24,8 @@ import java.io.IOException;
  *
  * @param operator String representation of the {@link Operator}.
  * @param status Status as reported by the {@link Operator}.
- * @param scanCounts What this operator moved, as the driver counted it rather than the operator: the volume the
- *                   pages it was handed and handed on carried, and what the work it did made of them. An operator
- *                   reports nothing of its own here, however deep the work ran.
+ * @param scanCounts What this operator moved, counted by the driver rather than by the operator: the volume of the
+ *                   pages it was handed and handed on, and what the work it ran made of them.
  */
 public record OperatorStatus(String operator, @Nullable Operator.Status status, ScanCounts scanCounts)
     implements
@@ -35,7 +34,7 @@ public record OperatorStatus(String operator, @Nullable Operator.Status status, 
 
     private static final TransportVersion ESQL_SCAN_COUNTS = TransportVersion.fromName("esql_scan_counts");
 
-    /** As the one above, for an operator the driver counted nothing against. */
+    /** For an operator the driver counted nothing against. */
     public OperatorStatus(String operator, @Nullable Operator.Status status) {
         this(operator, status, ScanCounts.EMPTY);
     }

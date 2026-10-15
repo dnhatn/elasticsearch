@@ -456,75 +456,37 @@ When running an {{esql}} query through the [ES|QL query API](https://www.elastic
 
 The `profile` object holds one entry per *driver*. A driver is one pipeline of operators running over one slice of the data, and a query runs many of them: several reading data, one reducing per node, one producing the final result. Each driver reports the operators it ran, how long each took, and how much each moved.
 
-#### Read one driver as throughput
+#### How much an operator moved
 
-Most of a driver's fields are counters. The useful reading is usually a rate, because a rate carries from one corpus to the next in a way that a wall-clock number does not.
+Alongside the row and document counts, each operator reports volume:
 
-| To find out | Divide | By |
-| --- | --- | --- |
-| How fast storage gave up bytes | `bytes_read` | `read_nanos`, where the operator reports it |
-| How fast what was read was decoded | `bytes_decoded` | `decode_nanos` |
-| How fast a source decoded what it read | `source_bytes_loaded` | `process_nanos` |
-| **How fast an operator took its input** | `bytes_in` | that operator's `process_nanos` |
-| **How fast an operator produced its output** | `bytes_out` | that operator's `process_nanos` |
-| How fast something walked the values it was handed | `bytes_processed` | that operator's `process_nanos` |
-| How fast rows moved through an operator | `rows_received` | that operator's `process_nanos` |
-| How fast documents were read | `documents_processed` | that operator's `process_nanos` |
-| Where a driver's time went | each `process_nanos` | the driver's `took_nanos` |
-
-For example, a driver whose `ValuesSourceReaderOperator` reports `bytes_read` of 394 MiB against a `read_nanos` of 297 ms read storage at about 1.3 GiB/s, and if that operator's `process_nanos` is 905 ms out of a `took_nanos` of 1.05 s, then reading and decoding a column was 87% of that driver.
-
-What to keep in mind when reading these rates:
-
-* `read_nanos` is counted inside `process_nanos`, so a read rate and a decode rate computed this way overlap in time. They do not add up.
-* The byte counts are tiers of the same work, not parts of a total. `bytes_read` is what storage holds, before anything decompresses it. `bytes_in` and `bytes_out` are the volume the pages between operators carried. Of what came out, `bytes_decoded` is the part an operator produced rather than passed along; of what came in, `bytes_processed` is the part it actually looked at.
-* `bytes_in` and `bytes_out` are counted for every operator, because the volume a page carries is read as it is handed over. A zero there means nothing flowed. The other counts are reported by the work itself, so a missing one means nobody counted, not that nothing moved.
-* `bytes_processed` is what was touched, in the form it was touched. A `STATS ... BY` over a column read as ordinals hashes the ordinals, so it reports their width and not the length of the terms they stand for — which is the optimization showing up, not a number that is too small.
-* `bytes_decoded` and `bytes_processed` are counted against the operator the driver was running when they moved, however deep they moved. A query the operator put to an index counts against that operator, not against whatever answered it, so the volume a full-text predicate walked appears on the operator that read the data.
-* A driver sums only what its operators made and looked at. The volume a page carried is left on the operators it passed, because the same bytes flow through every stage and a sum of them describes nothing.
-* A source operator hands on doc identifiers rather than values, so `bytes_out` for a plain scan counts the values the page carries, which is none of them.
-* `documents_scanned` is counted for a range of documents at a time rather than for each one, and it counts doc identifiers, so a segment with deleted documents covers a few more than it holds.
-
-#### What a query skipped
-
-Three document counts bracket the work a search avoided. `documents_scanned` is what it was asked to cover, `documents_processed` is what something read to decide or to produce, and `documents_found` is what matched. Nothing is read that was not covered, and nothing is found that was not read, so:
-
-* `documents_processed` over `documents_scanned`: how much of the data the query had to open. Small is an index doing its job.
-* `documents_found` over `documents_processed`: how many of the documents it opened were worth opening. Small means a predicate that rejects late — the shape where re-reading values dominates.
-* `bytes_processed` over `documents_processed`: the average size of what it read, which is what makes a decode rate comparable between corpora.
-
-A pushed-down query is the case worth reading this way. `COUNT(*)`, `MIN`, `MAX` and a filter answered by the index move no values at all, so their byte counts are empty by rights, and the document counts are the whole story: a large `documents_scanned` against a small `documents_found` is the pushdown working.
-
-What happens between the two counts is not measured. A query that covers ten million documents and reads a hundred thousand of them skipped the rest through postings, skip data or a competitive score, and the profile says how many it ended up reading, not which mechanism saved it.
-
-#### Compare the drivers of one query
-
-A single driver tells you how fast one thread worked. Reading the drivers against each other tells you whether the work was spread evenly, and whether the threads were working or waiting.
-
-| To find out | Compute |
+| field | what it counts |
 | --- | --- |
-| A per-thread rate | A driver's bytes or rows divided by its own `took_nanos`. A driver runs on one thread at a time, so this is comparable to a single-threaded measurement. |
-| The rate of the query as a whole | The sum over drivers, divided by the span from the earliest `start_millis` to the latest `stop_millis`. |
-| Whether the drivers really overlapped | The sum of `took_nanos` divided by that span times the number of drivers. |
-| Whether a driver worked or waited | `took_nanos` minus `cpu_nanos`, with `sleeps` naming what it waited for and on which thread. |
-| An uneven split from a slow node | The volume each driver handled next to its rate. Equal rates and unequal volumes are a skewed slice; an equal volume at a lower rate is the node. |
+| `bytes_in`, `bytes_out` | the values in the pages the operator was handed and handed on |
+| `bytes_decoded`, `decode_nanos` | of what it handed on, what it read from storage, and how long that took |
+| `bytes_processed` | of what it was handed, what it looked at |
+| `documents_scanned` | documents a search was asked to cover |
+| `documents_processed` | documents something read, to decide or to produce |
 
-The last row distinguishes two problems that look identical in `took_nanos` alone: eight drivers decoding at the same rate where one handled a third of the data had an uneven slice, not slow hardware.
+Divide any of them by that operator's `process_nanos` for a rate, and `bytes_decoded` by `decode_nanos` for the throughput of a scan. A rate per operator is a per-thread rate, because a driver runs on one thread at a time.
 
-Finally, `took_nanos` is each driver's own span, so the sum across drivers exceeds the query's wall clock whenever they ran at the same time. Only the span between the earliest `start_millis` and the latest `stop_millis` describes the query.
+Four ratios worth computing:
 
-#### Where a rate stops meaning anything
+* `bytes_decoded` over `bytes_read` — how much the bytes on disk expanded. Lets a columnar read and an external read be compared in the same units.
+* `bytes_processed` over `bytes_decoded` — how much of what was decoded anything looked at. Unlike a rate, it does not move with how selective the query was.
+* `documents_processed` over `documents_scanned` — how much of the data the query had to open. Small means the index did its job.
+* `documents_found` over `documents_processed` — how many of the documents it opened were worth opening. Small means a predicate that rejects late.
 
-Two shapes of query do not have a throughput. A rate computed for either one describes the data the query happened to match rather than how fast anything ran.
+#### What to watch for
 
-**A query answered in two phases.** A phrase on a `match_only_text` field, and any query that narrows with an index and then confirms by re-reading values, decodes only the documents the first phase admitted. Its decoded volume is therefore a function of how selective that phase was, not of how fast anything decoded, and dividing it by a time says nothing. Read ratios instead, which are unaffected because the selectivity cancels:
-
-* `bytes_decoded` over `bytes_read`: how much value volume the first phase let through.
-* `bytes_processed` over `bytes_decoded`: how much of what was decoded was looked at.
-
-**A query over indexed structures.** `bytes_read` covers the postings, the terms dictionary and the skip data, so `bytes_read` over `documents_found` is a useful number: how much index was touched per hit, which shows a query that stopped being selective. A decoded or examined volume may be missing entirely, because what an index walks is doc identifiers and frequencies rather than values — the figure worth having there is documents visited, not bytes.
-
-In general, **a rate compares one tier with itself**, across runs or corpora, and does not rank tiers against each other. Index bytes and value bytes are both bytes and describe different work, which is why they are counted separately.
+* The counts are tiers of the same work, not parts of a total. Do not add them up. `bytes_in` and `bytes_out` are what flowed between operators, so each page's volume appears twice, once on each side of the hop.
+* `bytes_read` and `bytes_decoded` are the two ends of the same read: bytes as storage holds them, and the values they turned into. Both are measured over the same window on the same thread, so `bytes_decoded` over `bytes_read` is the expansion. `bytes_processed` is not the other end of `bytes_read` — it is the part of `bytes_in` that something looked at.
+* Only operators that touch storage report those two: the Lucene source operator (index bytes, plus the values any query pushed into it reads), the column read (column bytes) and an external read (file bytes). On the Lucene side `decode_nanos` covers the read as well as the decoding, so a read rate and a decode rate taken from it share one window. An external read times its fetch separately, in `read_nanos` and `read_cpu_nanos`, on the thread that fetched.
+* `bytes_in` and `bytes_out` are counted for every operator, so a zero means nothing flowed. The rest are reported by the work itself, so a missing one means nobody counted — not that nothing moved.
+* A pushed-down `COUNT(*)`, `MIN`, `MAX` or filter moves no values, so it reports no bytes at all. There the document counts are the whole story: many scanned against few found is the pushdown working.
+* `bytes_processed` is what was touched, in the form it was touched. A `STATS ... BY` over a column read as ordinals hashes the ordinals, so it reports their width, not the length of the terms behind them.
+* A query that narrows with an index and then re-reads values decodes only what the first phase admitted, so its decoded volume depends on selectivity rather than on speed. Read the ratios above instead of a rate.
+* Nothing says how a search skipped. `documents_scanned` and `documents_processed` bracket it — nothing is read that was not covered — but which mechanism saved the rest is not reported.
 
 ### Query logging
 

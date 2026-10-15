@@ -629,7 +629,7 @@ public final class ReanalyzingTextQuery extends Query {
 
                 @Override
                 public boolean matches() throws IOException {
-                    // One document read to answer it, of those the approximation offered.
+                    // One document read to answer the query, of those the approximation offered.
                     ScanCounters.reporting().documentsProcessed(1);
                     return freq() > 0;
                 }
@@ -708,9 +708,8 @@ public final class ReanalyzingTextQuery extends Query {
         }
 
         /**
-         * Reports what the column handed over for this document and what answering it walked. A document is read
-         * only to be answered here, and answering it walks the values it holds, so the two are the same volume
-         * however the answer is reached.
+         * Reports what the column handed over for this document and what answering it looked at. A document is read
+         * only to answer the query, and answering it walks the values it holds, so both are the same volume.
          */
         private static void report(List<Object> values) {
             long volume = 0;

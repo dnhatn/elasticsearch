@@ -14,42 +14,38 @@ import org.elasticsearch.core.Releasable;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
- * The bytes a search moved, counted where they were moved so that a reader of them can be told apart from the one
- * that decoded them and the one that looked at them. Divided by the time the same place reports, each is a rate, and
- * a rate is what carries from one corpus to the next.
+ * Counts what a search moved: the bytes it decoded, the bytes something looked at, the time decoding took, and the
+ * documents it covered and read. Each count belongs to the place that did the work, so dividing it by the time that
+ * place reports gives a rate.
  *
- * <p>Two counts, which answer different questions and must not be added together: {@link #decoded} is what a read
- * turned into, the volume handed on, and {@link #processed} is the part of it something walked. What was taken from
- * storage is counted already, by whoever took it, and what flowed between two places is counted by whoever moved
- * it rather than reported here.
+ * <p>The counts are tiers of the same work rather than parts of a total, so they are not added together. Bytes taken
+ * from storage are counted by whoever took them, and the volume that flowed between two places is counted by
+ * whoever moved it.
  *
- * <p>A counter is accumulated by whoever moves the bytes, and the whole of a count is one place's business: a
- * caller reports all the bytes it moved or none of them, since a part of them is a rate that reads as fact and is
- * wrong.
+ * <p>A caller reports all of what it moved or none of it: half a count reads as fact and is wrong.
  *
- * <p>Counting is cheap enough to leave on. The adders take the flush of a document or a block, not of a value, so
- * the hot loop stays a local sum; several of a search's leaves may run at once, which is what the adders are for.
+ * <p>Counting is left on. The adders take a document or a block at a time rather than a value, and several leaves of
+ * one search may report at once, which is what the adders are for.
  */
 public final class ScanCounters {
 
-    /** Counts nothing, for a caller with nowhere to report. */
+    /** Counts nothing, for work with nowhere to report. */
     public static final ScanCounters NONE = new ScanCounters();
 
     /**
-     * The counters work done on this thread is reported to. Whoever runs the work says where its counts go, so that
-     * a reader of a column, a query over an index and an expression over a page all report the same way without
-     * being handed anything: each asks for {@link #reporting} and adds to what it finds.
+     * The counters work on this thread reports to. Whoever runs the work installs them, so a column reader, a query
+     * over an index and an expression over a page all report without being passed anything.
      */
     private static final ThreadLocal<ScanCounters> REPORTING = ThreadLocal.withInitial(() -> NONE);
 
-    /** Where work on this thread reports what it moved, which counts nothing where nobody is listening. */
+    /** The counters work on this thread reports to, which count nothing when none are installed. */
     public static ScanCounters reporting() {
         return REPORTING.get();
     }
 
     /**
-     * Reports work on this thread to these counters until the returned handle is closed, which puts back whatever
-     * was listening before. The caller that opens it is the one that knows which work it covers.
+     * Installs these counters for this thread until the returned handle is closed, which puts back whichever were
+     * installed before.
      */
     public Releasable reportHere() {
         final ScanCounters reportedBefore = REPORTING.get();
@@ -63,12 +59,12 @@ public final class ScanCounters {
     private final LongAdder documentsScanned = new LongAdder();
     private final LongAdder documentsProcessed = new LongAdder();
 
-    /** The bytes storage gave up turned into, which is the volume handed on. */
+    /** Adds bytes a read turned into, which is the volume handed on. */
     public void decoded(long bytes) {
         decoded.add(bytes);
     }
 
-    /** The bytes something walked, of those it was handed. */
+    /** Adds bytes something looked at, of those it was handed. */
     public void processed(long bytes) {
         processed.add(bytes);
     }
@@ -81,7 +77,7 @@ public final class ScanCounters {
         return processed.sum();
     }
 
-    /** Adds the time a decode took, which a rate over the bytes it left is taken against. */
+    /** Adds the time a decode took, which the bytes it produced are divided by. */
     public void decodeNanos(long nanos) {
         decodeNanos.add(nanos);
     }
@@ -90,7 +86,7 @@ public final class ScanCounters {
         return decodeNanos.sum();
     }
 
-    /** Documents a search was asked to cover, which it reports for a range at a time rather than a document. */
+    /** Adds documents a search was asked to cover, reported for a range rather than for each document. */
     public void documentsScanned(long documents) {
         documentsScanned.add(documents);
     }
@@ -99,7 +95,7 @@ public final class ScanCounters {
         return documentsScanned.sum();
     }
 
-    /** Documents something read to decide or to produce, of those it was asked to cover. */
+    /** Adds documents something read to decide or to produce, of those it was asked to cover. */
     public void documentsProcessed(long documents) {
         documentsProcessed.add(documents);
     }
@@ -108,7 +104,7 @@ public final class ScanCounters {
         return documentsProcessed.sum();
     }
 
-    /** What has been counted so far, as a report that can be carried. */
+    /** The counts so far, as a report that can be carried. */
     public ScanCounts snapshot() {
         return new ScanCounts(0, 0, decoded(), processed(), decodeNanos(), documentsScanned(), documentsProcessed());
     }

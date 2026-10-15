@@ -102,7 +102,7 @@ public class DriverContext {
 
     /**
      * What this driver has moved, counted by whoever moved it. An expression has no status of its own, so it
-     * reports here and the operator running it takes what was counted while it ran.
+     * reports here and the driver gives the counts to the operator that was running.
      */
     private final ScanCounters scanCounters = new ScanCounters();
 

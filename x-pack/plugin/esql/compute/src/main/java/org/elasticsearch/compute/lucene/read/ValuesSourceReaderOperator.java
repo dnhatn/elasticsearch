@@ -375,7 +375,7 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
     protected ReleasableIterator<Page> receive(Page page) {
         acquireSourceLoadingReservation();
         DocVector docVector = page.<DocBlock>getBlock(docChannel).asVector();
-        // The blocks this loads are appended after the ones it was given, so the given count is where they start.
+        // The loaded blocks are appended after the ones this was given, so that count is where they start.
         return trackBytesRead(page.getBlockCount(), appendBlockArrays(page, valuesReader(docVector)));
     }
 
@@ -389,7 +389,7 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
             @Override
             public Page next() {
                 long bytesSnapshot = directoryBytesRead.getAsLong();
-                // One reading of the clock a page, which is the coarsest that still tells a decode from the rest.
+                // One reading of the clock per page, the coarsest that still separates decoding from the rest.
                 long startNanos = System.nanoTime();
                 Page loaded = null;
                 try {
@@ -408,7 +408,7 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingToIteratorOpe
         };
     }
 
-    /** Reports what the blocks loaded into {@code page} spell, and the time loading them took. */
+    /** Reports what the blocks loaded into {@code page} spell, the documents they cover, and how long loading took. */
     private static void reportDecoded(Page page, int loadedFrom, long nanos) {
         final ScanCounters counters = ScanCounters.reporting();
         counters.decodeNanos(nanos);

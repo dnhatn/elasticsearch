@@ -18,17 +18,16 @@ import org.elasticsearch.xcontent.XContentBuilder;
 import java.io.IOException;
 
 /**
- * What one place moved, as a report of it rather than a running count. Carried whole so that a count added later
- * travels with the ones already here rather than as a field of its own.
+ * What one place moved, as a report rather than a running count, carried whole so that a count added later travels
+ * with the ones already here.
  *
- * <p>The counts are tiers of the same work and are not added together. {@link #bytesIn} and {@link #bytesOut} are
- * the volume that flowed through, which whoever moved it between two places can see from outside; of what came out,
- * {@link #decoded} is the part made here rather than passed along, and of what came in, {@link #processed} is the
- * part something actually looked at, which only the work itself can say.
+ * <p>The counts are tiers of the same work and are not added together. The bytes in and out are the volume that
+ * flowed through, which whoever moved it between two places sees from outside. Of what came out, the decoded bytes
+ * are the part made here rather than passed along; of what came in, the processed bytes are the part something
+ * looked at, which only the work itself can report.
  *
- * <p>The documents are those tiers in the other currency. {@link #documentsScanned} is what a search was asked to
- * cover and {@link #documentsProcessed} is what something read to answer, which together bracket what skipping
- * came to: nothing is found that was not read, and nothing is read that was not covered.
+ * <p>The documents are the same tiers counted in documents. Scanned and processed bracket what skipping came to:
+ * nothing is read that was not covered, and nothing is found that was not read.
  *
  * @param bytesIn            bytes handed to this place
  * @param bytesOut           bytes it handed on
@@ -62,8 +61,8 @@ public record ScanCounts(
     }
 
     /**
-     * What was made, read and looked at here, without what flowed through: the volume a page carried belongs to
-     * the places it passed, and adding it up over them describes nothing.
+     * The counts without the bytes in and out: the volume a page carried belongs to each place it passed, so adding
+     * it up over them describes nothing.
      */
     public ScanCounts work() {
         return new ScanCounts(0, 0, decoded, processed, decodeNanos, documentsScanned, documentsProcessed);
@@ -92,7 +91,7 @@ public record ScanCounts(
         out.writeVLong(documentsProcessed);
     }
 
-    /** The reports added, for a caller summing what several places moved. */
+    /** Two reports added, for a caller summing what several places moved. */
     public ScanCounts plus(ScanCounts other) {
         return other == EMPTY
             ? this
@@ -107,7 +106,7 @@ public record ScanCounts(
             );
     }
 
-    /** What was counted between two reports, which is the work one call did. */
+    /** The difference between two reports, which is what happened in between. */
     public ScanCounts since(ScanCounts before) {
         return before == EMPTY
             ? this
@@ -122,7 +121,7 @@ public record ScanCounts(
             );
     }
 
-    /** Whether anything was counted, which a caller leaving the counts out of a report goes by. */
+    /** Whether anything was counted. */
     public boolean isEmpty() {
         return bytesIn == 0
             && bytesOut == 0

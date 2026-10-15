@@ -54,8 +54,8 @@ public final class Page implements Writeable, Releasable {
     private boolean blocksReleased = false;
 
     /**
-     * What this page's values spell, read once however many times it is asked for: a page is handed on by one
-     * operator and handed to the next, and the blocks it holds do not change while it exists.
+     * What this page's values spell, computed on first use: a page is handed on by one operator and handed to the
+     * next, and the blocks it holds do not change while it exists.
      */
     private long payloadBytes = -1;
 
@@ -257,8 +257,8 @@ public final class Page implements Writeable, Releasable {
     }
 
     /**
-     * The bytes this page's values spell, which is the volume an operator handing it on produced and the volume
-     * the operator it is handed to receives.
+     * The bytes this page's values spell: the volume the operator handing it on produced, and the volume the
+     * operator it is handed to receives.
      */
     public long payloadBytes() {
         long bytes = payloadBytes;

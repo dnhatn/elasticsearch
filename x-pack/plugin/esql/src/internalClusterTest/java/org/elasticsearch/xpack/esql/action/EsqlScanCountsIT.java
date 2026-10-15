@@ -23,8 +23,8 @@ import static org.hamcrest.Matchers.notNullValue;
 
 /**
  * End to end coverage for what a query reports moving: the volume the pages between its operators carried, the
- * bytes a column read decoded, the time it spent decoding them, and the bytes a predicate walked. A query of known
- * volume says what the counts should be, so these hold the counts to the data rather than to each other.
+ * bytes a column read decoded, the time it spent decoding, the bytes a predicate looked at, and the documents
+ * covered and read. The queries have a known volume, so these check the counts against the data.
  */
 @ESIntegTestCase.ClusterScope(scope = ESIntegTestCase.Scope.SUITE, numDataNodes = 1, numClientNodes = 0, supportsDedicatedMasters = false)
 public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
@@ -32,7 +32,7 @@ public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
     private static final int DOCS = 200;
     private static final int VALUE_LENGTH = 1000;
 
-    /** A column read counts the bytes it decoded, which is the volume it handed on, and how long that took. */
+    /** A column read counts the bytes it decoded, the documents it read them for, and how long that took. */
     public void testAColumnReadCountsWhatItDecoded() {
         final String index = "esql_scan_counts";
         assertAcked(
@@ -83,7 +83,7 @@ public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
         }
     }
 
-    /** A predicate reading a document's values counts the bytes it walked, which no column read counts for it. */
+    /** A predicate reading a document's values counts what it looked at, which no column read counts for it. */
     public void testAPredicateCountsWhatItWalked() {
         final String index = "esql_scan_counts_text";
         assertAcked(

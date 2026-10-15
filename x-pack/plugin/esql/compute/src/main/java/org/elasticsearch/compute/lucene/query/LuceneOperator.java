@@ -466,8 +466,8 @@ public abstract class LuceneOperator extends SourceOperator {
             // avoid overflow and limit the range
             numDocs = Math.min(maxPosition - position, numDocs);
             assert numDocs > 0 : "scorer was exhausted";
-            // The documents this scorer was asked to cover, counted for the range rather than for each of them:
-            // what it reads of them is its own, and the two together say what it got to skip.
+            // The documents this scorer was asked to cover, counted for the range rather than for each document.
+            // Against the documents something went on to read, they say what the scorer skipped.
             ScanCounters.reporting().documentsScanned(numDocs);
             position = bulkScorer.score(collector, acceptDocs, position, Math.min(maxPosition, position + numDocs));
         }
