@@ -154,6 +154,18 @@ public class PagePayloadTests extends ESTestCase {
         return array;
     }
 
+    /**
+     * A page is handed on by one operator and handed to the next, and both read what it carries, so it is measured
+     * once and says the same thing however often it is asked.
+     */
+    public void testAPageIsMeasuredOnce() {
+        try (BytesRefBlock block = blockFactory.newConstantBytesRefBlockWith(new BytesRef("word"), 5)) {
+            final Page page = new Page(block);
+            assertEquals(PagePayload.of(page), page.payloadBytes());
+            assertEquals(page.payloadBytes(), page.payloadBytes());
+        }
+    }
+
     public void testAPageSpellsWhatItsBlocksDo() {
         try (
             BytesRefBlock text = blockFactory.newConstantBytesRefBlockWith(new BytesRef("word"), 3);

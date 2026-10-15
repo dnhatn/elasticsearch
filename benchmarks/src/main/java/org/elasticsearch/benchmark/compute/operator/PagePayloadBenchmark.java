@@ -41,6 +41,11 @@ import java.util.stream.IntStream;
 /**
  * The cost of taking a page's value volume, against the per-document cost of the column read that produces the
  * page: a column read reports what it decoded, and this is what reporting it costs.
+ *
+ * <p>{@link #payload} is one page measured once, which is what a producer pays. {@link #flow} is the same volume
+ * followed through a plan, where a driver takes it as each operator hands the page on and as the next is handed
+ * it: the page is measured where it is produced and where it is consumed, and the blocks it holds travel on into
+ * the pages of the stages after it.
  */
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
@@ -131,5 +136,35 @@ public class PagePayloadBenchmark {
     @OperationsPerInvocation(POSITIONS)
     public long payload() {
         return PagePayload.of(page);
+    }
+
+    /** The stages of a plan a page's values flow through, each handing the blocks it holds on to the next. */
+    private static final int STAGES = 5;
+
+    /**
+     * What a driver pays to count the flow through a plan: the volume of every page it hands over, read as the
+     * output of one operator and the input of the next.
+     */
+    @Benchmark
+    @OperationsPerInvocation(POSITIONS)
+    public long flow() {
+        long bytes = 0;
+        Page staged = page;
+        for (int stage = 0; stage < STAGES; stage++) {
+            // What the operator handed on, and then what the operator it is handed to received.
+            bytes += staged.payloadBytes();
+            bytes += staged.payloadBytes();
+            // The next stage hands on a page of its own over the same blocks.
+            staged = new Page(blocksOf(staged));
+        }
+        return bytes;
+    }
+
+    private static Block[] blocksOf(Page page) {
+        final Block[] blocks = new Block[page.getBlockCount()];
+        for (int channel = 0; channel < blocks.length; channel++) {
+            blocks[channel] = page.getBlock(channel);
+        }
+        return blocks;
     }
 }

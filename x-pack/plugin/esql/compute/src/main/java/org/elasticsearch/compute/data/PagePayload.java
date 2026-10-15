@@ -59,7 +59,7 @@ public final class PagePayload {
         if (ordinals != null && ordinals.getDictionaryVector().getPositionCount() <= block.getTotalValueCount()) {
             // A dictionary holding more terms than the block holds values is read for fewer of them than it holds,
             // so measuring all of it would cost more than reading the values it is asked for.
-            return ordinalsOf(ordinals);
+            return ordinals.totalValueBytes();
         }
         final BytesRefVector vector = block.asVector();
         if (vector instanceof BytesRefArrayVector arrayVector) {
@@ -76,7 +76,7 @@ public final class PagePayload {
      * The bytes a column read against a dictionary holds, taken as the length of the term each position names.
      * The terms are measured once each, which is what reading them as ordinals saved in the first place.
      */
-    private static long ordinalsOf(OrdinalBytesRefBlock block) {
+    static long ordinalsOf(OrdinalBytesRefBlock block) {
         final BytesRefVector dictionary = block.getDictionaryVector();
         assert dictionary.getPositionCount() <= block.getTotalValueCount() : "measuring the dictionary costs more";
         final BytesRef scratch = new BytesRef();

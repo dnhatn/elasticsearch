@@ -26,6 +26,9 @@ public final class OrdinalBytesRefBlock extends AbstractBlockRefCounted implemen
     private final IntBlock ordinals;
     private final BytesRefVector bytes;
 
+    /** What the terms this block's positions name spell, read once: a block outlives the page that holds it. */
+    private long totalValueBytes = -1;
+
     public OrdinalBytesRefBlock(IntBlock ordinals, BytesRefVector bytes) {
         this.ordinals = ordinals;
         this.bytes = bytes;
@@ -64,6 +67,16 @@ public final class OrdinalBytesRefBlock extends AbstractBlockRefCounted implemen
 
     public IntBlock getOrdinalsBlock() {
         return ordinals;
+    }
+
+    /** The bytes the terms this block's positions name spell, taken once however often it is asked for. */
+    long totalValueBytes() {
+        long bytes = totalValueBytes;
+        if (bytes < 0) {
+            bytes = PagePayload.ordinalsOf(this);
+            totalValueBytes = bytes;
+        }
+        return bytes;
     }
 
     public BytesRefVector getDictionaryVector() {

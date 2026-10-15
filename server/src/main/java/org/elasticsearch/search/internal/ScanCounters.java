@@ -19,8 +19,9 @@ import java.util.concurrent.atomic.LongAdder;
  * a rate is what carries from one corpus to the next.
  *
  * <p>Two counts, which answer different questions and must not be added together: {@link #decoded} is what a read
- * turned into, the volume handed on, and {@link #processed} is the part of it a predicate walked. What was taken
- * from storage is counted already, by whoever took it.
+ * turned into, the volume handed on, and {@link #processed} is the part of it something walked. What was taken from
+ * storage is counted already, by whoever took it, and what flowed between two places is counted by whoever moved
+ * it rather than reported here.
  *
  * <p>A counter is accumulated by whoever moves the bytes, and the whole of a count is one place's business: a
  * caller reports all the bytes it moved or none of them, since a part of them is a rate that reads as fact and is
@@ -65,7 +66,7 @@ public final class ScanCounters {
         decoded.add(bytes);
     }
 
-    /** The bytes a predicate walked, of those it was handed. */
+    /** The bytes something walked, of those it was handed. */
     public void processed(long bytes) {
         processed.add(bytes);
     }
@@ -89,7 +90,7 @@ public final class ScanCounters {
 
     /** What has been counted so far, as a report that can be carried. */
     public ScanCounts snapshot() {
-        return new ScanCounts(decoded(), processed(), decodeNanos());
+        return ScanCounts.of(decoded(), processed(), decodeNanos());
     }
 
     @Override

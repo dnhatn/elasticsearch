@@ -54,6 +54,12 @@ public final class Page implements Writeable, Releasable {
     private boolean blocksReleased = false;
 
     /**
+     * What this page's values spell, read once however many times it is asked for: a page is handed on by one
+     * operator and handed to the next, and the blocks it holds do not change while it exists.
+     */
+    private long payloadBytes = -1;
+
+    /**
      * Creates a new page with the given blocks. Every block has the same number of positions.
      *
      * @param blocks the blocks
@@ -248,6 +254,19 @@ public final class Page implements Writeable, Releasable {
      */
     public int getBlockCount() {
         return blocks.length;
+    }
+
+    /**
+     * The bytes this page's values spell, which is the volume an operator handing it on produced and the volume
+     * the operator it is handed to receives.
+     */
+    public long payloadBytes() {
+        long bytes = payloadBytes;
+        if (bytes < 0) {
+            bytes = PagePayload.of(this);
+            payloadBytes = bytes;
+        }
+        return bytes;
     }
 
     @Nullable

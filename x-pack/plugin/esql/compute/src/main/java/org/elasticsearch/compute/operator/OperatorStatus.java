@@ -24,9 +24,9 @@ import java.io.IOException;
  *
  * @param operator String representation of the {@link Operator}.
  * @param status Status as reported by the {@link Operator}.
- * @param scanCounts What the work this operator did moved, as the driver counted it rather than the operator. An
- *                   operator reports nothing of its own here: whatever ran while the driver was asking this
- *                   operator for a page counted against it, however deep it ran.
+ * @param scanCounts What this operator moved, as the driver counted it rather than the operator: the volume the
+ *                   pages it was handed and handed on carried, and what the work it did made of them. An operator
+ *                   reports nothing of its own here, however deep the work ran.
  */
 public record OperatorStatus(String operator, @Nullable Operator.Status status, ScanCounts scanCounts)
     implements

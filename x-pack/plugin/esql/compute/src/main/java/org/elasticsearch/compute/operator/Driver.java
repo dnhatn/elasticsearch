@@ -89,9 +89,10 @@ public class Driver implements Releasable, Describable {
     protected List<Operator> activeOperators;
     private final List<OperatorStatus> statusOfCompletedOperators = new ArrayList<>();
     /**
-     * What the work each operator did moved, counted by this driver rather than by the operator. Whatever runs while
-     * an operator is being asked for a page counts against that operator, however deep it runs, so an operator that
-     * moves bytes reports nothing of its own.
+     * What each operator moved, counted by this driver rather than by the operator. The pages it hands over are the
+     * volume that flowed through, which this driver sees from outside; whatever runs while an operator is being
+     * asked for a page is what it did with that volume, however deep it runs. Either way an operator implements
+     * nothing.
      */
     private final Map<Operator, ScanCounts> movedByOperator = new IdentityHashMap<>();
     /**
@@ -313,7 +314,11 @@ public class Driver implements Releasable, Describable {
 
     /** Counts against {@code operator} whatever was reported since {@code before}, which is what its call moved. */
     private void attribute(Operator operator, ScanCounts before) {
-        final ScanCounts moved = driverContext.scanCounters().snapshot().since(before);
+        count(operator, driverContext.scanCounters().snapshot().since(before));
+    }
+
+    /** Counts {@code moved} against {@code operator}, which is where the status it is reported in reads it. */
+    private void count(Operator operator, ScanCounts moved) {
         if (moved.isEmpty() == false) {
             movedByOperator.merge(operator, moved, ScanCounts::plus);
         }
@@ -389,6 +394,9 @@ public class Driver implements Releasable, Describable {
                 } finally {
                     attribute(op, movedBeforeOutput);
                 }
+                if (page != null) {
+                    count(op, ScanCounts.handedOn(page.payloadBytes()));
+                }
                 if (page == null) {
                     // No result, just move to the next iteration
                 } else if (page.getPositionCount() == 0 && page.batchMetadata() == null) {
@@ -402,6 +410,7 @@ public class Driver implements Releasable, Describable {
                         page.releaseBlocks();
                         throw e;
                     }
+                    count(nextOp, ScanCounts.handedIn(page.payloadBytes()));
                     final ScanCounts movedBeforeInput = driverContext.scanCounters().snapshot();
                     try {
                         nextOp.addInput(page);

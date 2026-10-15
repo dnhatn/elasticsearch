@@ -22,9 +22,9 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.notNullValue;
 
 /**
- * End to end coverage for what a query reports moving: the bytes a column read decoded, the time it spent decoding
- * them, and the bytes a predicate walked. A query of known volume says what the counts should be, so these hold the
- * counts to the data rather than to each other.
+ * End to end coverage for what a query reports moving: the volume the pages between its operators carried, the
+ * bytes a column read decoded, the time it spent decoding them, and the bytes a predicate walked. A query of known
+ * volume says what the counts should be, so these hold the counts to the data rather than to each other.
  */
 @ESIntegTestCase.ClusterScope(scope = ESIntegTestCase.Scope.SUITE, numDataNodes = 1, numClientNodes = 0, supportsDedicatedMasters = false)
 public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
@@ -55,6 +55,7 @@ public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
             reported.append("drivers=").append(response.profile().drivers().size()).append('\n');
             long decoded = 0;
             long decodeNanos = 0;
+            long handedToOne = 0;
             for (DriverProfile driver : response.profile().drivers()) {
                 reported.append("  driver ")
                     .append(driver.description())
@@ -66,10 +67,13 @@ public class EsqlScanCountsIT extends AbstractEsqlIntegTestCase {
                     reported.append("    ").append(operator.operator()).append(' ').append(counts).append('\n');
                     decoded += counts.decoded();
                     decodeNanos += counts.decodeNanos();
+                    handedToOne = Math.max(handedToOne, counts.bytesIn());
                 }
             }
             assertThat("every value decoded is counted" + reported, decoded, greaterThanOrEqualTo(volume));
             assertThat("decoding them took time" + reported, decodeNanos, greaterThan(0L));
+            // Whatever the values were read for was handed them, and says so without having been asked to count.
+            assertThat("the operator the values were read for was handed them" + reported, handedToOne, greaterThanOrEqualTo(volume));
         }
     }
 

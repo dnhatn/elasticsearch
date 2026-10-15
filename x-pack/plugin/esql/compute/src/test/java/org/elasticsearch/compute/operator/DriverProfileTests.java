@@ -37,9 +37,14 @@ public class DriverProfileTests extends AbstractWireSerializingTestCase<DriverPr
             10000,
             12,
             List.of(
-                // What each operator moved is counted by the driver, which is what the roll-up below adds up.
-                new OperatorStatus("LuceneSource", LuceneSourceOperatorStatusTests.simple(), new ScanCounts(0, 8192, 0)),
-                new OperatorStatus("ValuesSourceReader", ValuesSourceReaderOperatorStatusTests.simple(), new ScanCounts(16384, 0, 500000))
+                // What each operator moved is counted by the driver: the volume its pages carried, and what it
+                // made of them. The roll-up below adds up what was made, not what flowed through every operator.
+                new OperatorStatus("LuceneSource", LuceneSourceOperatorStatusTests.simple(), ScanCounts.handedOn(8192)),
+                new OperatorStatus(
+                    "ValuesSourceReader",
+                    ValuesSourceReaderOperatorStatusTests.simple(),
+                    new ScanCounts(8192, 24576, 16384, 0, 500000)
+                )
             ),
             new DriverSleeps(
                 Map.of("driver time", 1L),
@@ -67,7 +72,6 @@ public class DriverProfileTests extends AbstractWireSerializingTestCase<DriverPr
               "read_nanos" : 0,
               "read_cpu_nanos" : 0,
               "bytes_decoded" : 16384,
-              "bytes_processed" : 8192,
               "decode_nanos" : 500000,
               "iterations" : 12,
               "operators" : [
@@ -76,13 +80,15 @@ public class DriverProfileTests extends AbstractWireSerializingTestCase<DriverPr
                   "status" :
             """.stripTrailing() + " " + LuceneSourceOperatorStatusTests.simpleToJson().replace("\n", "\n      ") + "," + """
 
-                  "bytes_processed" : 8192
+                  "bytes_out" : 8192
                 },
                 {
                   "operator" : "ValuesSourceReader",
                   "status" :
             """.stripTrailing() + " " + ValuesSourceReaderOperatorStatusTests.simpleToJson().replace("\n", "\n      ") + "," + """
 
+                  "bytes_in" : 8192,
+                  "bytes_out" : 24576,
                   "bytes_decoded" : 16384,
                   "decode_nanos" : 500000
                 }

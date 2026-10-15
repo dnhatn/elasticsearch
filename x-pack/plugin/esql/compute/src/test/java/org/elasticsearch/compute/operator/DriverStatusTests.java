@@ -16,6 +16,7 @@ import org.elasticsearch.compute.lucene.read.ValuesSourceReaderOperatorStatus;
 import org.elasticsearch.compute.lucene.read.ValuesSourceReaderOperatorStatusTests;
 import org.elasticsearch.compute.operator.exchange.ExchangeSinkOperator;
 import org.elasticsearch.compute.operator.exchange.ExchangeSinkOperatorStatusTests;
+import org.elasticsearch.search.internal.ScanCounts;
 import org.elasticsearch.test.AbstractWireSerializingTestCase;
 import org.elasticsearch.test.ESTestCase;
 
@@ -154,7 +155,19 @@ public class DriverStatusTests extends AbstractWireSerializingTestCase<DriverSta
             new ExchangeSinkOperatorStatusTests()::createTestInstance,
             () -> null
         );
-        return new OperatorStatus(randomAlphaOfLength(3), status.get());
+        return new OperatorStatus(randomAlphaOfLength(3), status.get(), randomScanCounts());
+    }
+
+    static ScanCounts randomScanCounts() {
+        return randomBoolean()
+            ? ScanCounts.EMPTY
+            : new ScanCounts(
+                randomNonNegativeLong(),
+                randomNonNegativeLong(),
+                randomNonNegativeLong(),
+                randomNonNegativeLong(),
+                randomNonNegativeLong()
+            );
     }
 
     @Override
