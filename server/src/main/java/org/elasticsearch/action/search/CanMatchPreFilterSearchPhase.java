@@ -283,7 +283,13 @@ final class CanMatchPreFilterSearchPhase {
                 consumeResult(false, request);
             }
         }
-        listener.onResponse(getResult(shardsIts));
+
+        if (matchedShardLevelRequests.isEmpty()) {
+        } else {
+            // verify missing shards only for the shards that we hit for the query
+            checkNoMissingShards(matchedShardLevelRequests);
+            new Round(matchedShardLevelRequests).run();
+        }
     }
 
     private void consumeResult(boolean canMatch, ShardSearchRequest request) {
@@ -339,6 +345,7 @@ final class CanMatchPreFilterSearchPhase {
         private final List<SearchShardIterator> shards;
         private final CountDown countDown;
         private final AtomicReferenceArray<Exception> failedResponses;
+        private final long startNanoTime = System.nanoTime();
 
         Round(List<SearchShardIterator> shards) {
             this.shards = shards;
@@ -432,6 +439,7 @@ final class CanMatchPreFilterSearchPhase {
                 }
             }
             if (remainingShards.isEmpty()) {
+                System.err.println("--> can_match took [" + (System.nanoTime() - startNanoTime) + "] ns");
                 listener.onResponse(getResult(shardsIts));
             } else {
                 // trigger another round, forcing execution
