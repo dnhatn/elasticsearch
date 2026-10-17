@@ -38,6 +38,7 @@ import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Tuple;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.SliceSelection;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.logging.LogManager;
@@ -138,7 +139,9 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
         ActionListener<ComputeResponse> outListener
     ) {
         Integer maxConcurrentNodesPerCluster = PlanConcurrencyCalculator.INSTANCE.calculateNodesConcurrency(dataNodePlan, configuration);
-
+        System.err.println("--> start detecting filter " + System.nanoTime());
+        QueryBuilder requestFilter = PlannerUtils.canMatchFilter(flags, configuration, clusterService.state().getMinTransportVersion(), dataNodePlan);
+        System.err.println("--> finished detecting filter " + System.nanoTime());
         new DataNodeRequestSender(
             clusterService,
             projectResolver,
@@ -146,7 +149,7 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
             searchExecutor,
             parentTask,
             originalIndices,
-            PlannerUtils.canMatchFilter(flags, configuration, clusterService.state().getMinTransportVersion(), dataNodePlan),
+            requestFilter,
             PlannerUtils.sliceSelection(dataNodePlan),
             clusterAlias,
             configuration.allowPartialResults(),

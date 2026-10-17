@@ -40,6 +40,7 @@ public class EsqlSearchShardsAction extends HandledTransportAction<SearchShardsR
             actionFilters,
             SearchShardsRequest::new,
             // TODO replace DIRECT_EXECUTOR_SERVICE when removing workaround for https://github.com/elastic/elasticsearch/issues/97916
+            // should be direct here as nothing has executed as this should have been off
             transportService.getThreadPool().executor(ThreadPool.Names.SEARCH_COORDINATION)
         );
         this.searchShardsAction = searchShardsAction;

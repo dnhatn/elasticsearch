@@ -507,6 +507,7 @@ abstract class DataNodeRequestSender {
      */
     void searchShards(Set<String> concreteIndices, ActionListener<TargetShards> listener) {
         ActionListener<SearchShardsResponse> searchShardsListener = listener.map(resp -> {
+            System.err.println("--> received search_shard response " + System.nanoTime());
             Map<String, DiscoveryNode> nodes = newHashMap(resp.getNodes().size());
             for (DiscoveryNode node : resp.getNodes()) {
                 nodes.put(node.getId(), node);
