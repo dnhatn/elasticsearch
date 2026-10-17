@@ -150,6 +150,7 @@ abstract class DataNodeRequestSender {
         );
         final long startTimeInNanos = System.nanoTime();
         searchShards(concreteIndices, ActionListener.wrap(targetShards -> {
+            System.err.println("--> search_shards took [" + (System.nanoTime() - startTimeInNanos) + " ns");
             try (var computeListener = new ComputeListener(runOnTaskFailure, listener.map(completionInfo -> {
                 final int totalSkipShards = targetShards.skippedShards() + skippedShards.get();
                 final int failedShards = shardFailures.size();
