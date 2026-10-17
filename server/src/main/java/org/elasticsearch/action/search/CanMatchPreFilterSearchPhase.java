@@ -283,13 +283,7 @@ final class CanMatchPreFilterSearchPhase {
                 consumeResult(false, request);
             }
         }
-        if (matchedShardLevelRequests.isEmpty()) {
-            listener.onResponse(getResult(shardsIts));
-        } else {
-            // verify missing shards only for the shards that we hit for the query
-            checkNoMissingShards(matchedShardLevelRequests);
-            new Round(matchedShardLevelRequests).run();
-        }
+        listener.onResponse(getResult(shardsIts));
     }
 
     private void consumeResult(boolean canMatch, ShardSearchRequest request) {
