@@ -13,6 +13,7 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
 import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.OriginalIndices;
+import org.elasticsearch.action.search.SearchShardsTrace;
 import org.elasticsearch.action.support.ChannelActionListener;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.RefCountingRunnable;
@@ -139,9 +140,9 @@ final class DataNodeComputeHandler implements TransportRequestHandler<DataNodeRe
         ActionListener<ComputeResponse> outListener
     ) {
         Integer maxConcurrentNodesPerCluster = PlanConcurrencyCalculator.INSTANCE.calculateNodesConcurrency(dataNodePlan, configuration);
-        System.err.println("--> start detecting filter " + System.nanoTime());
+        SearchShardsTrace.start(parentTask.getId());
         QueryBuilder requestFilter = PlannerUtils.canMatchFilter(flags, configuration, clusterService.state().getMinTransportVersion(), dataNodePlan);
-        System.err.println("--> finished detecting filter " + System.nanoTime());
+        SearchShardsTrace.mark(parentTask.getId(), SearchShardsTrace.DETECT_END);
         new DataNodeRequestSender(
             clusterService,
             projectResolver,

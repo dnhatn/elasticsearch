@@ -15,6 +15,7 @@ import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.search.SearchShardsGroup;
 import org.elasticsearch.action.search.SearchShardsRequest;
 import org.elasticsearch.action.search.SearchShardsResponse;
+import org.elasticsearch.action.search.SearchShardsTrace;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.action.support.TransportActions;
 import org.elasticsearch.cluster.node.DiscoveryNode;
@@ -149,8 +150,9 @@ abstract class DataNodeRequestSender {
             EsqlPlugin.externalBlobStorePool()
         );
         final long startTimeInNanos = System.nanoTime();
+        SearchShardsTrace.mark(rootTask.getId(), SearchShardsTrace.SEND);
         searchShards(concreteIndices, ActionListener.wrap(targetShards -> {
-            System.err.println("--> search_shards took [" + (System.nanoTime() - startTimeInNanos) + " ns");
+            SearchShardsTrace.finish(rootTask.getId());
             try (var computeListener = new ComputeListener(runOnTaskFailure, listener.map(completionInfo -> {
                 final int totalSkipShards = targetShards.skippedShards() + skippedShards.get();
                 final int failedShards = shardFailures.size();
@@ -507,7 +509,7 @@ abstract class DataNodeRequestSender {
      */
     void searchShards(Set<String> concreteIndices, ActionListener<TargetShards> listener) {
         ActionListener<SearchShardsResponse> searchShardsListener = listener.map(resp -> {
-            System.err.println("--> received search_shard response " + System.nanoTime());
+            SearchShardsTrace.mark(rootTask.getId(), SearchShardsTrace.RECEIVED);
             Map<String, DiscoveryNode> nodes = newHashMap(resp.getNodes().size());
             for (DiscoveryNode node : resp.getNodes()) {
                 nodes.put(node.getId(), node);

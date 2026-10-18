@@ -120,7 +120,8 @@ public class TransportSearchShardsAction extends TransportAction<SearchShardsReq
      */
     public void searchShards(Task task, SearchShardsRequest searchShardsRequest, ActionListener<SearchShardsResponse> listener) {
         final long relativeStartNanos = System.nanoTime();
-        System.err.println("--> executing search_shards " + relativeStartNanos);
+        final long traceKey = task.getParentTaskId().getId();
+        SearchShardsTrace.mark(traceKey, SearchShardsTrace.EXECUTE);
         SearchRequest original = new SearchRequest(searchShardsRequest.indices()).indicesOptions(searchShardsRequest.indicesOptions())
             .routing(searchShardsRequest.routing())
             .setRoutingFromSlice(searchShardsRequest.isRoutingFromSlice())
@@ -149,7 +150,7 @@ public class TransportSearchShardsAction extends TransportAction<SearchShardsReq
         }
 
         // Set CCS minimize round-trips to null since search shards requests are guaranteed to only reference local indices
-        System.err.println("--> start rewriting request " + System.nanoTime());
+        SearchShardsTrace.mark(traceKey, SearchShardsTrace.REWRITE_START);
         Rewriteable.rewriteAndFetch(
             original,
             searchService.getRewriteContext(
@@ -162,7 +163,7 @@ public class TransportSearchShardsAction extends TransportAction<SearchShardsReq
             ),
             threadPool.executor(ThreadPool.Names.SEARCH_COORDINATION),
             listener.delegateFailureAndWrap((delegate, searchRequest) -> {
-                System.err.println("--> finished rewriting request " + System.nanoTime());
+                SearchShardsTrace.mark(traceKey, SearchShardsTrace.REWRITE_END);
                 Index[] concreteIndices = resolvedIndices.getConcreteLocalIndices();
                 TransportSearchAction.validateAndResolveSearchSliceRouting(
                     searchRequest,
@@ -187,8 +188,8 @@ public class TransportSearchShardsAction extends TransportAction<SearchShardsReq
                     concreteIndexNames,
                     false
                 );
+                SearchShardsTrace.mark(traceKey, SearchShardsTrace.READY);
                 if (SearchService.canRewriteToMatchNone(searchRequest.source()) == false) {
-                    System.err.println("--> ready to response " + System.nanoTime());
                     CollectionUtil.timSort(shardIts);
                     delegate.onResponse(
                         new SearchShardsResponse(
