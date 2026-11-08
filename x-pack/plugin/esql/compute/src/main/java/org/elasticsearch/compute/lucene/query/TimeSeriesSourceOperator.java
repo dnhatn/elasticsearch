@@ -14,6 +14,7 @@ import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Limiter;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.compute.querydsl.query.QueryWarnings;
+import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.RefCounted;
 import org.elasticsearch.index.codec.tsdb.PartitionedDocValues;
 
@@ -43,6 +44,36 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
             LongSupplier directoryBytesRead,
             QueryWarnings singleValueQueryWarnings
         ) {
+            this(
+                contexts,
+                queryFunction,
+                dataPartitioning,
+                docThresholdForAutoStrategy,
+                taskConcurrency,
+                maxPageSize,
+                limit,
+                directoryBytesRead,
+                singleValueQueryWarnings,
+                null
+            );
+        }
+
+        /**
+         * @param tsidRangeSteps the step counters of the {@link TsidRangeQuery}s of the queries, reported in the operators' status,
+         *                       or {@code null} if the queries are not cut into {@code _tsid} ranges
+         */
+        public Factory(
+            IndexedByShardId<? extends ShardContext> contexts,
+            Function<ShardContext, List<LuceneSliceQueue.QueryAndTags>> queryFunction,
+            DataPartitioning dataPartitioning,
+            int docThresholdForAutoStrategy,
+            int taskConcurrency,
+            int maxPageSize,
+            int limit,
+            LongSupplier directoryBytesRead,
+            QueryWarnings singleValueQueryWarnings,
+            @Nullable TsidRangeQuery.Steps tsidRangeSteps
+        ) {
             super(
                 contexts,
                 queryFunction,
@@ -55,7 +86,9 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
                 false,
                 directoryBytesRead,
                 LuceneSliceQueue.MIN_DOCS_PER_SLICE,
-                singleValueQueryWarnings
+                singleValueQueryWarnings,
+                null,
+                tsidRangeSteps
             );
         }
 
@@ -69,7 +102,8 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
                 limit,
                 limiter,
                 directoryBytesRead,
-                singleValueQueryWarnings
+                singleValueQueryWarnings,
+                tsidRangeSteps
             );
         }
 
@@ -89,6 +123,30 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
         LongSupplier directoryBytesRead,
         QueryWarnings singleValueQueryWarnings
     ) {
+        this(
+            shardContextCounters,
+            driverContext,
+            maxPageSize,
+            sliceQueue,
+            limit,
+            limiter,
+            directoryBytesRead,
+            singleValueQueryWarnings,
+            null
+        );
+    }
+
+    public TimeSeriesSourceOperator(
+        IndexedByShardId<? extends RefCounted> shardContextCounters,
+        DriverContext driverContext,
+        int maxPageSize,
+        LuceneSliceQueue sliceQueue,
+        int limit,
+        Limiter limiter,
+        LongSupplier directoryBytesRead,
+        QueryWarnings singleValueQueryWarnings,
+        @Nullable TsidRangeQuery.Steps tsidRangeSteps
+    ) {
         super(
             shardContextCounters,
             driverContext,
@@ -99,7 +157,8 @@ public final class TimeSeriesSourceOperator extends LuceneSourceOperator {
             false,
             directoryBytesRead,
             singleValueQueryWarnings,
-            null
+            null,
+            tsidRangeSteps
         );
     }
 

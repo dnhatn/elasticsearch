@@ -1156,6 +1156,30 @@
             "update_nanos"
           ],
           "additionalProperties" : false
+        },
+        "tsid_range" : {
+          "type" : "object",
+          "properties" : {
+            "leaves" : {
+              "type" : "integer"
+            },
+            "prefix_table" : {
+              "type" : "integer"
+            },
+            "skipper" : {
+              "type" : "integer"
+            },
+            "binary_search" : {
+              "type" : "integer"
+            }
+          },
+          "required" : [
+            "leaves",
+            "prefix_table",
+            "skipper",
+            "binary_search"
+          ],
+          "additionalProperties" : false
         }
       },
       "required" : [

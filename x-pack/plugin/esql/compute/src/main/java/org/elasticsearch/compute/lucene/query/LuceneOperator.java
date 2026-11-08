@@ -552,6 +552,14 @@ public abstract class LuceneOperator extends SourceOperator {
         return null;
     }
 
+    /**
+     * How the {@link TsidRangeQuery}s of this operator's queries were resolved, or {@code null} if it has none.
+     */
+    @Nullable
+    protected TsidRangeQuery.Status tsidRangeStatus() {
+        return null;
+    }
+
     @Override
     public Operator.Status status() {
         return new Status(this);
@@ -582,6 +590,7 @@ public abstract class LuceneOperator extends SourceOperator {
             .required("bytes_read", ProfileSchema.integer())
             .required("partitioning_strategies", ProfileSchema.dynamicObject(ProfileSchema.string()))
             .optional("min_competitive", MinCompetitiveQuery.Status.PROFILE_SCHEMA.schema())
+            .optional("tsid_range", TsidRangeQuery.Status.PROFILE_SCHEMA.schema())
             .build();
 
         private static final TransportVersion ESQL_REPORT_SHARD_PARTITIONING = TransportVersion.fromName("esql_report_shard_partitioning");
@@ -590,6 +599,9 @@ public abstract class LuceneOperator extends SourceOperator {
         );
         private static final TransportVersion ESQL_LUCENE_OPERATOR_MIN_COMPETITIVE = TransportVersion.fromName(
             "esql_lucene_operator_min_competitive"
+        );
+        private static final TransportVersion ESQL_LUCENE_OPERATOR_TSID_RANGE = TransportVersion.fromName(
+            "esql_lucene_operator_tsid_range"
         );
 
         private final int processedSlices;
@@ -607,6 +619,8 @@ public abstract class LuceneOperator extends SourceOperator {
         private final Map<String, LuceneSliceQueue.PartitioningStrategy> partitioningStrategies;
         @Nullable
         private final MinCompetitiveQuery.Status minCompetitive;
+        @Nullable
+        private final TsidRangeQuery.Status tsidRange;
 
         public static final int QUERY_STRING_TRUNCATION = 500;
 
@@ -650,6 +664,7 @@ public abstract class LuceneOperator extends SourceOperator {
             bytesRead = operator.totalBytesRead;
             partitioningStrategies = operator.sliceQueue.partitioningStrategies();
             minCompetitive = operator.minCompetitiveStatus();
+            tsidRange = operator.tsidRangeStatus();
         }
 
         Status(
@@ -666,7 +681,8 @@ public abstract class LuceneOperator extends SourceOperator {
             long rowsEmitted,
             long bytesRead,
             Map<String, LuceneSliceQueue.PartitioningStrategy> partitioningStrategies,
-            @Nullable MinCompetitiveQuery.Status minCompetitive
+            @Nullable MinCompetitiveQuery.Status minCompetitive,
+            @Nullable TsidRangeQuery.Status tsidRange
         ) {
             this.processedSlices = processedSlices;
             this.processedQueries = processedQueries;
@@ -682,6 +698,7 @@ public abstract class LuceneOperator extends SourceOperator {
             this.bytesRead = bytesRead;
             this.partitioningStrategies = partitioningStrategies;
             this.minCompetitive = minCompetitive;
+            this.tsidRange = tsidRange;
         }
 
         Status(StreamInput in) throws IOException {
@@ -703,6 +720,7 @@ public abstract class LuceneOperator extends SourceOperator {
             minCompetitive = serializeMinCompetitive(in.getTransportVersion())
                 ? in.readOptionalWriteable(MinCompetitiveQuery.Status::readFrom)
                 : null;
+            tsidRange = serializeTsidRange(in.getTransportVersion()) ? in.readOptionalWriteable(TsidRangeQuery.Status::readFrom) : null;
         }
 
         @Override
@@ -727,6 +745,13 @@ public abstract class LuceneOperator extends SourceOperator {
             if (serializeMinCompetitive(out.getTransportVersion())) {
                 out.writeOptionalWriteable(minCompetitive);
             }
+            if (serializeTsidRange(out.getTransportVersion())) {
+                out.writeOptionalWriteable(tsidRange);
+            }
+        }
+
+        private static boolean serializeTsidRange(TransportVersion version) {
+            return version.supports(ESQL_LUCENE_OPERATOR_TSID_RANGE);
         }
 
         private static boolean serializeMinCompetitive(TransportVersion version) {
@@ -805,6 +830,11 @@ public abstract class LuceneOperator extends SourceOperator {
             return minCompetitive;
         }
 
+        @Nullable
+        public TsidRangeQuery.Status tsidRange() {
+            return tsidRange;
+        }
+
         @Override
         public long documentsFound() {
             return rowsEmitted;
@@ -841,6 +871,9 @@ public abstract class LuceneOperator extends SourceOperator {
             if (minCompetitive != null) {
                 builder.field("min_competitive", minCompetitive);
             }
+            if (tsidRange != null) {
+                builder.field("tsid_range", tsidRange);
+            }
         }
 
         @Override
@@ -861,7 +894,8 @@ public abstract class LuceneOperator extends SourceOperator {
                 && rowsEmitted == status.rowsEmitted
                 && bytesRead == status.bytesRead
                 && partitioningStrategies.equals(status.partitioningStrategies)
-                && Objects.equals(minCompetitive, status.minCompetitive);
+                && Objects.equals(minCompetitive, status.minCompetitive)
+                && Objects.equals(tsidRange, status.tsidRange);
         }
 
         @Override
@@ -877,7 +911,8 @@ public abstract class LuceneOperator extends SourceOperator {
                 rowsEmitted,
                 bytesRead,
                 partitioningStrategies,
-                minCompetitive
+                minCompetitive,
+                tsidRange
             );
         }
 

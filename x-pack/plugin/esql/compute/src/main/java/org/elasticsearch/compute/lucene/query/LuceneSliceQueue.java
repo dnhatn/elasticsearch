@@ -527,7 +527,12 @@ public final class LuceneSliceQueue {
             }
         },
         /**
-         * Partition using the prefix of tsid
+         * Partition using the prefix of tsid.
+         *
+         * <p>If the query requires a {@link TsidRangeQuery}, each leaf is cut only over the doc interval that range matches,
+         * see {@link TsidRangeQuery#requiredRange}: prefix cells outside it get no slices and cells on its edge are clipped
+         * to it, so the slices are sized by the docs that can match rather than by the whole shard. The query still runs on
+         * every slice, so results do not change.
          */
         TIME_SERIES(3) {
             @Override
@@ -539,7 +544,8 @@ public final class LuceneSliceQueue {
                 int minDocsPerSlice
             ) {
                 try {
-                    return new TimeSeriesPartitioner().partition(searcher.getLeafContexts(), taskConcurrency, MAX_DOCS_PER_SLICE);
+                    List<LeafReaderContext> leaves = searcher.getLeafContexts();
+                    return new TimeSeriesPartitioner().partition(leaves, taskConcurrency, MAX_DOCS_PER_SLICE, tsidRanges(leaves, weight));
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
@@ -654,7 +660,8 @@ public final class LuceneSliceQueue {
          * The doc range of each large leaf of {@code partitioner} that can match a range filter on the primary index-sort
          * field. A leaf that is not in the result is sliced as usual: it is kept whole, it is small, the query has no such
          * filter, or the leaf cannot say which range matches. A leaf with no matching docs has an empty range and gets no
-         * slices.
+         * slices. A {@link TsidRangeQuery} is such a filter on a time-series index, whose primary sort is {@code _tsid}; it
+         * resolves its own intervals.
          */
         private static Map<LeafReaderContext, PrimarySortRange.DocRange> primarySortRanges(
             List<LeafReaderContext> leaves,
@@ -668,7 +675,36 @@ public final class LuceneSliceQueue {
             List<LeafReaderContext> largeLeaves = leaves.stream()
                 .filter(leaf -> keepWhole.contains(leaf) == false && partitioner.isLarge(leaf))
                 .toList();
-            return PrimarySortRange.find(largeLeaves, weight.getQuery());
+            Map<LeafReaderContext, PrimarySortRange.DocRange> ranges = PrimarySortRange.find(largeLeaves, weight.getQuery());
+            if (ranges.isEmpty() == false) {
+                return ranges;
+            }
+            try {
+                Map<LeafReaderContext, PrimarySortRange.DocRange> tsidRanges = new IdentityHashMap<>();
+                for (Map.Entry<LeafReaderContext, TsidRangeQuery.DocRange> e : tsidRanges(largeLeaves, weight).entrySet()) {
+                    tsidRanges.put(e.getKey(), new PrimarySortRange.DocRange(e.getValue().minDoc(), e.getValue().maxDoc()));
+                }
+                return tsidRanges;
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        /**
+         * The doc interval of each leaf that the {@link TsidRangeQuery} required by {@code weight}'s query matches, or an empty
+         * map if the query requires none. A leaf with an empty interval gets no slices.
+         */
+        private static Map<LeafReaderContext, TsidRangeQuery.DocRange> tsidRanges(List<LeafReaderContext> leaves, Weight weight)
+            throws IOException {
+            TsidRangeQuery range = weight == null ? null : TsidRangeQuery.requiredRange(weight.getQuery());
+            if (range == null) {
+                return Map.of();
+            }
+            Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges = new IdentityHashMap<>();
+            for (LeafReaderContext leaf : leaves) {
+                ranges.put(leaf, range.docRange(leaf));
+            }
+            return ranges;
         }
 
         private static Set<LeafReaderContext> wholeLeaves(List<LeafReaderContext> leaves, Weight weight, LeafSplitGuard guard) {
@@ -875,6 +911,20 @@ public final class LuceneSliceQueue {
 
         List<List<PartialLeafReaderContext>> partition(List<LeafReaderContext> leaves, int taskConcurrency, int maxDocsPerLeave)
             throws IOException {
+            return partition(leaves, taskConcurrency, maxDocsPerLeave, Map.of());
+        }
+
+        /**
+         * Like {@link #partition(List, int, int)}, but a leaf with an entry in {@code ranges} is cut only over that doc
+         * interval: its prefix cells outside the interval get no slices and the cells on its edges are clipped to it. The
+         * interval can be empty, then the leaf gets no slices.
+         */
+        List<List<PartialLeafReaderContext>> partition(
+            List<LeafReaderContext> leaves,
+            int taskConcurrency,
+            int maxDocsPerLeave,
+            Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges
+        ) throws IOException {
             int prefixBitsShift = -1;
             final Map<Integer, Map<Integer, PrefixGroup>> firstByteGroups = new TreeMap<>();
             PartitionedDocValues.PrefixPartitions prefixPartitions = null;
@@ -882,6 +932,12 @@ public final class LuceneSliceQueue {
                 var tsidValues = leaf.reader().getSortedDocValues(TimeSeriesIdFieldMapper.NAME);
                 if (tsidValues == null) {
                     continue; // empty
+                }
+                TsidRangeQuery.DocRange range = ranges.get(leaf);
+                final int rangeMinDoc = range == null ? 0 : range.minDoc();
+                final int rangeMaxDoc = range == null ? leaf.reader().maxDoc() : range.maxDoc();
+                if (rangeMinDoc >= rangeMaxDoc) {
+                    continue; // the query matches nothing in this leaf
                 }
                 var partitionedDV = (PartitionedDocValues) tsidValues;
                 if (prefixBitsShift == -1) {
@@ -897,17 +953,33 @@ public final class LuceneSliceQueue {
                     int startDoc = prefixPartitions.startDocs()[i];
                     int prefix = prefixPartitions.prefixes()[i];
                     if (pendingPrefix != -1) {
-                        firstByteGroups.computeIfAbsent(pendingPrefix >>> shift, k -> new TreeMap<>())
-                            .computeIfAbsent(pendingPrefix, k -> new PrefixGroup(leaves.size()))
-                            .add(leaf, pendingStartDoc, startDoc);
+                        addCell(
+                            firstByteGroups,
+                            leaves.size(),
+                            shift,
+                            leaf,
+                            pendingPrefix,
+                            pendingStartDoc,
+                            startDoc,
+                            rangeMinDoc,
+                            rangeMaxDoc
+                        );
                     }
                     pendingStartDoc = startDoc;
                     pendingPrefix = prefix;
                 }
                 if (pendingPrefix >= 0) {
-                    firstByteGroups.computeIfAbsent(pendingPrefix >>> shift, k -> new TreeMap<>())
-                        .computeIfAbsent(pendingPrefix, k -> new PrefixGroup(leaves.size()))
-                        .add(leaf, pendingStartDoc, leaf.reader().maxDoc());
+                    addCell(
+                        firstByteGroups,
+                        leaves.size(),
+                        shift,
+                        leaf,
+                        pendingPrefix,
+                        pendingStartDoc,
+                        leaf.reader().maxDoc(),
+                        rangeMinDoc,
+                        rangeMaxDoc
+                    );
                 }
             }
             List<List<PartialLeafReaderContext>> results = new ArrayList<>();
@@ -915,6 +987,31 @@ public final class LuceneSliceQueue {
                 results.addAll(combineSlices(prefixGroups.values().stream().toList(), taskConcurrency, maxDocsPerLeave));
             }
             return results;
+        }
+
+        /**
+         * Adds the docs {@code [startDoc, endDoc)} of the prefix cell {@code prefix} of {@code leaf} to its group, clipped to
+         * {@code [rangeMinDoc, rangeMaxDoc)}; a cell outside that interval is skipped.
+         */
+        private static void addCell(
+            Map<Integer, Map<Integer, PrefixGroup>> firstByteGroups,
+            int numLeaves,
+            int shift,
+            LeafReaderContext leaf,
+            int prefix,
+            int startDoc,
+            int endDoc,
+            int rangeMinDoc,
+            int rangeMaxDoc
+        ) {
+            int minDoc = Math.max(startDoc, rangeMinDoc);
+            int maxDoc = Math.min(endDoc, rangeMaxDoc);
+            if (minDoc >= maxDoc) {
+                return;
+            }
+            firstByteGroups.computeIfAbsent(prefix >>> shift, k -> new TreeMap<>())
+                .computeIfAbsent(prefix, k -> new PrefixGroup(numLeaves))
+                .add(leaf, minDoc, maxDoc);
         }
 
         /**

@@ -37,6 +37,7 @@ public class LuceneSourceOperatorStatusTests extends AbstractWireSerializingTest
             222,
             4096,
             Map.of("b:0", LuceneSliceQueue.PartitioningStrategy.SHARD, "a:1", LuceneSliceQueue.PartitioningStrategy.DOC),
+            null,
             null
         );
     }
@@ -88,7 +89,8 @@ public class LuceneSourceOperatorStatusTests extends AbstractWireSerializingTest
             222,
             4096,
             Map.of("b:0", LuceneSliceQueue.PartitioningStrategy.SHARD, "a:1", LuceneSliceQueue.PartitioningStrategy.DOC),
-            MinCompetitiveQueryStatusTests.simple()
+            MinCompetitiveQueryStatusTests.simple(),
+            null
         );
         assertThat(Strings.toString(status, true, true), equalTo("""
             {
@@ -126,6 +128,57 @@ public class LuceneSourceOperatorStatusTests extends AbstractWireSerializingTest
             }"""));
     }
 
+    public void testToXContentWithTsidRange() {
+        LuceneSourceOperator.Status status = new LuceneSourceOperator.Status(
+            2,
+            List.of("*:*"),
+            List.of("a:0", "a:1"),
+            1002,
+            0,
+            1,
+            5,
+            123,
+            99990,
+            8000,
+            222,
+            4096,
+            Map.of("b:0", LuceneSliceQueue.PartitioningStrategy.SHARD, "a:1", LuceneSliceQueue.PartitioningStrategy.DOC),
+            null,
+            new TsidRangeQuery.Status(12, 10, 8, 3)
+        );
+        assertThat(Strings.toString(status, true, true), equalTo("""
+            {
+              "processed_slices" : 2,
+              "processed_queries" : [
+                "*:*"
+              ],
+              "processed_shards" : [
+                "a:0",
+                "a:1"
+              ],
+              "process_nanos" : 1002,
+              "process_time" : "1micros",
+              "slice_index" : 0,
+              "total_slices" : 1,
+              "pages_emitted" : 5,
+              "slice_min" : 123,
+              "slice_max" : 99990,
+              "current" : 8000,
+              "rows_emitted" : 222,
+              "bytes_read" : 4096,
+              "partitioning_strategies" : {
+                "a:1" : "DOC",
+                "b:0" : "SHARD"
+              },
+              "tsid_range" : {
+                "leaves" : 12,
+                "prefix_table" : 10,
+                "skipper" : 8,
+                "binary_search" : 3
+              }
+            }"""));
+    }
+
     @Override
     protected Writeable.Reader<LuceneSourceOperator.Status> instanceReader() {
         return LuceneSourceOperator.Status::new;
@@ -147,8 +200,16 @@ public class LuceneSourceOperatorStatusTests extends AbstractWireSerializingTest
             randomNonNegativeLong(),
             randomNonNegativeLong(),
             randomPartitioningStrategies(),
-            randomMinCompetitiveStatus()
+            randomMinCompetitiveStatus(),
+            randomTsidRangeStatus()
         );
+    }
+
+    @Nullable
+    private static TsidRangeQuery.Status randomTsidRangeStatus() {
+        return randomBoolean()
+            ? null
+            : new TsidRangeQuery.Status(randomNonNegativeLong(), randomNonNegativeLong(), randomNonNegativeLong(), randomNonNegativeLong());
     }
 
     @Nullable
@@ -211,7 +272,8 @@ public class LuceneSourceOperatorStatusTests extends AbstractWireSerializingTest
         long bytesRead = instance.bytesRead();
         Map<String, LuceneSliceQueue.PartitioningStrategy> partitioningStrategies = instance.partitioningStrategies();
         MinCompetitiveQuery.Status minCompetitive = instance.minCompetitive();
-        switch (between(0, 13)) {
+        TsidRangeQuery.Status tsidRange = instance.tsidRange();
+        switch (between(0, 14)) {
             case 0 -> processedSlices = randomValueOtherThan(processedSlices, ESTestCase::randomNonNegativeInt);
             case 1 -> processedQueries = randomValueOtherThan(processedQueries, LuceneSourceOperatorStatusTests::randomProcessedQueries);
             case 2 -> processedShards = randomValueOtherThan(processedShards, LuceneSourceOperatorStatusTests::randomProcessedShards);
@@ -231,6 +293,7 @@ public class LuceneSourceOperatorStatusTests extends AbstractWireSerializingTest
             case 13 -> minCompetitive = minCompetitive == null
                 ? MinCompetitiveQueryStatusTests.simple()
                 : (randomBoolean() ? null : MinCompetitiveQueryStatusTests.simple());
+            case 14 -> tsidRange = randomValueOtherThan(tsidRange, LuceneSourceOperatorStatusTests::randomTsidRangeStatus);
             default -> throw new UnsupportedOperationException();
         }
         return new LuceneSourceOperator.Status(
@@ -247,7 +310,8 @@ public class LuceneSourceOperatorStatusTests extends AbstractWireSerializingTest
             rowsEmitted,
             bytesRead,
             partitioningStrategies,
-            minCompetitive
+            minCompetitive,
+            tsidRange
         );
     }
 }

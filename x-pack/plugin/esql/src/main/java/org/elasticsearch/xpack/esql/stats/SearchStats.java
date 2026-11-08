@@ -121,6 +121,14 @@ public interface SearchStats {
     }
 
     /**
+     * The number of series in the segment with the most, over the target shards: the most distinct {@code _tsid} values one
+     * segment holds. {@code 0} when no segment has a {@code _tsid}, or when unknown.
+     */
+    default int maxSeriesPerSegment() {
+        return 0;
+    }
+
+    /**
      * When there are no search stats available, for example when there are no search contexts, we have static results.
      */
     record EmptySearchStats() implements SearchStats {

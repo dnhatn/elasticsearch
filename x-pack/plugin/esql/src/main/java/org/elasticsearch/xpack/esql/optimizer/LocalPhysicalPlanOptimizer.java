@@ -18,6 +18,7 @@ import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.ExtractDimens
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.InjectRowPositionForRecordRef;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.InsertExternalFieldExtraction;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.InsertFieldExtraction;
+import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PartitionTimeSeriesByTsidRange;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PushCountQueryAndTagsToSource;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PushExpressionsToFieldLoad;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.PushFiltersToSource;
@@ -99,7 +100,9 @@ public class LocalPhysicalPlanOptimizer extends ParameterizedRuleExecutor<Physic
             "Substitute RoundTo with QueryAndTags",
             Limiter.ONCE,
             new ReplaceRoundToWithQueryAndTags(),
-            new PushCountQueryAndTagsToSource()
+            new PushCountQueryAndTagsToSource(),
+            // multiplies the time-series source queries, tagged or not, by _tsid range; must run after the other substitutions
+            new PartitionTimeSeriesByTsidRange()
         );
 
         // add the field extraction in just one pass

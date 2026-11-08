@@ -86,7 +86,11 @@ public final class PrefixedPartitionsWriter implements SortedFieldObserver {
         return ((b0 << 16) | (b1 << 8) | b2) >>> (2 * Byte.SIZE - PAGE_SHIFT);
     }
 
-    private static int prefix(BytesRef term) {
+    /**
+     * The {@link #PARTITION_PREFIX_BITS}-bit prefix of {@code term} that keys its partition. Prefixes order like the terms
+     * do: if {@code prefix(a) < prefix(b)} then {@code a < b}, so a reader can binary search the partitions for a term.
+     */
+    public static int prefix(BytesRef term) {
         if (term.length < 4) {
             return smallPrefix(term);
         }

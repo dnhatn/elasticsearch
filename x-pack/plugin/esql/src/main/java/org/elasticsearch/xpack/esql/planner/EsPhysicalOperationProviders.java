@@ -28,6 +28,7 @@ import org.elasticsearch.compute.lucene.query.LuceneSourceOperator;
 import org.elasticsearch.compute.lucene.query.LuceneTopNSourceOperator;
 import org.elasticsearch.compute.lucene.query.MinCompetitiveQuery;
 import org.elasticsearch.compute.lucene.query.TimeSeriesSourceOperator;
+import org.elasticsearch.compute.lucene.query.TsidRangeQuery;
 import org.elasticsearch.compute.lucene.read.ReadDimsOperator;
 import org.elasticsearch.compute.lucene.read.ValuesSourceReaderOperator;
 import org.elasticsearch.compute.operator.DriverContext;
@@ -102,6 +103,7 @@ import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.LocalExecution
 import org.elasticsearch.xpack.esql.planner.LocalExecutionPlanner.PhysicalOperation;
 import org.elasticsearch.xpack.esql.plugin.EsqlPlugin;
 import org.elasticsearch.xpack.esql.plugin.EsqlSearchExecutionContext;
+import org.elasticsearch.xpack.esql.querydsl.query.TsidRangeQueryBuilder;
 import org.elasticsearch.xpack.esql.stats.SearchStats;
 import org.elasticsearch.xpack.esql.type.EsqlDataTypeRegistry;
 
@@ -565,7 +567,8 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
                 context.pageSize(esQueryExec, rowEstimatedSize),
                 limit,
                 directoryBytesRead,
-                singleValueQueryWarnings
+                singleValueQueryWarnings,
+                tsidRangeSteps(esQueryExec.queryBuilderAndTags())
             );
         } else {
             // A no-limit scan (e.g. STATS) visits every matching doc, so it shares the cost-threshold rule with count and
@@ -587,7 +590,8 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
                 directoryBytesRead,
                 context.queryPragmas().minDocsPerSlice(LuceneSliceQueue.MIN_DOCS_PER_SLICE),
                 singleValueQueryWarnings,
-                planMinCompetitive(context.luceneMinCompetitivePilot().get())
+                planMinCompetitive(context.luceneMinCompetitivePilot().get()),
+                tsidRangeSteps(esQueryExec.queryBuilderAndTags())
             );
         }
         Layout.Builder layout = new Layout.Builder();
@@ -595,6 +599,20 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         int instanceCount = Math.max(1, luceneFactory.taskConcurrency());
         context.driverParallelism(new DriverParallelism(DriverParallelism.Type.DATA_PARALLELISM, instanceCount));
         return PhysicalOperation.fromSource(luceneFactory, layout.build());
+    }
+
+    /**
+     * The step counters shared by the {@link TsidRangeQueryBuilder}s that {@code PartitionTimeSeriesByTsidRange} put on the
+     * source queries, so the source operator can report them, or {@code null} if the queries are not cut by {@code _tsid}.
+     */
+    @Nullable
+    private static TsidRangeQuery.Steps tsidRangeSteps(List<EsQueryExec.QueryBuilderAndTags> queries) {
+        for (EsQueryExec.QueryBuilderAndTags query : queries) {
+            if (query.query() instanceof TsidRangeQueryBuilder tsidRange) {
+                return tsidRange.steps();
+            }
+        }
+        return null;
     }
 
     List<ValuesSourceReaderOperator.FieldInfo> extractFields(FieldExtractExec fieldExtractExec) {

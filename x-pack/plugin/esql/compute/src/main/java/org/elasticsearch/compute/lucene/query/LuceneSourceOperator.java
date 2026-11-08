@@ -80,6 +80,8 @@ public class LuceneSourceOperator extends LuceneOperator {
 
     @Nullable
     private final MinCompetitiveQuery minCompetitiveQuery;
+    @Nullable
+    private final TsidRangeQuery.Steps tsidRangeSteps;
 
     public static class Factory extends LuceneOperator.Factory {
         protected final IndexedByShardId<? extends RefCounted> refCounteds;
@@ -87,6 +89,8 @@ public class LuceneSourceOperator extends LuceneOperator {
         protected final Limiter limiter;
         @Nullable
         private final MinCompetitiveQuery.Factory minCompetitive;
+        @Nullable
+        protected final TsidRangeQuery.Steps tsidRangeSteps;
 
         public Factory(
             IndexedByShardId<? extends ShardContext> shardContexts,
@@ -134,6 +138,44 @@ public class LuceneSourceOperator extends LuceneOperator {
             QueryWarnings singleValueQueryWarnings,
             @Nullable MinCompetitiveQuery.Factory minCompetitive
         ) {
+            this(
+                shardContexts,
+                queryFunction,
+                dataPartitioning,
+                autoStrategy,
+                docThresholdForAutoStrategy,
+                taskConcurrency,
+                maxPageSize,
+                limit,
+                needsScore,
+                directoryBytesRead,
+                minDocsPerSlice,
+                singleValueQueryWarnings,
+                minCompetitive,
+                null
+            );
+        }
+
+        /**
+         * @param tsidRangeSteps the step counters of the {@link TsidRangeQuery}s of the queries, reported in the operators' status,
+         *                       or {@code null} if the queries are not cut into {@code _tsid} ranges
+         */
+        public Factory(
+            IndexedByShardId<? extends ShardContext> shardContexts,
+            Function<ShardContext, List<LuceneSliceQueue.QueryAndTags>> queryFunction,
+            DataPartitioning dataPartitioning,
+            DataPartitioning.AutoStrategy autoStrategy,
+            int docThresholdForAutoStrategy,
+            int taskConcurrency,
+            int maxPageSize,
+            int limit,
+            boolean needsScore,
+            LongSupplier directoryBytesRead,
+            int minDocsPerSlice,
+            QueryWarnings singleValueQueryWarnings,
+            @Nullable MinCompetitiveQuery.Factory minCompetitive,
+            @Nullable TsidRangeQuery.Steps tsidRangeSteps
+        ) {
             super(
                 shardContexts,
                 queryFunction,
@@ -155,6 +197,7 @@ public class LuceneSourceOperator extends LuceneOperator {
             // TODO: use a single limiter for multiple stage execution
             this.limiter = limit == NO_LIMIT ? Limiter.NO_LIMIT : new Limiter(limit);
             this.minCompetitive = minCompetitive;
+            this.tsidRangeSteps = tsidRangeSteps;
         }
 
         @Override
@@ -169,7 +212,8 @@ public class LuceneSourceOperator extends LuceneOperator {
                 needsScore,
                 directoryBytesRead,
                 singleValueQueryWarnings,
-                minCompetitive
+                minCompetitive,
+                tsidRangeSteps
             );
         }
 
@@ -457,7 +501,6 @@ public class LuceneSourceOperator extends LuceneOperator {
         }
     }
 
-    @SuppressWarnings("this-escape")
     public LuceneSourceOperator(
         IndexedByShardId<? extends RefCounted> refCounteds,
         DriverContext driverContext,
@@ -470,10 +513,40 @@ public class LuceneSourceOperator extends LuceneOperator {
         QueryWarnings singleValueQueryWarnings,
         @Nullable MinCompetitiveQuery.Factory minCompetitive
     ) {
+        this(
+            refCounteds,
+            driverContext,
+            maxPageSize,
+            sliceQueue,
+            limit,
+            limiter,
+            needsScore,
+            directoryBytesRead,
+            singleValueQueryWarnings,
+            minCompetitive,
+            null
+        );
+    }
+
+    @SuppressWarnings("this-escape")
+    public LuceneSourceOperator(
+        IndexedByShardId<? extends RefCounted> refCounteds,
+        DriverContext driverContext,
+        int maxPageSize,
+        LuceneSliceQueue sliceQueue,
+        int limit,
+        Limiter limiter,
+        boolean needsScore,
+        LongSupplier directoryBytesRead,
+        QueryWarnings singleValueQueryWarnings,
+        @Nullable MinCompetitiveQuery.Factory minCompetitive,
+        @Nullable TsidRangeQuery.Steps tsidRangeSteps
+    ) {
         super(refCounteds, driverContext, maxPageSize, sliceQueue, directoryBytesRead, singleValueQueryWarnings);
         this.minPageSize = Math.max(1, maxPageSize / 2);
         this.remainingDocs = limit;
         this.limiter = limiter;
+        this.tsidRangeSteps = tsidRangeSteps;
         int estimatedSize = Math.min(limit, maxPageSize);
         boolean success = false;
         try {
@@ -725,6 +798,11 @@ public class LuceneSourceOperator extends LuceneOperator {
     @Override
     protected void describe(StringBuilder sb) {
         sb.append(", remainingDocs = ").append(remainingDocs);
+    }
+
+    @Override
+    protected TsidRangeQuery.Status tsidRangeStatus() {
+        return tsidRangeSteps == null ? null : tsidRangeSteps.status();
     }
 
     @Override

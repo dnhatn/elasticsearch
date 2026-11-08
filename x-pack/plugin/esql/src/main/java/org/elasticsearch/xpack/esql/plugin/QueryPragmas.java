@@ -260,6 +260,23 @@ public final class QueryPragmas implements Writeable {
      */
     public static final Setting<Integer> MIN_DOCS_PER_SLICE = Setting.intSetting("min_docs_per_slice", -1, -1);
 
+    /**
+     * Series per {@code _tsid} range when the source queries over time-series indices are cut into sub-queries by
+     * {@code _tsid} range (see {@code PartitionTimeSeriesByTsidRange} and
+     * {@link org.elasticsearch.compute.lucene.query.TsidRangePartitioner}), counted in the segment of each shard with the
+     * most series. Defaults to {@code 10000}, so a shard with more series than that in one segment is cut into one range per
+     * {@code 10000} series without any setting; {@code 0} runs every shard's queries uncut. Experimental: this measures the
+     * cost of the range filters, it does not bound the memory of the aggregation.
+     */
+    public static final Setting<Integer> TSID_PARTITION_SERIES = Setting.intSetting("tsid_partition_series", 10_000, 0);
+
+    /**
+     * With {@link #TSID_PARTITION_SERIES}, runs only the {@code _tsid} range with this index on each shard. {@code -1} (the
+     * default) runs all ranges. An index at or past the number of ranges of a shard runs an empty range on it, which has
+     * the setup cost of a range and matches nothing.
+     */
+    public static final Setting<Integer> TSID_PARTITION_INDEX = Setting.intSetting("tsid_partition_index", -1, -1);
+
     public static final QueryPragmas EMPTY = new QueryPragmas(Settings.EMPTY);
 
     public static final List<String> VALID_PRAGMA_NAMES = Stream.of(
@@ -288,6 +305,8 @@ public final class QueryPragmas implements Writeable {
         MAX_CONCURRENT_OPEN_SEGMENTS,
         MAX_RECORD_SIZE,
         FORCE_DOC_SEQUENCE,
+        TSID_PARTITION_SERIES,
+        TSID_PARTITION_INDEX,
         PlannerSettings.TIME_SERIES_TARGET_CHUNK_ROWS,
         PlannerSettings.AGG_PARTITIONING_COUNT_THRESHOLD,
         SINGLE_NODE_OPTIMIZATIONS,
@@ -599,6 +618,20 @@ public final class QueryPragmas implements Writeable {
     public int minDocsPerSlice(int defaultMinDocsPerSlice) {
         int override = MIN_DOCS_PER_SLICE.get(settings);
         return override > 0 ? override : defaultMinDocsPerSlice;
+    }
+
+    /**
+     * Series per {@code _tsid} range of a source over time-series indices, or {@code 0} to run the source queries uncut.
+     */
+    public int tsidPartitionSeries() {
+        return TSID_PARTITION_SERIES.get(settings);
+    }
+
+    /**
+     * The only {@code _tsid} range to run on each shard, or {@code -1} to run them all.
+     */
+    public int tsidPartitionIndex() {
+        return TSID_PARTITION_INDEX.get(settings);
     }
 
     public boolean isEmpty() {

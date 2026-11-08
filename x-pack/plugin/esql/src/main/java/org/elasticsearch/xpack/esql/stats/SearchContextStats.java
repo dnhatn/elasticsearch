@@ -22,6 +22,7 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.NumericUtils;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.util.Maps;
+import org.elasticsearch.compute.lucene.query.TsidRangePartitioner;
 import org.elasticsearch.index.codec.tsdb.PartitionedDocValues;
 import org.elasticsearch.index.mapper.AbstractScriptFieldType;
 import org.elasticsearch.index.mapper.ConstantFieldType;
@@ -674,5 +675,18 @@ public class SearchContextStats implements SearchStats {
             throw new UncheckedIOException("failed to read time-series partition", ex);
         }
         return true;
+    }
+
+    @Override
+    public int maxSeriesPerSegment() {
+        int max = 0;
+        try {
+            for (SearchExecutionContext context : contexts) {
+                max = Math.max(max, TsidRangePartitioner.seriesInLargestSegment(context.getIndexReader()));
+            }
+        } catch (IOException ex) {
+            throw new UncheckedIOException("failed to read time-series ids", ex);
+        }
+        return max;
     }
 }

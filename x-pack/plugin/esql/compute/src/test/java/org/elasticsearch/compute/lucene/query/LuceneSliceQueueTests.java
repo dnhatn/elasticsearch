@@ -42,6 +42,7 @@ import org.hamcrest.Matchers;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +54,7 @@ import java.util.concurrent.TimeUnit;
 import static org.elasticsearch.compute.lucene.query.LuceneSourceOperatorTests.simpleReader;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
@@ -650,6 +652,60 @@ public class LuceneSliceQueueTests extends ESTestCase {
                     new PartialLeafReaderContext(reader.leaves().get(2), 470, 801)
                 )
             );
+        }
+    }
+
+    /**
+     * With a {@code _tsid} range, each leaf is cut only over the docs of its interval: cells outside it get no slices, cells
+     * on its edges are clipped, a leaf with an empty interval is skipped, and the slices are sized by the remaining docs.
+     */
+    public void testTimeSeriesPartitionerClipsToTsidRange() throws IOException {
+        var prefixes0 = new PartitionedDocValues.PrefixPartitions(2, new int[] { 0, 1 }, new int[] { 0, 100 });
+        var prefixes1 = new PartitionedDocValues.PrefixPartitions(2, new int[] { 1, 6 }, new int[] { 0, 160 });
+        var prefixes2 = new PartitionedDocValues.PrefixPartitions(5, new int[] { 0, 1, 2, 3, 6 }, new int[] { 0, 50, 120, 250, 470 });
+        MultiReader reader = new MultiReader(
+            new MockLeafReader(200, prefixes0),
+            new MockLeafReader(370, prefixes1),
+            new MockLeafReader(801, prefixes2)
+        );
+        Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges = Map.of(
+            reader.leaves().get(0),
+            new TsidRangeQuery.DocRange(50, 150),
+            reader.leaves().get(1),
+            new TsidRangeQuery.DocRange(0, 0),
+            reader.leaves().get(2),
+            new TsidRangeQuery.DocRange(100, 600)
+        );
+        var partitioner = new LuceneSliceQueue.TimeSeriesPartitioner();
+        {
+            List<List<PartialLeafReaderContext>> slices = partitioner.partition(reader.leaves(), 1, 1371, ranges);
+            assertThat(slices, hasSize(1));
+            assertThat(
+                slices.get(0),
+                containsInAnyOrder(
+                    new PartialLeafReaderContext(reader.leaves().get(0), 50, 150),
+                    new PartialLeafReaderContext(reader.leaves().get(2), 100, 600)
+                )
+            );
+        }
+        {
+            // 600 docs match, so two slices of 300: the second leaf flushes once its slice reaches 300 docs.
+            List<List<PartialLeafReaderContext>> slices = partitioner.partition(reader.leaves(), 2, 300, ranges);
+            assertThat(slices, hasSize(2));
+            assertThat(
+                slices.get(0),
+                containsInAnyOrder(
+                    new PartialLeafReaderContext(reader.leaves().get(0), 50, 150),
+                    new PartialLeafReaderContext(reader.leaves().get(2), 100, 470)
+                )
+            );
+            assertThat(slices.get(1), containsInAnyOrder(new PartialLeafReaderContext(reader.leaves().get(2), 470, 600)));
+        }
+        {
+            // Nothing matches anywhere: no slices at all.
+            Map<LeafReaderContext, TsidRangeQuery.DocRange> nothing = new HashMap<>();
+            reader.leaves().forEach(leaf -> nothing.put(leaf, TsidRangeQuery.DocRange.EMPTY));
+            assertThat(partitioner.partition(reader.leaves(), 2, 300, nothing), empty());
         }
     }
 

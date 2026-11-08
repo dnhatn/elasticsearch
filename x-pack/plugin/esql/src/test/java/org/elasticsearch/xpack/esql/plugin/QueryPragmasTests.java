@@ -62,6 +62,34 @@ public class QueryPragmasTests extends ESTestCase {
         );
     }
 
+    public void testTsidPartitionPragmas() {
+        assertThat(QueryPragmas.VALID_PRAGMA_NAMES, hasItem(QueryPragmas.TSID_PARTITION_SERIES.getKey()));
+        assertThat(QueryPragmas.VALID_PRAGMA_NAMES, hasItem(QueryPragmas.TSID_PARTITION_INDEX.getKey()));
+        // On by default: a range per 10k series, all ranges in one request.
+        assertThat(QueryPragmas.EMPTY.tsidPartitionSeries(), equalTo(10_000));
+        assertThat(QueryPragmas.EMPTY.tsidPartitionIndex(), equalTo(-1));
+        assertThat(
+            new QueryPragmas(Settings.builder().put(QueryPragmas.TSID_PARTITION_SERIES.getKey(), 0).build()).tsidPartitionSeries(),
+            equalTo(0)
+        );
+        QueryPragmas pragmas = new QueryPragmas(
+            Settings.builder()
+                .put(QueryPragmas.TSID_PARTITION_SERIES.getKey(), 100_000)
+                .put(QueryPragmas.TSID_PARTITION_INDEX.getKey(), 3)
+                .build()
+        );
+        assertThat(pragmas.tsidPartitionSeries(), equalTo(100_000));
+        assertThat(pragmas.tsidPartitionIndex(), equalTo(3));
+        expectThrows(
+            IllegalArgumentException.class,
+            () -> new QueryPragmas(Settings.builder().put(QueryPragmas.TSID_PARTITION_SERIES.getKey(), -1).build()).tsidPartitionSeries()
+        );
+        expectThrows(
+            IllegalArgumentException.class,
+            () -> new QueryPragmas(Settings.builder().put(QueryPragmas.TSID_PARTITION_INDEX.getKey(), -2).build()).tsidPartitionIndex()
+        );
+    }
+
     public void testTimeSeriesPragmaIsDecoupledFromRegularAggregationPragmas() {
         // Only the regular pragma is set: it reaches the regular accessor and leaves the time-series one at its default.
         QueryPragmas regularOnly = new QueryPragmas(
