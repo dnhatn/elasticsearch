@@ -336,6 +336,8 @@ public final class LuceneSliceQueue {
             // The ranges of one shard share the leaves' readers and their bounds, and one weight per distinct query.
             TsidRangeQuery.LeafResolvers resolvers = new TsidRangeQuery.LeafResolvers();
             Map<Query, WeightAndCache> weights = new HashMap<>();
+            List<PendingSlice> shardSlices = new ArrayList<>();
+            boolean leafMajor = false;
             try {
                 for (QueryAndTags queryAndExtra : queryFunction.apply(ctx)) {
                     var scoreMode = scoreModeFunction.apply(ctx);
@@ -390,24 +392,35 @@ public final class LuceneSliceQueue {
                         minDocsPerSlice,
                         ranges
                     );
+                    leafMajor |= range != null && partitioning != PartitioningStrategy.TIME_SERIES;
                     boolean queryHead = true;
                     for (List<PartialLeafReaderContext> group : groups) {
                         if (group.isEmpty() == false) {
-                            final int slicePosition = nextSliceId++;
-                            slices.add(
-                                new LuceneSlice(
-                                    slicePosition,
-                                    queryHead,
-                                    ctx,
-                                    group,
-                                    weightAndCache.weight,
-                                    queryAndExtra.tags,
-                                    weightAndCache.blockedOnCaching
-                                )
-                            );
+                            shardSlices.add(new PendingSlice(queryHead, group, weightAndCache, queryAndExtra.tags));
                             queryHead = false;
                         }
                     }
+                }
+                if (leafMajor) {
+                    // The ranges cut each leaf into intervals in doc order. In leaf order a driver that follows the slice
+                    // sequence streams a leaf as it would uncut, rather than hopping across every leaf once per range.
+                    shardSlices.sort(
+                        Comparator.comparingInt((PendingSlice slice) -> slice.group.getFirst().leafReaderContext().ord)
+                            .thenComparingInt(slice -> slice.group.getFirst().minDoc())
+                    );
+                }
+                for (PendingSlice slice : shardSlices) {
+                    slices.add(
+                        new LuceneSlice(
+                            nextSliceId++,
+                            slice.queryHead,
+                            ctx,
+                            slice.group,
+                            slice.weightAndCache.weight,
+                            slice.tags,
+                            slice.weightAndCache.blockedOnCaching
+                        )
+                    );
                 }
             } finally {
                 /*
@@ -833,6 +846,16 @@ public final class LuceneSliceQueue {
     }
 
     record WeightAndCache(Weight weight, LuceneSlice.BlockedOnCaching blockedOnCaching) {}
+
+    /**
+     * A slice of one shard before it gets its position in the queue.
+     */
+    private record PendingSlice(
+        boolean queryHead,
+        List<PartialLeafReaderContext> group,
+        WeightAndCache weightAndCache,
+        List<Object> tags
+    ) {}
 
     private static WeightAndCache weight(ShardContext ctx, Query query, ScoreMode scoreMode, PartitioningStrategy partitioning) {
         final boolean intraSegment = partitioning == PartitioningStrategy.DOC || partitioning == PartitioningStrategy.TIME_SERIES;

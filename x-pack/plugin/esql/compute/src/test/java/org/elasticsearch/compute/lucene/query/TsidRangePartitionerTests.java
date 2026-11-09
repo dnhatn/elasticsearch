@@ -177,12 +177,28 @@ public class TsidRangePartitionerTests extends ESTestCase {
             );
             Set<Weight> weights = Collections.newSetFromMap(new IdentityHashMap<>());
             Map<Object, List<PartialLeafReaderContext>> partsByRange = new HashMap<>();
+            List<LuceneSlice> slices = new ArrayList<>();
             for (LuceneSlice slice = queue.nextSlice(null); slice != null; slice = queue.nextSlice(slice)) {
                 weights.add(slice.weight());
                 assertThat(TsidRangeQuery.requiredRange(slice.weight().getQuery()), nullValue());
                 partsByRange.computeIfAbsent(slice.tags().getFirst(), k -> new ArrayList<>()).addAll(slice.leaves());
+                slices.add(slice);
             }
             assertThat(strategy.toString(), weights, hasSize(1));
+            if (strategy != LuceneSliceQueue.PartitioningStrategy.TIME_SERIES) {
+                // In queue order the slices walk each leaf in doc order, so a driver streams a leaf as it would uncut.
+                slices.sort(Comparator.comparingInt(LuceneSlice::slicePosition));
+                for (int i = 1; i < slices.size(); i++) {
+                    PartialLeafReaderContext prev = slices.get(i - 1).leaves().getFirst();
+                    PartialLeafReaderContext next = slices.get(i).leaves().getFirst();
+                    assertThat(
+                        strategy + ": slice " + i,
+                        next.leafReaderContext().ord > prev.leafReaderContext().ord
+                            || (next.leafReaderContext().ord == prev.leafReaderContext().ord && next.minDoc() >= prev.maxDoc()),
+                        equalTo(true)
+                    );
+                }
+            }
             for (int i = 0; i <= ranges; i++) {
                 for (LeafReaderContext leaf : leaves) {
                     String description = strategy + ": range " + i + " of leaf " + leaf.ord;
