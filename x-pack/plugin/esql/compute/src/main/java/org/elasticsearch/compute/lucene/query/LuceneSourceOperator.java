@@ -608,77 +608,94 @@ public class LuceneSourceOperator extends LuceneOperator {
         }
         long start = System.nanoTime();
         try {
-            final LuceneScorer scorer = getCurrentOrLoadNextScorer();
-            if (scorer == null) {
-                assert doneCollecting == false || currentPagePos == 0 : "finished with " + currentPagePos + " buffered docs";
-                return null;
-            }
-            if (docIds == null) {
-                docIds = docIdsPool.getOrAllocate(maxPageSize);
-            }
-            final int remainingDocsStart = remainingDocs = limiter.remaining();
-            if (remainingDocsStart == 0) {
-                // Another driver exhausted the shared limit; nothing left to collect, only the buffered docs to emit (see isFinished).
-                doneCollecting = true;
-                scorer.markAsDone();
-            } else {
-                if (minCompetitiveQuery != null) {
-                    minCompetitiveQuery.update(scorer.shardContext(), scorer.leafReaderContext());
-                }
-                try {
-                    scorer.scoreNextRange(
-                        leafCollector,
-                        scorer.leafReaderContext().reader().getLiveDocs(),
-                        // Note: if (maxPageSize - currentPagePos) is a small "remaining" interval, this could lead to slow collection with
-                        // a highly selective filter. Having a large "enough" difference between max- and minPageSize (and thus
-                        // currentPagePos) alleviates this issue.
-                        maxPageSize - currentPagePos
-                    );
-                } catch (CollectionTerminatedException ex) {
-                    // The leaf collector terminated the execution
-                    doneCollecting = true;
-                    scorer.markAsDone();
-                }
-            }
-            final int collectedDocs = remainingDocsStart - remainingDocs;
-            final int discardedDocs = collectedDocs - limiter.tryAccumulateHits(collectedDocs);
-            Page page = null;
-            if (currentPagePos >= minPageSize || scorer.isDone() || (remainingDocs = limiter.remaining()) == 0) {
-                IntVector shard = null;
-                IntVector leaf = null;
-                IntVector docs = null;
-                int metadataBlocks = numMetadataBlocks();
-                Block[] blocks = new Block[1 + metadataBlocks + scorer.tags().size()];
-                currentPagePos -= discardedDocs;
-                try {
-                    int shardId = scorer.shardContext().index();
-                    shard = blockFactory.newConstantIntVector(shardId, currentPagePos);
-                    leaf = blockFactory.newConstantIntVector(scorer.leafReaderContext().ord, currentPagePos);
-                    docs = buildDocsVector();
-                    int b = 0;
-                    blocks[b++] = new DocVector(refCounteds, shard, leaf, docs, DocVector.config().singleSegmentNonDecreasing(true))
-                        .asBlock();
-                    shard = null;
-                    leaf = null;
-                    docs = null;
-                    buildMetadataBlocks(blocks, b, currentPagePos);
-                    b += metadataBlocks;
-                    for (Object e : scorer.tags()) {
-                        blocks[b++] = BlockUtils.constantBlock(blockFactory, e, currentPagePos);
-                    }
-                    page = new Page(currentPagePos, blocks);
-                    shardRowsEmitted[shardId] += page.getPositionCount();
-                } finally {
-                    if (page == null) {
-                        Releasables.closeExpectNoException(shard, leaf, docs, Releasables.wrap(blocks));
-                    }
-                }
-                currentPagePos = 0;
-            }
+            // A partial with no matching doc flushes nothing: the next one is scored in the same call rather than through an
+            // empty page the driver would drop.
+            Page page;
+            do {
+                page = scoreNextRange();
+            } while (page == null && currentPagePos == 0 && doneCollecting == false && currentScorerIsDone());
             return page;
         } finally {
             processingNanos += System.nanoTime() - start;
         }
+    }
+
+    /**
+     * Scores the next range of the current scorer into the page under construction and returns the page once it is full or the
+     * scorer is done; {@code null} while the page is still filling, when the scorer finished without a collected doc, or when the
+     * slices are exhausted.
+     */
+    private Page scoreNextRange() throws IOException {
+        final LuceneScorer scorer = getCurrentOrLoadNextScorer();
+        if (scorer == null) {
+            assert doneCollecting == false || currentPagePos == 0 : "finished with " + currentPagePos + " buffered docs";
+            return null;
+        }
+        if (docIds == null) {
+            docIds = docIdsPool.getOrAllocate(maxPageSize);
+        }
+        final int remainingDocsStart = remainingDocs = limiter.remaining();
+        if (remainingDocsStart == 0) {
+            // Another driver exhausted the shared limit; nothing left to collect, only the buffered docs to emit (see isFinished).
+            doneCollecting = true;
+            scorer.markAsDone();
+        } else {
+            if (minCompetitiveQuery != null) {
+                minCompetitiveQuery.update(scorer.shardContext(), scorer.leafReaderContext());
+            }
+            try {
+                scorer.scoreNextRange(
+                    leafCollector,
+                    scorer.leafReaderContext().reader().getLiveDocs(),
+                    // Note: if (maxPageSize - currentPagePos) is a small "remaining" interval, this could lead to slow collection with
+                    // a highly selective filter. Having a large "enough" difference between max- and minPageSize (and thus
+                    // currentPagePos) alleviates this issue.
+                    maxPageSize - currentPagePos
+                );
+            } catch (CollectionTerminatedException ex) {
+                // The leaf collector terminated the execution
+                doneCollecting = true;
+                scorer.markAsDone();
+            }
+        }
+        final int collectedDocs = remainingDocsStart - remainingDocs;
+        final int discardedDocs = collectedDocs - limiter.tryAccumulateHits(collectedDocs);
+        Page page = null;
+        if (currentPagePos == 0 && scorer.isDone() && doneCollecting == false) {
+            return null;
+        }
+        if (currentPagePos >= minPageSize || scorer.isDone() || (remainingDocs = limiter.remaining()) == 0) {
+            IntVector shard = null;
+            IntVector leaf = null;
+            IntVector docs = null;
+            int metadataBlocks = numMetadataBlocks();
+            Block[] blocks = new Block[1 + metadataBlocks + scorer.tags().size()];
+            currentPagePos -= discardedDocs;
+            try {
+                int shardId = scorer.shardContext().index();
+                shard = blockFactory.newConstantIntVector(shardId, currentPagePos);
+                leaf = blockFactory.newConstantIntVector(scorer.leafReaderContext().ord, currentPagePos);
+                docs = buildDocsVector();
+                int b = 0;
+                blocks[b++] = new DocVector(refCounteds, shard, leaf, docs, DocVector.config().singleSegmentNonDecreasing(true)).asBlock();
+                shard = null;
+                leaf = null;
+                docs = null;
+                buildMetadataBlocks(blocks, b, currentPagePos);
+                b += metadataBlocks;
+                for (Object e : scorer.tags()) {
+                    blocks[b++] = BlockUtils.constantBlock(blockFactory, e, currentPagePos);
+                }
+                page = new Page(currentPagePos, blocks);
+                shardRowsEmitted[shardId] += page.getPositionCount();
+            } finally {
+                if (page == null) {
+                    Releasables.closeExpectNoException(shard, leaf, docs, Releasables.wrap(blocks));
+                }
+            }
+            currentPagePos = 0;
+        }
+        return page;
     }
 
     private IntVector buildDocsVector() {

@@ -100,6 +100,9 @@ public abstract class LuceneOperator extends SourceOperator {
     private int sliceIndex;
 
     private LuceneScorer currentScorer;
+    // Scorers of the leaves left with docs still to score, so a slice order that returns to a leaf, as time-series partitioning
+    // does, continues the leaf's scorer instead of building one per partial.
+    private final Map<LeafReaderContext, LuceneScorer> keptScorers = new IdentityHashMap<>();
 
     long processingNanos;
     int pagesEmitted;
@@ -288,6 +291,14 @@ public abstract class LuceneOperator extends SourceOperator {
         if (currentScorer != null) {
             currentScorer.releaseExecutionMemory();
         }
+        for (LuceneScorer kept : keptScorers.values()) {
+            kept.releaseExecutionMemory();
+        }
+        keptScorers.clear();
+    }
+
+    boolean currentScorerIsDone() {
+        return currentScorer != null && currentScorer.isDone();
     }
 
     LuceneScorer getCurrentOrLoadNextScorer() {
@@ -311,22 +322,32 @@ public abstract class LuceneOperator extends SourceOperator {
                 final PartialLeafReaderContext partialLeaf = currentSlice.getLeaf(sliceIndex++);
                 logger.trace("Starting {}", partialLeaf);
                 final LeafReaderContext leaf = partialLeaf.leafReaderContext();
-                if (currentScorer == null // First time
-                    || currentScorer.leafReaderContext() != leaf // Moved to a new leaf
-                    || currentScorer.weight != currentSlice.weight() // Moved to a new query
-                ) {
-                    final Weight weight = currentSlice.weight();
+                final Weight weight = currentSlice.weight();
+                if (currentScorer != null && currentScorer.leafReaderContext() != leaf) {
+                    if (currentScorer.maxPosition < currentScorer.leafReaderContext().reader().maxDoc()) {
+                        keptScorers.put(currentScorer.leafReaderContext(), currentScorer);
+                    } else {
+                        currentScorer.releaseExecutionMemory();
+                    }
+                    currentScorer = keptScorers.remove(leaf);
+                }
+                if (currentScorer != null
+                    && (currentScorer.weight != weight
+                        || currentScorer.tags().equals(currentSlice.tags()) == false
+                        || partialLeaf.minDoc() < currentScorer.maxPosition)) {
+                    currentScorer.releaseExecutionMemory();
+                    currentScorer = null;
+                }
+                if (currentScorer == null) {
                     if (renderedQueries.add(weight.getQuery())) {
                         processedQueries.add(Status.queryString(weight.getQuery()));
                     }
-                    releaseCurrentScorer();
                     currentScorer = new LuceneScorer(currentSlice.shardContext(), weight, currentSlice.tags(), leaf);
-                    sliceBlocked = currentSlice.leafBlockedOnCaching(currentScorer.leafReaderContext());
+                    sliceBlocked = currentSlice.leafBlockedOnCaching(leaf);
                     if (sliceBlocked == null || sliceBlocked.isDone()) {
                         currentScorer.reinitialize();
                     }
                 }
-                assert currentScorer.maxPosition <= partialLeaf.maxDoc() : currentScorer.maxPosition + ">" + partialLeaf.maxDoc();
                 currentScorer.maxPosition = partialLeaf.maxDoc();
                 currentScorer.position = Math.max(currentScorer.position, partialLeaf.minDoc());
             }

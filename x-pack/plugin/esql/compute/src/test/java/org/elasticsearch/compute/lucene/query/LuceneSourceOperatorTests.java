@@ -52,10 +52,12 @@ import org.elasticsearch.compute.data.LongBlock;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.lucene.IndexedByShardIdFromList;
 import org.elasticsearch.compute.lucene.IndexedByShardIdFromSingleton;
+import org.elasticsearch.compute.lucene.PartialLeafReaderContext;
 import org.elasticsearch.compute.lucene.ShardContext;
 import org.elasticsearch.compute.lucene.read.ValuesSourceReaderOperatorTests;
 import org.elasticsearch.compute.operator.Driver;
 import org.elasticsearch.compute.operator.DriverContext;
+import org.elasticsearch.compute.operator.Limiter;
 import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.compute.operator.PageConsumerOperator;
 import org.elasticsearch.compute.operator.SinkOperator;
@@ -89,7 +91,9 @@ import org.junit.After;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -760,6 +764,103 @@ public class LuceneSourceOperatorTests extends SourceOperatorTestCase {
             }
             assertThat(rows, equalTo(Math.min(limit, numDocs)));
         }
+    }
+
+    /**
+     * Slices that return to a leaf, as the slices of time-series partitioning do, continue the leaf's scorer: one scorer
+     * per leaf rather than per partial, with every doc collected once, in order.
+     */
+    public void testSlicesReturningToLeafReuseScorer() throws IOException {
+        reader = readerWithCommitsAfter(directory, 1000, 399);
+        MockShardContext ctx = new MockShardContext(reader, 0);
+        List<LeafReaderContext> leaves = reader.leaves();
+        assertThat(leaves, hasSize(2));
+        LeafReaderContext l0 = leaves.get(0);
+        LeafReaderContext l1 = leaves.get(1);
+        Map<LeafReaderContext, Integer> scorersBuilt = new HashMap<>();
+        Weight weight = new FilterWeight(ctx.searcher().createWeight(new BulkCollectingQuery(false), ScoreMode.COMPLETE_NO_SCORES, 1f)) {
+            @Override
+            public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
+                scorersBuilt.merge(context, 1, Integer::sum);
+                return in.scorerSupplier(context);
+            }
+        };
+        List<LuceneSlice> slices = List.of(
+            slice(0, ctx, weight, l0, 0, 200),
+            slice(1, ctx, weight, l1, 0, 300),
+            slice(2, ctx, weight, l0, 200, l0.reader().maxDoc()),
+            slice(3, ctx, weight, l1, 300, l1.reader().maxDoc())
+        );
+        LuceneSliceQueue queue = new LuceneSliceQueue(
+            i -> ctx,
+            slices,
+            Map.of(ctx.shardIdentifier(), LuceneSliceQueue.PartitioningStrategy.DOC)
+        );
+        DriverContext driverContext = driverContext();
+        LuceneSourceOperator operator = new LuceneSourceOperator(
+            new IndexedByShardIdFromSingleton<>(ctx),
+            driverContext,
+            256,
+            queue,
+            LuceneOperator.NO_LIMIT,
+            Limiter.NO_LIMIT,
+            false,
+            () -> 0L,
+            QueryWarnings.EMIT,
+            null
+        );
+        List<Page> results = new ArrayList<>();
+        new TestDriverRunner().run(
+            TestDriverFactory.create(driverContext, operator, List.of(), new TestResultPageSinkOperator(results::add))
+        );
+        OperatorTestCase.assertDriverContext(driverContext);
+        int[] nextDoc = new int[2];
+        int rows = 0;
+        for (Page page : results) {
+            DocVector docs = ((DocBlock) page.getBlock(0)).asVector();
+            for (int p = 0; p < page.getPositionCount(); p++) {
+                assertThat(docs.docs().getInt(p), equalTo(nextDoc[docs.segments().getInt(p)]++));
+            }
+            rows += page.getPositionCount();
+            page.releaseBlocks();
+        }
+        assertThat(rows, equalTo(1000));
+        assertThat(scorersBuilt, equalTo(Map.of(l0, 1, l1, 1)));
+    }
+
+    private static LuceneSlice slice(int position, ShardContext ctx, Weight weight, LeafReaderContext leaf, int minDoc, int maxDoc) {
+        return new LuceneSlice(
+            position,
+            position == 0,
+            ctx,
+            List.of(new PartialLeafReaderContext(leaf, minDoc, maxDoc)),
+            weight,
+            List.of(),
+            LuceneSlice.NEVER_BLOCKED
+        );
+    }
+
+    /**
+     * A partial with no matching doc emits no page: the operator scores the next partial in the same call, so the pages
+     * it counts as emitted are the pages the driver received.
+     */
+    public void testNoEmptyPages() {
+        int numDocs = between(1_000, 20_000);
+        LuceneSourceOperator.Factory factory = simple(DataPartitioning.SEGMENT, numDocs, LuceneOperator.NO_LIMIT, scoring);
+        DriverContext driverContext = driverContext();
+        SourceOperator source = factory.get(driverContext);
+        List<Page> results = new ArrayList<>();
+        new TestDriverRunner().run(
+            TestDriverFactory.create(driverContext, source, List.of(), new TestResultPageSinkOperator(results::add))
+        );
+        int rows = 0;
+        for (Page page : results) {
+            assertThat(page.getPositionCount(), greaterThan(0));
+            rows += page.getPositionCount();
+            page.releaseBlocks();
+        }
+        assertThat(rows, equalTo(testCase.numResults(numDocs)));
+        assertThat(((LuceneOperator.Status) source.status()).pagesEmitted(), equalTo(results.size()));
     }
 
     /**
