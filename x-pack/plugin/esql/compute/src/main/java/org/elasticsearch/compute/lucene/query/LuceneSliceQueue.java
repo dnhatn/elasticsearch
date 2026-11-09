@@ -333,10 +333,14 @@ public final class LuceneSliceQueue {
                 continue;
             }
             long startShard = System.nanoTime();
+            // The ranges of one shard share the leaves' readers and their bounds, and one weight per distinct query.
+            TsidRangeQuery.LeafResolvers resolvers = new TsidRangeQuery.LeafResolvers();
+            Map<Query, WeightAndCache> weights = new HashMap<>();
             try {
                 for (QueryAndTags queryAndExtra : queryFunction.apply(ctx)) {
                     var scoreMode = scoreModeFunction.apply(ctx);
-                    Query query = queryAndExtra.query;
+                    TsidRangeQuery range = TsidRangeQuery.requiredRange(queryAndExtra.query);
+                    Query query = range == null ? queryAndExtra.query : TsidRangeQuery.strip(queryAndExtra.query);
                     query = scoreMode.needsScores() ? query : new ConstantScoreQuery(query);
                     /*
                      * Rewrite the query on the local index so things like fully
@@ -365,15 +369,26 @@ public final class LuceneSliceQueue {
                     if (query instanceof MatchNoDocsQuery) {
                         continue;
                     }
+                    Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges = range == null
+                        ? Map.of()
+                        : tsidRanges(ctx.searcher().getLeafContexts(), range, resolvers);
+                    if (range != null && ranges.values().stream().allMatch(TsidRangeQuery.DocRange::isEmpty)) {
+                        continue;
+                    }
                     var partitioning = PartitioningStrategy.pick(dataPartitioning, autoStrategy, docThresholdForAutoStrategy, ctx, query);
                     partitioningStrategies.put(ctx.shardIdentifier(), partitioning);
-                    var weightAndCache = weight(ctx, query, scoreMode, partitioning);
+                    WeightAndCache weightAndCache = weights.get(query);
+                    if (weightAndCache == null) {
+                        weightAndCache = weight(ctx, query, scoreMode, partitioning);
+                        weights.put(query, weightAndCache);
+                    }
                     List<List<PartialLeafReaderContext>> groups = partitioning.groups(
                         ctx.searcher(),
                         taskConcurrency,
                         weightAndCache.weight,
                         leafSplitGuard,
-                        minDocsPerSlice
+                        minDocsPerSlice,
+                        ranges
                     );
                     boolean queryHead = true;
                     for (List<PartialLeafReaderContext> group : groups) {
@@ -409,8 +424,31 @@ public final class LuceneSliceQueue {
     }
 
     /**
+     * The doc interval of each leaf that {@code range} matches. A leaf with an empty interval gets no slices.
+     */
+    private static Map<LeafReaderContext, TsidRangeQuery.DocRange> tsidRanges(
+        List<LeafReaderContext> leaves,
+        TsidRangeQuery range,
+        TsidRangeQuery.LeafResolvers resolvers
+    ) {
+        Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges = new IdentityHashMap<>();
+        try {
+            for (LeafReaderContext leaf : leaves) {
+                ranges.put(leaf, range.docRange(leaf, resolvers.get(leaf)));
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return ranges;
+    }
+
+    /**
      * Strategy used to partition each shard into slices. See {@link DataPartitioning}
      * for descriptions on how each value works.
+     * <p>
+     *     {@link #groups} takes the doc interval each leaf is restricted to, when the query had a {@link TsidRangeQuery}:
+     *     a leaf is cut only over its interval and gets no slices when the interval is empty, see {@link #clip}.
+     * </p>
      */
     public enum PartitioningStrategy implements Writeable {
         /**
@@ -423,9 +461,10 @@ public final class LuceneSliceQueue {
                 int taskConcurrency,
                 Weight weight,
                 LeafSplitGuard guard,
-                int minDocsPerSlice
+                int minDocsPerSlice,
+                Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges
             ) {
-                return List.of(searcher.getLeafContexts().stream().map(PartialLeafReaderContext::new).toList());
+                return clip(List.of(searcher.getLeafContexts().stream().map(PartialLeafReaderContext::new).toList()), ranges);
             }
         },
         /**
@@ -445,14 +484,18 @@ public final class LuceneSliceQueue {
                 int taskConcurrency,
                 Weight weight,
                 LeafSplitGuard guard,
-                int minDocsPerSlice
+                int minDocsPerSlice,
+                Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges
             ) {
                 IndexSearcher.LeafSlice[] gs = ContextIndexSearcher.computeSlices(
                     searcher.getLeafContexts(),
                     Math.max(1, taskConcurrency),
                     minDocsPerSlice
                 );
-                return Arrays.stream(gs).map(g -> Arrays.stream(g.partitions).map(PartialLeafReaderContext::new).toList()).toList();
+                return clip(
+                    Arrays.stream(gs).map(g -> Arrays.stream(g.partitions).map(PartialLeafReaderContext::new).toList()).toList(),
+                    ranges
+                );
             }
         },
         /**
@@ -484,7 +527,8 @@ public final class LuceneSliceQueue {
          * Without this a narrow range falls into a few slices of the whole leaf and most drivers have nothing to do.
          * The range is never longer than the leaf, so these slices are never larger than the ones the whole leaf would
          * get. Kept-whole leaves, small leaves, and large leaves that cannot say which range matches, are sliced as
-         * before.
+         * before. A {@code _tsid} interval in {@code ranges} is such a range for a large leaf, and clips the slices of
+         * every other leaf.
          */
         DOC(2) {
             @Override
@@ -493,7 +537,8 @@ public final class LuceneSliceQueue {
                 int taskConcurrency,
                 Weight weight,
                 LeafSplitGuard guard,
-                int minDocsPerSlice
+                int minDocsPerSlice,
+                Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges
             ) {
                 final List<LeafReaderContext> leaves = searcher.getLeafContexts();
                 final int totalDocCount = searcher.getIndexReader().maxDoc();
@@ -511,28 +556,29 @@ public final class LuceneSliceQueue {
                     }
                 }
                 if (2L * largestUnguarded <= 3L * desiredSliceSize) {
-                    return balancedBinPack(leaves, keepWhole, sliceTarget);
+                    return clip(balancedBinPack(leaves, keepWhole, sliceTarget), ranges);
                 }
                 int maxSegmentsPerSlice = Math.max(MAX_SEGMENTS_PER_SLICE, Math.ceilDiv(leaves.size(), sliceTarget));
                 AdaptivePartitioner partitioner = new AdaptivePartitioner(desiredSliceSize, maxSegmentsPerSlice);
-                Map<LeafReaderContext, PrimarySortRange.DocRange> ranges = primarySortRanges(leaves, weight, partitioner, keepWhole);
-                if (ranges.isEmpty()) {
-                    return partitioner.partition(leaves, keepWhole);
+                Map<LeafReaderContext, PrimarySortRange.DocRange> largeRanges = ranges.isEmpty()
+                    ? primarySortRanges(leaves, weight, partitioner, keepWhole)
+                    : largeLeafRanges(leaves, ranges, partitioner, keepWhole);
+                if (largeRanges.isEmpty()) {
+                    return clip(partitioner.partition(leaves, keepWhole), ranges);
                 }
                 // A filter on the primary sort field limits a large leaf to a doc range.
                 // The range is cut like a whole leaf would be, but into slices sized for the matching docs, not for all docs.
-                long rangeDocs = ranges.values().stream().mapToLong(PrimarySortRange.DocRange::length).sum();
+                long rangeDocs = largeRanges.values().stream().mapToLong(PrimarySortRange.DocRange::length).sum();
                 int rangeDesiredDocsPerSlice = desiredDocsPerSlice(rangeDocs, taskConcurrency, minDocsPerSlice);
-                return partitioner.partition(leaves, keepWhole, ranges, rangeDesiredDocsPerSlice);
+                return clip(partitioner.partition(leaves, keepWhole, largeRanges, rangeDesiredDocsPerSlice), ranges);
             }
         },
         /**
          * Partition using the prefix of tsid.
          *
-         * <p>If the query requires a {@link TsidRangeQuery}, each leaf is cut only over the doc interval that range matches,
-         * see {@link TsidRangeQuery#requiredRange}: prefix cells outside it get no slices and cells on its edge are clipped
-         * to it, so the slices are sized by the docs that can match rather than by the whole shard. The query still runs on
-         * every slice, so results do not change.
+         * <p>With {@code ranges}, each leaf is cut only over its doc interval: prefix cells outside it get no slices and
+         * cells on its edge are clipped to it, so the slices are sized by the docs that can match rather than by the whole
+         * shard.
          */
         TIME_SERIES(3) {
             @Override
@@ -541,11 +587,11 @@ public final class LuceneSliceQueue {
                 int taskConcurrency,
                 Weight weight,
                 LeafSplitGuard guard,
-                int minDocsPerSlice
+                int minDocsPerSlice,
+                Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges
             ) {
                 try {
-                    List<LeafReaderContext> leaves = searcher.getLeafContexts();
-                    return new TimeSeriesPartitioner().partition(leaves, taskConcurrency, MAX_DOCS_PER_SLICE, tsidRanges(leaves, weight));
+                    return new TimeSeriesPartitioner().partition(searcher.getLeafContexts(), taskConcurrency, MAX_DOCS_PER_SLICE, ranges);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
@@ -583,12 +629,76 @@ public final class LuceneSliceQueue {
             int taskConcurrency,
             Weight weight,
             LeafSplitGuard guard,
-            int minDocsPerSlice
+            int minDocsPerSlice,
+            Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges
         );
+
+        List<List<PartialLeafReaderContext>> groups(
+            IndexSearcher searcher,
+            int taskConcurrency,
+            Weight weight,
+            LeafSplitGuard guard,
+            int minDocsPerSlice
+        ) {
+            return groups(searcher, taskConcurrency, weight, guard, minDocsPerSlice, Map.of());
+        }
 
         // Package-private helper for tests that don't need a guard / weight.
         List<List<PartialLeafReaderContext>> groups(IndexSearcher searcher, int taskConcurrency) {
             return groups(searcher, taskConcurrency, null, LeafSplitGuard.NEVER, MIN_DOCS_PER_SLICE);
+        }
+
+        /**
+         * {@code groups} with each leaf's slices clipped to its interval in {@code ranges}: a slice gets the part of the leaf
+         * inside the interval and is dropped when nothing is left, as is a group with no slices left.
+         */
+        static List<List<PartialLeafReaderContext>> clip(
+            List<List<PartialLeafReaderContext>> groups,
+            Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges
+        ) {
+            if (ranges.isEmpty()) {
+                return groups;
+            }
+            List<List<PartialLeafReaderContext>> results = new ArrayList<>(groups.size());
+            for (List<PartialLeafReaderContext> group : groups) {
+                List<PartialLeafReaderContext> clipped = new ArrayList<>(group.size());
+                for (PartialLeafReaderContext leaf : group) {
+                    TsidRangeQuery.DocRange range = ranges.get(leaf.leafReaderContext());
+                    if (range == null) {
+                        clipped.add(leaf);
+                        continue;
+                    }
+                    int minDoc = Math.max(leaf.minDoc(), range.minDoc());
+                    int maxDoc = Math.min(leaf.maxDoc(), range.maxDoc());
+                    if (minDoc < maxDoc) {
+                        clipped.add(new PartialLeafReaderContext(leaf.leafReaderContext(), minDoc, maxDoc));
+                    }
+                }
+                if (clipped.isEmpty() == false) {
+                    results.add(clipped);
+                }
+            }
+            return results;
+        }
+
+        /**
+         * The interval of each large leaf of {@code partitioner} that is not kept whole, from {@code ranges}, for
+         * {@link AdaptivePartitioner#partition(List, Set, Map, int)}.
+         */
+        private static Map<LeafReaderContext, PrimarySortRange.DocRange> largeLeafRanges(
+            List<LeafReaderContext> leaves,
+            Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges,
+            AdaptivePartitioner partitioner,
+            Set<LeafReaderContext> keepWhole
+        ) {
+            Map<LeafReaderContext, PrimarySortRange.DocRange> largeRanges = new IdentityHashMap<>();
+            for (LeafReaderContext leaf : leaves) {
+                TsidRangeQuery.DocRange range = ranges.get(leaf);
+                if (range != null && keepWhole.contains(leaf) == false && partitioner.isLarge(leaf)) {
+                    largeRanges.put(leaf, new PrimarySortRange.DocRange(range.minDoc(), range.maxDoc()));
+                }
+            }
+            return largeRanges;
         }
 
         /**
@@ -660,8 +770,7 @@ public final class LuceneSliceQueue {
          * The doc range of each large leaf of {@code partitioner} that can match a range filter on the primary index-sort
          * field. A leaf that is not in the result is sliced as usual: it is kept whole, it is small, the query has no such
          * filter, or the leaf cannot say which range matches. A leaf with no matching docs has an empty range and gets no
-         * slices. A {@link TsidRangeQuery} is such a filter on a time-series index, whose primary sort is {@code _tsid}; it
-         * resolves its own intervals.
+         * slices.
          */
         private static Map<LeafReaderContext, PrimarySortRange.DocRange> primarySortRanges(
             List<LeafReaderContext> leaves,
@@ -675,36 +784,7 @@ public final class LuceneSliceQueue {
             List<LeafReaderContext> largeLeaves = leaves.stream()
                 .filter(leaf -> keepWhole.contains(leaf) == false && partitioner.isLarge(leaf))
                 .toList();
-            Map<LeafReaderContext, PrimarySortRange.DocRange> ranges = PrimarySortRange.find(largeLeaves, weight.getQuery());
-            if (ranges.isEmpty() == false) {
-                return ranges;
-            }
-            try {
-                Map<LeafReaderContext, PrimarySortRange.DocRange> tsidRanges = new IdentityHashMap<>();
-                for (Map.Entry<LeafReaderContext, TsidRangeQuery.DocRange> e : tsidRanges(largeLeaves, weight).entrySet()) {
-                    tsidRanges.put(e.getKey(), new PrimarySortRange.DocRange(e.getValue().minDoc(), e.getValue().maxDoc()));
-                }
-                return tsidRanges;
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        }
-
-        /**
-         * The doc interval of each leaf that the {@link TsidRangeQuery} required by {@code weight}'s query matches, or an empty
-         * map if the query requires none. A leaf with an empty interval gets no slices.
-         */
-        private static Map<LeafReaderContext, TsidRangeQuery.DocRange> tsidRanges(List<LeafReaderContext> leaves, Weight weight)
-            throws IOException {
-            TsidRangeQuery range = weight == null ? null : TsidRangeQuery.requiredRange(weight.getQuery());
-            if (range == null) {
-                return Map.of();
-            }
-            Map<LeafReaderContext, TsidRangeQuery.DocRange> ranges = new IdentityHashMap<>();
-            for (LeafReaderContext leaf : leaves) {
-                ranges.put(leaf, range.docRange(leaf));
-            }
-            return ranges;
+            return PrimarySortRange.find(largeLeaves, weight.getQuery());
         }
 
         private static Set<LeafReaderContext> wholeLeaves(List<LeafReaderContext> leaves, Weight weight, LeafSplitGuard guard) {

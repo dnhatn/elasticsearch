@@ -8,6 +8,9 @@
 package org.elasticsearch.xpack.esql.action;
 
 import org.apache.lucene.tests.util.LuceneTestCase;
+import org.elasticsearch.action.admin.indices.segments.IndexShardSegments;
+import org.elasticsearch.action.admin.indices.segments.IndicesSegmentResponse;
+import org.elasticsearch.action.admin.indices.segments.ShardSegments;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.common.settings.Settings;
@@ -36,6 +39,7 @@ import java.util.Objects;
 import static org.elasticsearch.index.mapper.DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
@@ -165,19 +169,17 @@ public class TimeSeriesTsidPartitionIT extends AbstractEsqlIntegTestCase {
                 List<LuceneSourceOperator.Status> sources = sourceStatuses(profile);
                 String description = "[" + query + "] with data_partitioning [" + dataPartitioning + "]";
                 assertThat(description, sources, not(empty()));
+                int segments = numSegments(INDEX);
                 for (LuceneSourceOperator.Status source : sources) {
                     TsidRangeQuery.Status tsidRange = source.tsidRange();
                     assertNotNull(description, tsidRange);
-                    assertThat(description, tsidRange.leaves(), greaterThan(0L));
+                    // Each range resolves its interval on every segment, and the ranges share one weight: the uncut query.
+                    assertThat(description, tsidRange.leaves() % segments, equalTo(0L));
+                    assertThat(description, tsidRange.leaves() / segments, greaterThanOrEqualTo(2L));
                     assertThat(description, tsidRange.prefixTable() + tsidRange.skipper() + tsidRange.binarySearch(), greaterThan(0L));
+                    assertThat(description, source.processedQueries(), hasSize(1));
+                    assertThat(description, source.processedQueries().getFirst(), not(containsString("_tsid:[")));
                 }
-                // Each range is its own query to the slice queue.
-                long ranges = sources.stream()
-                    .flatMap(s -> s.processedQueries().stream())
-                    .filter(q -> q.contains("_tsid:["))
-                    .distinct()
-                    .count();
-                assertThat(description, ranges, greaterThanOrEqualTo(2L));
             }
         }
         try (EsqlQueryResponse resp = run(request(QUERIES.getFirst(), pragmas("auto", 0, -1)))) {
@@ -238,14 +240,9 @@ public class TimeSeriesTsidPartitionIT extends AbstractEsqlIntegTestCase {
             assertThat(sources, not(empty()));
             for (LuceneSourceOperator.Status source : sources) {
                 assertNotNull(source.tsidRange());
-                assertThat(source.tsidRange().leaves(), greaterThan(0L));
+                // Two ranges on the one segment.
+                assertThat(source.tsidRange().leaves(), equalTo(2L));
             }
-            long ranges = sources.stream()
-                .flatMap(s -> s.processedQueries().stream())
-                .filter(q -> q.contains("_tsid:["))
-                .distinct()
-                .count();
-            assertThat(ranges, equalTo(2L));
         }
         // Turned off, the same rows and no ranges.
         try (EsqlQueryResponse resp = run(request(query, pragmas(randomFrom("auto", "shard"), 0, -1)))) {
@@ -315,6 +312,17 @@ public class TimeSeriesTsidPartitionIT extends AbstractEsqlIntegTestCase {
         try (EsqlQueryResponse resp = run(request(query, pragmas))) {
             return EsqlTestUtils.getValuesList(resp);
         }
+    }
+
+    private static int numSegments(String index) {
+        IndicesSegmentResponse response = client().admin().indices().prepareSegments(index).get();
+        int segments = 0;
+        for (IndexShardSegments shard : response.getIndices().get(index).getShards().values()) {
+            for (ShardSegments copy : shard.shards()) {
+                segments += copy.getSegments().size();
+            }
+        }
+        return segments;
     }
 
     private static List<LuceneSourceOperator.Status> sourceStatuses(EsqlQueryResponse.Profile profile) {

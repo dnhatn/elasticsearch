@@ -19,6 +19,7 @@ import org.apache.lucene.search.ConstantScoreScorer;
 import org.apache.lucene.search.ConstantScoreWeight;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.QueryVisitor;
 import org.apache.lucene.search.ScoreMode;
@@ -41,6 +42,7 @@ import org.elasticsearch.xcontent.XContentBuilder;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -64,12 +66,13 @@ import java.util.concurrent.atomic.LongAdder;
  *     whole leaf, which is still logarithmic. {@link Steps} counts, per leaf, which steps ran.
  * </p>
  * <p>
- *     The scorer iterates the interval, and its {@link ScorerSupplier#cost()} is the interval's length. That matters in a
- *     conjunction: Lucene leads with the cheapest clause, so this query leads and the other clauses, such as the time range
- *     and {@code WHERE} filters, only verify the docs of the interval instead of building their own doc sets for the leaf.
- *     The slice queue also cuts a leaf into slices over the interval only, see {@link #requiredRange}, so no driver gets
- *     docs the query cannot match. Every doc of a time-series index has a {@code _tsid}, so the interval holds no doc
- *     without one.
+ *     The slice queue does not run this query: it takes it out of the shard query, see {@link #strip}, and cuts each leaf
+ *     into slices over the interval only, see {@link #requiredRange}. The rest of the query then runs over those slices as
+ *     it would uncut, with one weight for every range of the shard, and no driver gets docs the range cannot match. A
+ *     conjunction with this query as a clause would score doc by doc, as the interval is too small a share of the leaf
+ *     for Lucene's run-aware bulk scorer, and lose the bulk reads that follow dense doc runs. Every doc of a time-series
+ *     index has a {@code _tsid}, so the interval holds no doc without one. On its own the query scores the interval, with
+ *     its length as {@link ScorerSupplier#cost()}.
  * </p>
  */
 public final class TsidRangeQuery extends Query {
@@ -113,10 +116,18 @@ public final class TsidRangeQuery extends Query {
      * which serve one shard for one request.
      */
     public DocRange docRange(LeafReaderContext context) throws IOException {
+        return docRange(context, new LeafResolver(context.reader()));
+    }
+
+    /**
+     * Like {@link #docRange(LeafReaderContext)}, resolving with {@code resolver}, which holds the leaf's readers and the bounds
+     * other ranges of the same leaf already found.
+     */
+    DocRange docRange(LeafReaderContext context, LeafResolver resolver) throws IOException {
         try {
             return ranges.computeIfAbsent(context.id(), k -> {
                 try {
-                    return resolve(context);
+                    return resolver.resolve(lower, upper, steps);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
@@ -153,6 +164,46 @@ public final class TsidRangeQuery extends Query {
             }
         }
         return null;
+    }
+
+    /**
+     * {@code query} without the {@link TsidRangeQuery} that {@link #requiredRange} finds, or {@code query} itself when there
+     * is none. The slice queue runs the result over the range's intervals, where every doc is in the range already.
+     */
+    public static Query strip(Query query) {
+        if (query instanceof TsidRangeQuery) {
+            return new MatchAllDocsQuery();
+        }
+        if (query instanceof ConstantScoreQuery constantScore) {
+            Query inner = strip(constantScore.getQuery());
+            return inner == constantScore.getQuery() ? query : new ConstantScoreQuery(inner);
+        }
+        if (query instanceof BoostQuery boost) {
+            Query inner = strip(boost.getQuery());
+            return inner == boost.getQuery() ? query : new BoostQuery(inner, boost.getBoost());
+        }
+        if (query instanceof BooleanQuery bool) {
+            BooleanQuery.Builder builder = new BooleanQuery.Builder().setMinimumNumberShouldMatch(bool.getMinimumNumberShouldMatch());
+            boolean stripped = false;
+            for (BooleanClause clause : bool) {
+                boolean required = clause.occur() == BooleanClause.Occur.MUST || clause.occur() == BooleanClause.Occur.FILTER;
+                if (stripped == false && required && requiredRange(clause.query()) != null) {
+                    stripped = true;
+                    Query inner = strip(clause.query());
+                    if (inner instanceof MatchAllDocsQuery == false) {
+                        builder.add(inner, clause.occur());
+                    }
+                } else {
+                    builder.add(clause);
+                }
+            }
+            if (stripped == false) {
+                return query;
+            }
+            BooleanQuery result = builder.build();
+            return result.clauses().isEmpty() ? new MatchAllDocsQuery() : result;
+        }
+        return query;
     }
 
     @Override
@@ -206,44 +257,68 @@ public final class TsidRangeQuery extends Query {
     }
 
     /**
-     * Finds the interval of {@code context} and records in {@link #steps} which steps the leaf used.
+     * The {@link LeafResolver} of each leaf of a shard, for every range of one request.
      */
-    private DocRange resolve(LeafReaderContext context) throws IOException {
-        LeafReader reader = context.reader();
-        SortedDocValues tsid = reader.getSortedDocValues(FIELD);
-        if (tsid == null || tsid.getValueCount() == 0) {
-            steps.leaves.increment();
-            return DocRange.EMPTY;
+    static final class LeafResolvers {
+        private final Map<Object, LeafResolver> resolvers = new HashMap<>();
+
+        LeafResolver get(LeafReaderContext context) throws IOException {
+            LeafResolver resolver = resolvers.get(context.id());
+            if (resolver == null) {
+                resolver = new LeafResolver(context.reader());
+                resolvers.put(context.id(), resolver);
+            }
+            return resolver;
         }
-        Resolver resolver = new Resolver(reader, tsid);
-        int minDoc = lower == null ? 0 : resolver.firstDocAtOrAbove(lower);
-        int maxDoc = upper == null ? reader.maxDoc() : resolver.firstDocAtOrAbove(upper);
-        resolver.record(steps);
-        return new DocRange(minDoc, Math.max(minDoc, maxDoc));
     }
 
     /**
-     * Finds the first doc of a leaf whose {@code _tsid} is at or above a key. One instance serves both bounds of a leaf.
+     * Finds the first doc of a leaf whose {@code _tsid} is at or above a key. One instance serves every bound resolved on the
+     * leaf: it opens the leaf's readers once and remembers the doc of each key, as adjacent ranges share a bound.
      */
-    private static final class Resolver {
+    static final class LeafResolver {
         private final LeafReader reader;
+        /**
+         * {@code null} when no doc of the leaf has a {@code _tsid}.
+         */
+        @Nullable
         private final SortedDocValues tsid;
         private final int maxDoc;
+        private final Map<BytesRef, Integer> docs = new HashMap<>();
         private boolean prefixTableLoaded;
         @Nullable
         private PartitionedDocValues.PrefixPartitions prefixTable;
+        /**
+         * Only moves forward, so it serves the keys in order and is reopened for a key below the last one.
+         */
+        @Nullable
+        private DocValuesSkipper skipper;
+        @Nullable
+        private BytesRef skipperKey;
         private boolean usedPrefixTable;
         private boolean usedSkipper;
         private boolean usedBinarySearch;
 
-        Resolver(LeafReader reader, SortedDocValues tsid) {
+        LeafResolver(LeafReader reader) throws IOException {
             this.reader = reader;
-            this.tsid = tsid;
+            SortedDocValues values = reader.getSortedDocValues(FIELD);
+            this.tsid = values == null || values.getValueCount() == 0 ? null : values;
             this.maxDoc = reader.maxDoc();
         }
 
-        void record(Steps steps) {
+        /**
+         * Finds the interval of {@code [lower, upper)} and records in {@code steps} which steps this call used.
+         */
+        DocRange resolve(@Nullable BytesRef lower, @Nullable BytesRef upper, Steps steps) throws IOException {
+            usedPrefixTable = false;
+            usedSkipper = false;
+            usedBinarySearch = false;
             steps.leaves.increment();
+            if (tsid == null) {
+                return DocRange.EMPTY;
+            }
+            int minDoc = lower == null ? 0 : firstDocAtOrAbove(lower);
+            int maxDoc = upper == null ? this.maxDoc : firstDocAtOrAbove(upper);
             if (usedPrefixTable) {
                 steps.prefixTable.increment();
             }
@@ -253,12 +328,23 @@ public final class TsidRangeQuery extends Query {
             if (usedBinarySearch) {
                 steps.binarySearch.increment();
             }
+            return new DocRange(minDoc, Math.max(minDoc, maxDoc));
         }
 
         /**
          * Returns the first doc whose {@code _tsid} is at or above {@code key}, or {@code maxDoc} if there is none.
          */
         int firstDocAtOrAbove(BytesRef key) throws IOException {
+            Integer known = docs.get(key);
+            if (known != null) {
+                return known;
+            }
+            int doc = find(key);
+            docs.put(BytesRef.deepCopyOf(key), doc);
+            return doc;
+        }
+
+        private int find(BytesRef key) throws IOException {
             // The answer is in [lo, hi], where hi means "no such doc in the searched docs".
             int lo = 0;
             int hi = maxDoc;
@@ -287,10 +373,12 @@ public final class TsidRangeQuery extends Query {
             if (ord >= tsid.getValueCount()) {
                 return hi;
             }
-            DocValuesSkipper skipper = reader.getDocValuesSkipper(FIELD);
+            DocValuesSkipper skipper = skipper(key);
             if (skipper != null) {
                 usedSkipper = true;
-                skipper.advance(lo);
+                if (lo > skipper.maxDocID(0)) {
+                    skipper.advance(lo);
+                }
                 // The first block, from lo on, that can hold a doc with ordinal >= ord. Every doc before it is below.
                 skipper.advance(ord, Long.MAX_VALUE);
                 if (skipper.minDocID(0) == DocIdSetIterator.NO_MORE_DOCS || skipper.minDocID(0) >= hi) {
@@ -314,6 +402,19 @@ public final class TsidRangeQuery extends Query {
             }
             usedBinarySearch = true;
             return binarySearch(lo, hi, ord);
+        }
+
+        /**
+         * The skipper positioned no later than {@code key}'s doc: the one of the last key when {@code key} is not below it,
+         * as every block it passed holds only lower ordinals, otherwise a fresh one.
+         */
+        @Nullable
+        private DocValuesSkipper skipper(BytesRef key) throws IOException {
+            if (skipper == null || key.compareTo(skipperKey) < 0) {
+                skipper = reader.getDocValuesSkipper(FIELD);
+            }
+            skipperKey = key;
+            return skipper;
         }
 
         @Nullable

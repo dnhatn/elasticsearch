@@ -132,7 +132,7 @@ public final class TsidRangeQueryBuilder extends AbstractQueryBuilder<TsidRangeQ
         if (next == null) {
             return range;
         }
-        // The source query stays a scoring clause, so a query that reads _score scores as it did uncut.
+        // The source query stays a scoring clause, so what is left once the slice queue strips the range scores as it did uncut.
         return new BooleanQuery.Builder().add(next.toQuery(context, visitor), BooleanClause.Occur.MUST)
             .add(range, BooleanClause.Occur.FILTER)
             .build();

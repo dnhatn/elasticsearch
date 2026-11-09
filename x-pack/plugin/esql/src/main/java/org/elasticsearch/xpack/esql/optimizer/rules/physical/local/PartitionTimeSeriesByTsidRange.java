@@ -28,8 +28,9 @@ import java.util.stream.IntStream;
  * Cuts the source queries over time-series indices into sub-queries by {@code _tsid} range, of {@code tsid_partition_series}
  * series each; the pragma's {@code 0} turns the cut off. Every {@link EsQueryExec.QueryBuilderAndTags} of such an {@link EsQueryExec}
  * becomes one entry per range, the input query restricted by a {@link TsidRangeQueryBuilder}, with the input's tags: the
- * same multiplication of the shard query into tagged queries as {@link ReplaceRoundToWithQueryAndTags}, so the slice queue
- * runs each range with its own weight and slices. A series is whole inside one range, so every time-series function stays
+ * same multiplication of the shard query into tagged queries as {@link ReplaceRoundToWithQueryAndTags}. The slice queue takes
+ * the range back out of each query and cuts the leaves over the range's doc intervals instead, so one weight, the uncut
+ * query, serves every range of a shard. A series is whole inside one range, so every time-series function stays
  * exact. The source of a {@code TS} query is in {@link IndexMode#TIME_SERIES} only when a function such as {@code rate}
  * needs it; otherwise, like {@code avg_over_time}, it is a standard source over the same indices, whose first pass still
  * groups by {@code _tsid}, so both are cut.
@@ -40,9 +41,8 @@ import java.util.stream.IntStream;
  *     which has the setup cost of a range and matches nothing.
  * </p>
  * <p>
- *     Experimental: this measures what the range filters cost on the data node. With all ranges in one request nothing bounds
- *     the memory of the aggregation. Sorted sources are left alone, as {@code LuceneTopNSourceOperator} runs one query. The
- *     source query stays a scoring clause of the cut query, so scores are unchanged.
+ *     Experimental: this measures what the ranges cost on the data node. With all ranges in one request nothing bounds
+ *     the memory of the aggregation. Sorted sources are left alone, as {@code LuceneTopNSourceOperator} runs one query.
  * </p>
  */
 public class PartitionTimeSeriesByTsidRange extends PhysicalOptimizerRules.ParameterizedOptimizerRule<

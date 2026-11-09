@@ -12,12 +12,11 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.ConstantScoreQuery;
-import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.compute.lucene.IndexedByShardIdFromList;
 import org.elasticsearch.compute.lucene.PartialLeafReaderContext;
 import org.elasticsearch.compute.lucene.query.TsidRangeQueryTests.Layout;
 import org.elasticsearch.compute.lucene.query.TsidRangeQueryTests.TsidIndex;
@@ -26,19 +25,23 @@ import org.elasticsearch.test.ESTestCase;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
 import static org.elasticsearch.compute.lucene.query.TsidRangeQueryTests.matches;
-import static org.elasticsearch.compute.lucene.query.TsidRangeQueryTests.plainSearcher;
 import static org.elasticsearch.compute.lucene.query.TsidRangeQueryTests.scan;
 import static org.elasticsearch.compute.lucene.query.TsidRangeQueryTests.tsidIndex;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
@@ -125,50 +128,84 @@ public class TsidRangePartitionerTests extends ESTestCase {
     }
 
     /**
-     * Time-series partitioning cuts each leaf only over the interval of the range: the slices of a range cover exactly the
-     * docs the range matches in each leaf, and a range that matches nothing in a leaf gets no slice of it.
+     * The slice queue cuts each leaf only over the interval of each range, under every partitioning strategy: the slices of
+     * a range cover exactly the docs the range matches in each leaf, and a range that matches nothing in a leaf gets no
+     * slice of it. It runs the query without the range, and one weight serves every range of the shard.
      */
-    public void testTimeSeriesSlicesFollowRange() throws IOException {
-        // Time-series partitioning needs the prefix table.
-        try (TsidIndex index = tsidIndex(new Layout(true, randomBoolean()), between(200, 500))) {
-            IndexSearcher searcher = plainSearcher(index.reader);
+    public void testSlicesFollowRange() throws IOException {
+        Layout layout = Layout.random();
+        try (TsidIndex index = tsidIndex(layout, between(200, 500))) {
             int referenceSeries = TsidRangePartitioner.seriesInLargestSegment(index.reader);
             int seriesPerRange = Math.ceilDiv(referenceSeries, between(2, 8));
             int ranges = TsidRangePartitioner.numRanges(referenceSeries, seriesPerRange);
-            Query inner = SortedNumericDocValuesField.newSlowRangeQuery("@timestamp", 0, randomLongBetween(0, 1_000_000));
+            Query inner = randomBoolean()
+                ? null
+                : SortedNumericDocValuesField.newSlowRangeQuery("@timestamp", 0, randomLongBetween(0, 1_000_000));
             TsidRangeQuery.Steps steps = new TsidRangeQuery.Steps();
+            List<TsidRangeQuery> rangeQueries = new ArrayList<>();
+            List<LuceneSliceQueue.QueryAndTags> queries = new ArrayList<>();
             for (int i = 0; i <= ranges; i++) {
                 TsidRangeQuery range = TsidRangePartitioner.range(index.reader, seriesPerRange, i, steps);
-                Query query = new ConstantScoreQuery(randomBoolean() ? range : filtered(inner, range));
-                Weight weight = searcher.createWeight(searcher.rewrite(query), ScoreMode.COMPLETE_NO_SCORES, 1f);
-                List<List<PartialLeafReaderContext>> slices = LuceneSliceQueue.PartitioningStrategy.TIME_SERIES.groups(
-                    searcher,
-                    between(1, 4),
-                    weight,
-                    LuceneSliceQueue.LeafSplitGuard.NEVER,
-                    LuceneSliceQueue.MIN_DOCS_PER_SLICE
-                );
-                for (LeafReaderContext leaf : index.reader.leaves()) {
-                    TsidRangeQuery.DocRange expected = range.docRange(leaf);
-                    List<PartialLeafReaderContext> parts = slices.stream()
-                        .flatMap(List::stream)
+                rangeQueries.add(range);
+                queries.add(new LuceneSliceQueue.QueryAndTags(inner == null ? range : filtered(inner, range), List.of(i)));
+            }
+            // Time-series partitioning needs the prefix table.
+            List<LuceneSliceQueue.PartitioningStrategy> strategies = new ArrayList<>(
+                List.of(
+                    LuceneSliceQueue.PartitioningStrategy.SHARD,
+                    LuceneSliceQueue.PartitioningStrategy.SEGMENT,
+                    LuceneSliceQueue.PartitioningStrategy.DOC
+                )
+            );
+            if (layout.prefixTable()) {
+                strategies.add(LuceneSliceQueue.PartitioningStrategy.TIME_SERIES);
+            }
+            LuceneSliceQueue.PartitioningStrategy strategy = randomFrom(strategies);
+            // The shard's searcher wraps the reader, so its leaves are the ones the queue resolves and cuts.
+            LuceneSourceOperatorTests.MockShardContext shardContext = new LuceneSourceOperatorTests.MockShardContext(index.reader);
+            List<LeafReaderContext> leaves = shardContext.searcher().getLeafContexts();
+            LuceneSliceQueue queue = LuceneSliceQueue.create(
+                new IndexedByShardIdFromList<>(List.of(shardContext)),
+                ctx -> queries,
+                DataPartitioning.AUTO,
+                (ctx, query) -> strategy,
+                0,
+                between(1, 4),
+                ctx -> ScoreMode.COMPLETE_NO_SCORES,
+                LuceneSliceQueue.LeafSplitGuard.NEVER,
+                between(1, 50)
+            );
+            Set<Weight> weights = Collections.newSetFromMap(new IdentityHashMap<>());
+            Map<Object, List<PartialLeafReaderContext>> partsByRange = new HashMap<>();
+            for (LuceneSlice slice = queue.nextSlice(null); slice != null; slice = queue.nextSlice(slice)) {
+                weights.add(slice.weight());
+                assertThat(TsidRangeQuery.requiredRange(slice.weight().getQuery()), nullValue());
+                partsByRange.computeIfAbsent(slice.tags().getFirst(), k -> new ArrayList<>()).addAll(slice.leaves());
+            }
+            assertThat(strategy.toString(), weights, hasSize(1));
+            for (int i = 0; i <= ranges; i++) {
+                for (LeafReaderContext leaf : leaves) {
+                    String description = strategy + ": range " + i + " of leaf " + leaf.ord;
+                    TsidRangeQuery.DocRange expected = rangeQueries.get(i).docRange(leaf);
+                    List<PartialLeafReaderContext> parts = partsByRange.getOrDefault(i, List.of())
+                        .stream()
                         .filter(p -> p.leafReaderContext() == leaf)
                         .sorted(Comparator.comparingInt(PartialLeafReaderContext::minDoc))
                         .toList();
                     if (expected.isEmpty()) {
-                        assertThat("range " + i + " of leaf " + leaf.ord, parts, empty());
+                        assertThat(description, parts, empty());
                         continue;
                     }
-                    assertThat("range " + i + " of leaf " + leaf.ord, parts, not(empty()));
-                    assertThat(parts.getFirst().minDoc(), equalTo(expected.minDoc()));
-                    assertThat(parts.getLast().maxDoc(), equalTo(expected.maxDoc()));
+                    assertThat(description, parts, not(empty()));
+                    assertThat(description, parts.getFirst().minDoc(), equalTo(expected.minDoc()));
+                    assertThat(description, parts.getLast().maxDoc(), equalTo(expected.maxDoc()));
                     for (int p = 1; p < parts.size(); p++) {
-                        assertThat(parts.get(p).minDoc(), equalTo(parts.get(p - 1).maxDoc()));
+                        assertThat(description, parts.get(p).minDoc(), equalTo(parts.get(p - 1).maxDoc()));
                     }
                 }
             }
-            // The partitioner resolved each (range, leaf) once; the searches above would reuse it.
-            assertThat(steps.status().leaves(), equalTo((long) (ranges + 1) * index.reader.leaves().size()));
+            // The queue resolved each (range, leaf) once; the checks above reused it.
+            assertThat(steps.status().leaves(), equalTo((long) (ranges + 1) * leaves.size()));
         }
     }
 

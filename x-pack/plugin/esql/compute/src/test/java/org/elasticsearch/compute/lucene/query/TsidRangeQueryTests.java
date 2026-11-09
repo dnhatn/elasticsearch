@@ -17,8 +17,13 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScoreMode;
@@ -26,6 +31,7 @@ import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortedNumericSortField;
+import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.tests.util.TestUtil;
 import org.apache.lucene.util.BytesRef;
@@ -46,6 +52,7 @@ import java.util.TreeSet;
 
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.sameInstance;
 
 /**
  * Checks {@link TsidRangeQuery} against a scan of the {@code _tsid} doc values, on indices written with and without the
@@ -278,5 +285,42 @@ public class TsidRangeQueryTests extends ESTestCase {
         assertFalse(new TsidRangeQuery(a, b, steps).equals(new TsidRangeQuery(a, null, steps)));
         assertFalse(new TsidRangeQuery(a, b, steps).equals(new TsidRangeQuery(null, b, steps)));
         assertThat(new TsidRangeQuery(null, null, steps).toString(), equalTo("_tsid:[* TO *)"));
+    }
+
+    public void testStrip() {
+        TsidRangeQuery range = new TsidRangeQuery(new BytesRef("a"), new BytesRef("b"), new TsidRangeQuery.Steps());
+        Query term = new TermQuery(new Term("f", "v"));
+        Query other = new TermQuery(new Term("f", "w"));
+        assertThat(TsidRangeQuery.strip(range), equalTo(new MatchAllDocsQuery()));
+        assertThat(TsidRangeQuery.strip(new ConstantScoreQuery(range)), equalTo(new ConstantScoreQuery(new MatchAllDocsQuery())));
+        assertThat(TsidRangeQuery.strip(new BoostQuery(range, 2f)), equalTo(new BoostQuery(new MatchAllDocsQuery(), 2f)));
+        assertThat(
+            TsidRangeQuery.strip(
+                new BooleanQuery.Builder().add(term, BooleanClause.Occur.MUST).add(range, BooleanClause.Occur.FILTER).build()
+            ),
+            equalTo(new BooleanQuery.Builder().add(term, BooleanClause.Occur.MUST).build())
+        );
+        assertThat(
+            TsidRangeQuery.strip(
+                new BooleanQuery.Builder().add(range, BooleanClause.Occur.FILTER).add(other, BooleanClause.Occur.MUST_NOT).build()
+            ),
+            equalTo(new BooleanQuery.Builder().add(other, BooleanClause.Occur.MUST_NOT).build())
+        );
+        Query nested = new BooleanQuery.Builder().add(
+            new BooleanQuery.Builder().add(term, BooleanClause.Occur.FILTER).add(range, BooleanClause.Occur.FILTER).build(),
+            BooleanClause.Occur.MUST
+        ).add(other, BooleanClause.Occur.SHOULD).build();
+        assertThat(
+            TsidRangeQuery.strip(nested),
+            equalTo(
+                new BooleanQuery.Builder().add(
+                    new BooleanQuery.Builder().add(term, BooleanClause.Occur.FILTER).build(),
+                    BooleanClause.Occur.MUST
+                ).add(other, BooleanClause.Occur.SHOULD).build()
+            )
+        );
+        Query noRange = new BooleanQuery.Builder().add(term, BooleanClause.Occur.MUST).add(range, BooleanClause.Occur.MUST_NOT).build();
+        assertThat(TsidRangeQuery.strip(noRange), sameInstance(noRange));
+        assertThat(TsidRangeQuery.strip(term), sameInstance(term));
     }
 }
