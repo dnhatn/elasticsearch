@@ -82,7 +82,6 @@ public final class ParallelHashAggregationOperator implements Operator {
     private final ExchangeBuffer in;
     private int lastPendingPages = 0;
     private boolean finishCalled = false;
-    private final List<PartitionedAggregationBlock> partitionedAggregationBlocks;
 
     private final AtomicInteger pendingSplits;
     private final SubscribableListener<Void> splitsDone = new SubscribableListener<>();
@@ -117,7 +116,7 @@ public final class ParallelHashAggregationOperator implements Operator {
         this.partitionKeysThreshold = config.partitionKeysThreshold();
         this.workers = new Worker[numWorkers];
         this.workerStatuses = new AtomicReferenceArray<>(numWorkers + 1);
-        this.partitions = new PartitionedHashAggregations(mainDriverContext.blockFactory().parent().breaker());
+        this.partitions = new PartitionedHashAggregations(mainDriverContext.blockFactory().parent().breaker(), operator::spawnWorker);
         this.pendingSplits = new AtomicInteger(numWorkers);
         boolean success = false;
         try {
@@ -135,8 +134,12 @@ public final class ParallelHashAggregationOperator implements Operator {
                 workers[w] = new Worker(w, operator.spawnWorker());
             }
             this.partitionedBlocksReceived += operator.partitionedAggregationBlocks.size();
-            this.partitionedAggregationBlocks = new ArrayList<>(operator.partitionedAggregationBlocks);
-            operator.partitionedAggregationBlocks.clear();
+            try {
+                partitions.addPartitionedBlocks(operator.partitionedAggregationBlocks);
+            } finally {
+                Releasables.close(operator.partitionedAggregationBlocks);
+                operator.partitionedAggregationBlocks.clear();
+            }
             success = true;
         } finally {
             if (success == false) {
@@ -161,9 +164,12 @@ public final class ParallelHashAggregationOperator implements Operator {
         }
         if (page.getBlockCount() == 1 && page.getBlock(0) instanceof PartitionedAggregationBlock pb) {
             partitionedBlocksReceived++;
-            pb.mustIncRef();
-            partitionedAggregationBlocks.add(pb);
-            page.close();
+            try {
+                partitions.addPartitionedBlocks(List.of(pb));
+            } finally {
+                page.close();
+            }
+            scheduleWorker(workers[0]);
             return;
         }
         page.allowPassingToDifferentDriver();
@@ -224,12 +230,6 @@ public final class ParallelHashAggregationOperator implements Operator {
         long nanoStart = System.nanoTime();
         if (hasFailure() || finishCalled) {
             return;
-        }
-        try {
-            partitions.addPartitionedBlocks(partitionedAggregationBlocks);
-        } finally {
-            Releasables.close(partitionedAggregationBlocks);
-            partitionedAggregationBlocks.clear();
         }
         finishCalled = true;
         in.finish(false);
@@ -326,8 +326,6 @@ public final class ParallelHashAggregationOperator implements Operator {
             out.finish(true);
             releaseWorkers();
             partitions.close();
-            Releasables.close(partitionedAggregationBlocks);
-            partitionedAggregationBlocks.clear();
         }
     }
 
@@ -386,9 +384,12 @@ public final class ParallelHashAggregationOperator implements Operator {
                         Page p;
                         while ((p = in.pollPage()) != null) {
                             worker.processOnePage(p);
+                            foldWhileInputOpen(false);
                         }
                         if (in.isFinished()) {
                             worker.splitLastInput();
+                        } else {
+                            foldWhileInputOpen(true);
                         }
                         worker.updateStatus();
                     });
@@ -398,6 +399,16 @@ public final class ParallelHashAggregationOperator implements Operator {
                     worker.unlock();
                 }
                 if (in.noMoreInputs() == false) {
+                    return;
+                }
+            }
+        }
+
+        /** Once input ends, emit merges the same partitions in parallel right away, so a fold then would only delay it. */
+        private void foldWhileInputOpen(boolean untilNoneDue) {
+            assert worker.lock.isHeldByCurrentThread() : "a fold must finish before this worker's last split starts emit";
+            while (in.noMoreInputs() == false && partitions.maybeFold()) {
+                if (untilNoneDue == false) {
                     return;
                 }
             }

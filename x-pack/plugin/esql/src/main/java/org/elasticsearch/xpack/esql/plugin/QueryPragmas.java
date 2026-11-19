@@ -22,6 +22,7 @@ import org.elasticsearch.compute.operator.exchange.ExchangeSourceHandler;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.mapper.MappedFieldType;
+import org.elasticsearch.monitor.jvm.JvmInfo;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.planner.PlannerSettings;
@@ -82,6 +83,18 @@ public final class QueryPragmas implements Writeable {
     public static final Setting<Boolean> TIME_SERIES_SINGLE_PASS = Setting.boolSetting("time_series_single_pass", true);
 
     public static final Setting<Boolean> TIME_SERIES_REDUCE_PER_INDEX = Setting.boolSetting("time_series_reduce_per_index", false);
+
+    /**
+     * Coordinator memory one {@code _tsid} split may hold: 3% of the heap, at least 100mb.
+     */
+    public static final Setting<ByteSizeValue> TIME_SERIES_SPLIT_MEMORY = Setting.memorySizeSetting(
+        "time_series_split_memory",
+        s -> ByteSizeValue.ofBytes(
+            Math.max(ByteSizeValue.ofMb(100).getBytes(), JvmInfo.jvmInfo().getMem().getHeapMax().getBytes() * 3L / 100)
+        ).getStringRep()
+    );
+
+    public static final Setting<Integer> TIME_SERIES_MAX_SPLITS = Setting.intSetting("time_series_max_splits", 256, 1);
 
     public static final Setting<Boolean> SINGLE_NODE_OPTIMIZATIONS = Setting.boolSetting("single_node_optimizations", true);
 
@@ -298,7 +311,9 @@ public final class QueryPragmas implements Writeable {
         SINGLE_NODE_OPTIMIZATIONS,
         TIME_SERIES_SINGLE_PASS,
         TIME_SERIES_REDUCE_PER_INDEX,
-        FETCH_PHASE
+        FETCH_PHASE,
+        TIME_SERIES_SPLIT_MEMORY,
+        TIME_SERIES_MAX_SPLITS
     ).map(Setting::getKey).toList();
 
     private final Settings settings;
@@ -424,6 +439,14 @@ public final class QueryPragmas implements Writeable {
      */
     public boolean timeSeriesSinglePass() {
         return TIME_SERIES_SINGLE_PASS.get(settings);
+    }
+
+    public ByteSizeValue timeSeriesSplitMemory() {
+        return TIME_SERIES_SPLIT_MEMORY.get(settings);
+    }
+
+    public int timeSeriesMaxSplits() {
+        return TIME_SERIES_MAX_SPLITS.get(settings);
     }
 
     /**

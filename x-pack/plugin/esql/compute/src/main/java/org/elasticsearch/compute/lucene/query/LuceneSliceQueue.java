@@ -275,6 +275,10 @@ public final class LuceneSliceQueue {
         return totalSlices;
     }
 
+    LuceneSlice slice(int index) {
+        return slices.get(index);
+    }
+
     /**
      * Strategy used to partition each shard in this queue.
      */

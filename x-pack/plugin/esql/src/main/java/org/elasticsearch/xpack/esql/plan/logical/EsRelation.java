@@ -10,6 +10,8 @@ import org.elasticsearch.TransportVersion;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.compute.lucene.query.TsidPrefixRange;
+import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.SliceSelection;
 import org.elasticsearch.xpack.esql.core.expression.Attribute;
@@ -37,6 +39,7 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
 
     private static final TransportVersion SPLIT_INDICES = TransportVersion.fromName("esql_es_relation_add_split_indices");
     public static final TransportVersion SLICES = TransportVersion.fromName("esql_es_relation_slices");
+    public static final TransportVersion TSID_SPLITS = TransportVersion.fromName("esql_tsid_splits");
 
     public static final NamedWriteableRegistry.Entry ENTRY = new NamedWriteableRegistry.Entry(
         LogicalPlan.class,
@@ -61,6 +64,8 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
      * The slices this relation reads, recorded by {@code SelectSlicesFromFilter} from a filter that stays in the plan.
      */
     private final SliceSelection slices;
+    @Nullable
+    private final TsidPrefixRange tsidRange;
 
     public EsRelation(
         Source source,
@@ -84,8 +89,23 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
         List<Attribute> attributes,
         SliceSelection slices
     ) {
+        this(source, indexPattern, indexMode, originalIndices, concreteIndices, indexProperties, attributes, slices, null);
+    }
+
+    public EsRelation(
+        Source source,
+        String indexPattern,
+        IndexMode indexMode,
+        Map<String, List<String>> originalIndices,
+        Map<String, List<String>> concreteIndices,
+        Map<String, IndexProperties> indexProperties,
+        List<Attribute> attributes,
+        SliceSelection slices,
+        @Nullable TsidPrefixRange tsidRange
+    ) {
         super(source);
         this.slices = Objects.requireNonNull(slices);
+        this.tsidRange = tsidRange;
         this.indexPattern = indexPattern;
         this.indexMode = indexMode;
         this.originalIndices = originalIndices;
@@ -112,7 +132,20 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
         SliceSelection slices = in.getTransportVersion().supports(SLICES)
             ? SliceSelection.fromSearchSlice(in.readOptionalString())
             : SliceSelection.UNSPECIFIED;
-        return new EsRelation(source, indexPattern, indexMode, originalIndices, concreteIndices, indexProperties, attributes, slices);
+        TsidPrefixRange tsidRange = in.getTransportVersion().supports(TSID_SPLITS)
+            ? in.readOptional(i -> new TsidPrefixRange(i.readInt(), i.readInt(), i.readInt()))
+            : null;
+        return new EsRelation(
+            source,
+            indexPattern,
+            indexMode,
+            originalIndices,
+            concreteIndices,
+            indexProperties,
+            attributes,
+            slices,
+            tsidRange
+        );
     }
 
     @Override
@@ -129,6 +162,13 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
         if (out.getTransportVersion().supports(SLICES)) {
             // A node that cannot read the slices reads every slice, which is safe: the filter they come from is in the plan.
             out.writeOptionalString(slices.toSearchSlice());
+        }
+        if (out.getTransportVersion().supports(TSID_SPLITS)) {
+            out.writeOptional((o, r) -> {
+                o.writeInt(r.prefixBits());
+                o.writeInt(r.lower());
+                o.writeInt(r.upper());
+            }, tsidRange);
         }
     }
 
@@ -148,7 +188,8 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
             concreteIndices,
             indexProperties,
             attrs,
-            slices
+            slices,
+            tsidRange
         );
     }
 
@@ -176,6 +217,11 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
         return slices;
     }
 
+    @Nullable
+    public TsidPrefixRange tsidRange() {
+        return tsidRange;
+    }
+
     @Override
     public List<Attribute> output() {
         return attrs;
@@ -194,7 +240,7 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
 
     @Override
     public int hashCode() {
-        return Objects.hash(indexPattern, indexMode, originalIndices, concreteIndices, indexProperties, attrs, slices);
+        return Objects.hash(indexPattern, indexMode, originalIndices, concreteIndices, indexProperties, attrs, slices, tsidRange);
     }
 
     @Override
@@ -214,7 +260,8 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
             && Objects.equals(concreteIndices, other.concreteIndices)
             && Objects.equals(indexProperties, other.indexProperties)
             && Objects.equals(attrs, other.attrs)
-            && Objects.equals(slices, other.slices);
+            && Objects.equals(slices, other.slices)
+            && Objects.equals(tsidRange, other.tsidRange);
     }
 
     @Override
@@ -225,6 +272,9 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
         }
         if (slices.isRestricted()) {
             sb.append("[slice=").append(slices.toSearchSlice()).append(']');
+        }
+        if (tsidRange != null) {
+            sb.append("[tsid=").append(tsidRange.lower()).append("..").append(tsidRange.upper()).append(']');
         }
         // The concrete indices a pattern resolved to, each routed through the index mapper. Rendered
         // in both modes — useful when debugging from a failure log. NOTE: this is NEW under the
@@ -266,7 +316,17 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
     }
 
     public EsRelation withAttributes(List<Attribute> newAttributes) {
-        return new EsRelation(source(), indexPattern, indexMode, originalIndices, concreteIndices, indexProperties, newAttributes, slices);
+        return new EsRelation(
+            source(),
+            indexPattern,
+            indexMode,
+            originalIndices,
+            concreteIndices,
+            indexProperties,
+            newAttributes,
+            slices,
+            tsidRange
+        );
     }
 
     public EsRelation withAdditionalAttributes(List<? extends Attribute> additionalAttributes) {
@@ -284,10 +344,44 @@ public class EsRelation extends LeafPlan implements ClassifiedAs.Index {
     }
 
     public EsRelation withSlices(SliceSelection newSlices) {
-        return new EsRelation(source(), indexPattern, indexMode, originalIndices, concreteIndices, indexProperties, attrs, newSlices);
+        return new EsRelation(
+            source(),
+            indexPattern,
+            indexMode,
+            originalIndices,
+            concreteIndices,
+            indexProperties,
+            attrs,
+            newSlices,
+            tsidRange
+        );
+    }
+
+    public EsRelation withTsidRange(TsidPrefixRange newTsidRange) {
+        return new EsRelation(
+            source(),
+            indexPattern,
+            indexMode,
+            originalIndices,
+            concreteIndices,
+            indexProperties,
+            attrs,
+            slices,
+            newTsidRange
+        );
     }
 
     public EsRelation withIndexMode(IndexMode indexMode) {
-        return new EsRelation(source(), indexPattern, indexMode, originalIndices, concreteIndices, indexProperties, attrs, slices);
+        return new EsRelation(
+            source(),
+            indexPattern,
+            indexMode,
+            originalIndices,
+            concreteIndices,
+            indexProperties,
+            attrs,
+            slices,
+            tsidRange
+        );
     }
 }

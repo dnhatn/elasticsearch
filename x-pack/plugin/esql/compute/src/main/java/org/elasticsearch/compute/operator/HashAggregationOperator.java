@@ -21,7 +21,9 @@ import org.elasticsearch.compute.aggregation.GroupingAggregatorEvaluationContext
 import org.elasticsearch.compute.aggregation.GroupingAggregatorFunction;
 import org.elasticsearch.compute.aggregation.blockhash.BlockHash;
 import org.elasticsearch.compute.aggregation.blockhash.PartitionedBlockHash;
+import org.elasticsearch.compute.aggregation.blockhash.TimeSeriesBlockHash;
 import org.elasticsearch.compute.data.Block;
+import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.IntArrayBlock;
 import org.elasticsearch.compute.data.IntBigArrayBlock;
 import org.elasticsearch.compute.data.IntVector;
@@ -204,6 +206,7 @@ public class HashAggregationOperator implements Operator {
         private TopAggregation topAggregation;
         private boolean allowPartitionedOutput;
         private ParallelConfig parallelConfig;
+        private boolean timeSeriesGroups;
 
         public Builder groups(List<BlockHash.GroupSpec> groups) {
             this.groups = groups;
@@ -256,6 +259,15 @@ public class HashAggregationOperator implements Operator {
             return this;
         }
 
+        /**
+         * The groups are a series key, such as packed dimensions, and a time bucket. {@link TimeSeriesBlockHash} stores each series key
+         * once rather than once per bucket and partitions by it.
+         */
+        public Builder timeSeriesGroups(boolean timeSeriesGroups) {
+            this.timeSeriesGroups = timeSeriesGroups;
+            return this;
+        }
+
         public Factory build() {
             return new Factory(this);
         }
@@ -273,6 +285,7 @@ public class HashAggregationOperator implements Operator {
         private final TopAggregation topAggregation;
         private final ParallelConfig parallelConfig;
         private final boolean allowPartitionedOutput;
+        private final boolean timeSeriesGroups;
 
         protected Factory(Builder builder) {
             this.groups = requireNonNull(builder.groups, "groups");
@@ -286,6 +299,40 @@ public class HashAggregationOperator implements Operator {
             this.topAggregation = builder.topAggregation;
             this.parallelConfig = builder.parallelConfig;
             this.allowPartitionedOutput = builder.allowPartitionedOutput;
+            this.timeSeriesGroups = builder.timeSeriesGroups;
+            if (timeSeriesGroups) {
+                timeSeriesKeyIndex();
+            }
+        }
+
+        private int timeSeriesKeyIndex() {
+            if (groups.size() == 2) {
+                ElementType first = groups.get(0).elementType();
+                ElementType second = groups.get(1).elementType();
+                if (first == ElementType.BYTES_REF && second == ElementType.LONG) {
+                    return 0;
+                }
+                if (first == ElementType.LONG && second == ElementType.BYTES_REF) {
+                    return 1;
+                }
+            }
+            throw new IllegalArgumentException("time-series groups must be a BYTES_REF key and a LONG bucket, got " + groups);
+        }
+
+        private BlockHash buildBlockHash(DriverContext dc) {
+            if (timeSeriesGroups) {
+                int key = timeSeriesKeyIndex();
+                int bucket = 1 - key;
+                return new TimeSeriesBlockHash(
+                    groups.get(key).channel(),
+                    groups.get(bucket).channel(),
+                    key == 1,
+                    false,
+                    true,
+                    dc.blockFactory()
+                );
+            }
+            return BlockHash.build(groups, dc.blockFactory(), aggregationBatchSize, false);
         }
 
         @Override
@@ -310,7 +357,7 @@ public class HashAggregationOperator implements Operator {
             return new HashAggregationOperator(
                 aggregatorMode,
                 aggregators,
-                dc -> wrapBlockHash(dc, BlockHash.build(groups, dc.blockFactory(), aggregationBatchSize, false)),
+                dc -> wrapBlockHash(dc, buildBlockHash(dc)),
                 partialEmitKeysThreshold,
                 partialEmitUniquenessThreshold,
                 maxPageSize,

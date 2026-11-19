@@ -9,6 +9,7 @@ package org.elasticsearch.xpack.esql.plugin;
 
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.PlainActionFuture;
+import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.RunOnce;
 import org.elasticsearch.compute.data.Page;
@@ -18,6 +19,7 @@ import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.compute.operator.exchange.ExchangeSink;
 import org.elasticsearch.compute.operator.exchange.ExchangeSource;
 import org.elasticsearch.compute.test.TestBlockFactory;
+import org.elasticsearch.core.Releasable;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.TaskCancelHelper;
 import org.elasticsearch.tasks.TaskCancelledException;
@@ -56,6 +58,7 @@ import static org.elasticsearch.xpack.esql.EsqlTestUtils.configuration;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
@@ -292,7 +295,7 @@ public class SubPlansExecutorTests extends ESTestCase {
         var injected = new RuntimeException("injected synchronous executePlan failure");
         stubRunComputeSuccess();
         doThrow(injected).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         var future = new PlainActionFuture<Result>();
         buildAndExecute(oneMergeNLeaves(2), future);
@@ -323,7 +326,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             }
             throw injected;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         var future = new PlainActionFuture<Result>();
         buildAndExecute(oneMergeNLeaves(2), new QueryPragmas(Settings.builder().put("branch_parallel_degree", 1).build()), future);
@@ -354,7 +357,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             });
             return null;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         var future = new PlainActionFuture<Result>();
         buildAndExecute(oneMergeNLeaves(3), new QueryPragmas(Settings.builder().put("branch_parallel_degree", 1).build()), future);
@@ -462,6 +465,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             any(),
             any(),
             any(),
+            any(),
             any()
         );
         assertBusy(() -> assertTrue("all exchanges must be deregistered after pre-dispatch STOP", exchangeFullyEmpty()));
@@ -509,7 +513,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             }
             return null;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         var future = new PlainActionFuture<Result>();
         buildAndExecute(twoMergesThreeLeaves(), new QueryPragmas(Settings.builder().put("branch_parallel_degree", 2).build()), future);
@@ -586,7 +590,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             listener.onResponse(new Result(List.of(), List.of(), null, cfg, DriverCompletionInfo.EMPTY, null, null));
             return null;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         StartedQuery started = startQuery(
             twoMergesThreeLeaves(),
@@ -643,7 +647,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             listener.onResponse(new Result(List.of(), List.of(), null, cfg, DriverCompletionInfo.EMPTY, null, null));
             return null;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         StartedQuery started = startQuery(
             threeMergesSixLeaves(),
@@ -760,7 +764,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             listener.onResponse(new Result(List.of(), List.of(), null, cfg, DriverCompletionInfo.EMPTY, null, null));
             return null;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         var future1 = new PlainActionFuture<Result>();
         buildAndExecute(oneMergeNLeaves(2), future1);
@@ -815,6 +819,148 @@ public class SubPlansExecutorTests extends ESTestCase {
         segmentProfiles.forEach((desc, profile) -> assertNull("segment [" + desc + "] must have null profile", profile));
     }
 
+    // data permits and coordinator slots
+
+    /**
+     * With {@code branch_parallel_degree=2} a leaf returns its permit once its data completes, so the next leaf reads data while the two
+     * earlier leaves still hold the coordinator slots. That leaf's coordinator starts only once one of those slots is released.
+     */
+    public void testNextLeafReadsDataWhileCoordinatorSlotsAreTaken() throws Exception {
+        stubRunComputeSuccess();
+        int numLeaves = 4;
+        AtomicInteger dispatched = new AtomicInteger();
+        BranchPhases[] phases = new BranchPhases[numLeaves];
+        Releasable[] slots = new Releasable[numLeaves];
+        Runnable[] completions = new Runnable[numLeaves];
+        doAnswer(inv -> {
+            int leaf = dispatched.getAndIncrement();
+            Supplier<ExchangeSink> sinkSupplier = inv.getArgument(9);
+            ActionListener<Result> listener = inv.getArgument(8);
+            Configuration cfg = inv.getArgument(4);
+            completions[leaf] = () -> {
+                sinkSupplier.get().finish();
+                listener.onResponse(new Result(List.of(), List.of(), null, cfg, DriverCompletionInfo.EMPTY, null, null));
+            };
+            phases[leaf] = inv.getArgument(15);
+            phases[leaf].startCoordinator(ActionListener.wrap(slot -> slots[leaf] = slot, e -> { throw new AssertionError(e); }));
+            return null;
+        }).when(computeService)
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        var future = new PlainActionFuture<Result>();
+        buildAndExecute(oneMergeNLeaves(numLeaves), new QueryPragmas(Settings.builder().put("branch_parallel_degree", 2).build()), future);
+        assertThat(dispatched.get(), equalTo(2));
+        assertNotNull(slots[0]);
+        assertNotNull(slots[1]);
+
+        phases[0].dataCompleted();
+        assertThat("leaf 0 returns its permit when its data completes", dispatched.get(), equalTo(3));
+        assertNull("both coordinator slots are taken", slots[2]);
+
+        slots[0].close();
+        completions[0].run();
+        assertNotNull("leaf 0's slot goes to leaf 2", slots[2]);
+        assertThat("leaf 0 returned its permit already", dispatched.get(), equalTo(3));
+
+        slots[1].close();
+        completions[1].run();
+        assertThat("leaf 1 never reported its data, so it returns its permit on completion", dispatched.get(), equalTo(4));
+        assertNotNull(slots[3]);
+
+        for (int leaf = 2; leaf < numLeaves; leaf++) {
+            slots[leaf].close();
+            completions[leaf].run();
+        }
+        future.get(10, TimeUnit.SECONDS);
+        assertTrue(exchangeFullyEmpty());
+    }
+
+    /**
+     * Leaves report their data, complete, or fail on random threads, some while their coordinator is still queued. At most
+     * {@code branch_parallel_degree} leaves read data, at most that many run their coordinator, and every queued coordinator still starts
+     * and releases its slot.
+     */
+    public void testCoordinatorSlotsAreReleasedUnderRandomCompletion() throws Exception {
+        stubRunComputeSuccess();
+        int degree = between(1, 3);
+        int numLeaves = between(4, 16);
+        boolean[] failsBeforeCoordinator = new boolean[numLeaves];
+        boolean[] failsWhileCoordinatorQueued = new boolean[numLeaves];
+        boolean[] reportsData = new boolean[numLeaves];
+        for (int i = 0; i < numLeaves; i++) {
+            failsBeforeCoordinator[i] = between(0, 9) == 0;
+            failsWhileCoordinatorQueued[i] = failsBeforeCoordinator[i] == false && between(0, 9) == 0;
+            reportsData[i] = randomBoolean();
+        }
+        AtomicInteger dispatched = new AtomicInteger();
+        AtomicInteger readingData = new AtomicInteger();
+        AtomicInteger maxReadingData = new AtomicInteger();
+        AtomicInteger coordinators = new AtomicInteger();
+        AtomicInteger maxCoordinators = new AtomicInteger();
+        AtomicInteger queuedCoordinators = new AtomicInteger();
+        AtomicInteger finishedCoordinators = new AtomicInteger();
+        var executor = threadPool.generic();
+        doAnswer(inv -> {
+            int leaf = dispatched.getAndIncrement();
+            BranchPhases phases = inv.getArgument(15);
+            Supplier<ExchangeSink> sinkSupplier = inv.getArgument(9);
+            ActionListener<Result> listener = inv.getArgument(8);
+            Configuration cfg = inv.getArgument(4);
+            maxReadingData.accumulateAndGet(readingData.incrementAndGet(), Math::max);
+            // decremented before the permit can return, so a leaf dispatched by that return is never counted twice
+            Runnable stopReading = new RunOnce(readingData::decrementAndGet);
+            if (failsBeforeCoordinator[leaf]) {
+                stopReading.run();
+                listener.onFailure(new RuntimeException("injected"));
+                return null;
+            }
+            SubscribableListener<Void> dataDone = new SubscribableListener<>();
+            queuedCoordinators.incrementAndGet();
+            phases.startCoordinator(ActionListener.wrap(slot -> {
+                maxCoordinators.accumulateAndGet(coordinators.incrementAndGet(), Math::max);
+                dataDone.addListener(ActionListener.running(() -> executor.execute(() -> {
+                    coordinators.decrementAndGet();
+                    finishedCoordinators.incrementAndGet();
+                    slot.close();
+                    if (failsWhileCoordinatorQueued[leaf] == false) {
+                        sinkSupplier.get().finish();
+                        listener.onResponse(new Result(List.of(), List.of(), null, cfg, DriverCompletionInfo.EMPTY, null, null));
+                    }
+                })));
+            }, e -> { throw new AssertionError(e); }));
+            executor.execute(() -> {
+                stopReading.run();
+                if (reportsData[leaf]) {
+                    phases.dataCompleted();
+                }
+                dataDone.onResponse(null);
+            });
+            if (failsWhileCoordinatorQueued[leaf]) {
+                stopReading.run();
+                listener.onFailure(new RuntimeException("injected"));
+            }
+            return null;
+        }).when(computeService)
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        var future = new PlainActionFuture<Result>();
+        buildAndExecute(
+            oneMergeNLeaves(numLeaves),
+            new QueryPragmas(Settings.builder().put("branch_parallel_degree", degree).build()),
+            future
+        );
+        try {
+            future.get(30, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            assertThat(e.getCause().getMessage(), equalTo("injected"));
+        }
+        assertThat(dispatched.get(), equalTo(numLeaves));
+        assertBusy(() -> assertThat(finishedCoordinators.get(), equalTo(queuedCoordinators.get())));
+        assertThat(maxReadingData.get(), lessThanOrEqualTo(degree));
+        assertThat(maxCoordinators.get(), lessThanOrEqualTo(degree));
+        assertBusy(() -> assertTrue(exchangeFullyEmpty()));
+    }
+
     // helpers
 
     /**
@@ -845,7 +991,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             listener.onResponse(new Result(List.of(), List.of(), null, cfg, DriverCompletionInfo.EMPTY, null, null));
             return null;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     /**
@@ -866,7 +1012,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             }
             return null;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     /**
@@ -957,7 +1103,7 @@ public class SubPlansExecutorTests extends ESTestCase {
             parked.countDown();
             return null;
         }).when(computeService)
-            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+            .executePlan(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     private void completeWhenSourceFinished(ExchangeSource source, Runnable onDone) {

@@ -301,7 +301,7 @@ public final class BytesRefSwissHash extends SwissHash implements Accountable, B
     /**
      * Returns the partition index using bits that do not overlap with the lower 32 hash-slot bits or the top 7 control bits.
      */
-    private static int partition(long hash64) {
+    static int partition(long hash64) {
         return (int) (hash64 >>> Integer.SIZE) & PARTITION_MASK;
     }
 

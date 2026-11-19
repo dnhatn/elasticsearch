@@ -137,7 +137,7 @@ public record TimeSeriesStats(double seriesMillis, long startMillis, long endMil
         }
     }
 
-    private static long[] timestampRange(LeafReader reader, DateFieldMapper.Resolution resolution) throws IOException {
+    public static long[] timestampRange(LeafReader reader, DateFieldMapper.Resolution resolution) throws IOException {
         final long min;
         final long max;
         final DocValuesSkipper skipper = reader.getDocValuesSkipper(DataStream.TIMESTAMP_FIELD_NAME);

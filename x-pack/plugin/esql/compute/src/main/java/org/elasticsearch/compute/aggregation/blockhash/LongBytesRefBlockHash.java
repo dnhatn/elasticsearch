@@ -533,6 +533,9 @@ public final class LongBytesRefBlockHash extends PartitionedBlockHash {
 
     @Override
     public PartitionedHashKeys splitPartition(CircuitBreaker breaker, PartitionSplitter partitionSplitter) {
+        if (packedKeysHash != null) {
+            return new PartitionedHashKeysWithSeenNull(packedKeysHash.splitPartition(breaker, partitionSplitter), seenNulls);
+        }
         if (longIntHash != null
             && longIntHash.hash instanceof LongLongSwissHash longSwiss
             && bytesHash instanceof BytesRefSwissHash bytesSwiss) {

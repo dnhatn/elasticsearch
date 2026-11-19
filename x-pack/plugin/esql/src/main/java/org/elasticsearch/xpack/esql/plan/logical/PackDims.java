@@ -59,6 +59,11 @@ public class PackDims extends UnaryPlan {
         return new Alias(source, PACKED_GROUPING_NAME, packed);
     }
 
+    public static boolean isPacked(Attribute attribute) {
+        return attribute.dataType() == DataType.SOURCE
+            && (PACKED_GROUPING_NAME.equals(attribute.name()) || PACKED_FIELD_NAME.equals(attribute.name()));
+    }
+
     @Override
     protected AttributeSet computeReferences() {
         return AttributeSet.of(dims);

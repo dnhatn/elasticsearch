@@ -30,6 +30,7 @@ import org.elasticsearch.xpack.esql.core.expression.Expressions;
 import org.elasticsearch.xpack.esql.core.expression.FoldContext;
 import org.elasticsearch.xpack.esql.core.expression.NameId;
 import org.elasticsearch.xpack.esql.core.expression.NamedExpression;
+import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.evaluator.EvalMapper;
 import org.elasticsearch.xpack.esql.expression.Order;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.AggregateFunction;
@@ -41,6 +42,7 @@ import org.elasticsearch.xpack.esql.expression.function.aggregate.ToPartial;
 import org.elasticsearch.xpack.esql.expression.function.grouping.Categorize;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.InsertPartialWindowAggregates;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.local.ExternalSourceAggregatePushdown;
+import org.elasticsearch.xpack.esql.plan.logical.PackDims;
 import org.elasticsearch.xpack.esql.plan.physical.AggregateExec;
 import org.elasticsearch.xpack.esql.plan.physical.EsQueryExec;
 import org.elasticsearch.xpack.esql.plan.physical.EvalExec;
@@ -211,6 +213,7 @@ public abstract class AbstractPhysicalOperationProviders {
             if (aggregateExec instanceof TimeSeriesAggregateExec ts) {
                 operatorFactory = timeSeriesAggregatorOperatorFactory(
                     ts,
+                    source,
                     aggregatorMode,
                     aggregatorFactories,
                     groupSpecs.stream().map(GroupSpec::toHashGroupSpec).toList(),
@@ -235,6 +238,8 @@ public abstract class AbstractPhysicalOperationProviders {
                 HashAggregationOperator.TopAggregation topAggregation = extractTopAggregation(aggregateExec, context);
                 if (topAggregation != null) {
                     builder.topAggregation(topAggregation);
+                } else {
+                    builder.timeSeriesGroups(groupsByPackedDimsAndBucket(groupSpecs));
                 }
                 operatorFactory = builder.build();
             }
@@ -445,6 +450,29 @@ public abstract class AbstractPhysicalOperationProviders {
     }
 
     /**
+     * The second pass of a time-series aggregation groups by packed dimensions and a time bucket, like the first pass groups by
+     * {@code _tsid} and a time bucket.
+     */
+    private static boolean groupsByPackedDimsAndBucket(List<GroupSpec> groupSpecs) {
+        if (groupSpecs.size() != 2) {
+            return false;
+        }
+        GroupSpec first = groupSpecs.get(0);
+        GroupSpec second = groupSpecs.get(1);
+        if (first.topNDef() != null || second.topNDef() != null) {
+            return false;
+        }
+        return (PackDims.isPacked(first.attribute()) && isTimeBucket(second))
+            || (isTimeBucket(first) && PackDims.isPacked(second.attribute()));
+    }
+
+    /** Non-dimension groupings reach the second pass through VALUES, so they can be null or multivalued; a time bucket can't. */
+    private static boolean isTimeBucket(GroupSpec group) {
+        DataType type = group.attribute().dataType();
+        return type == DataType.DATETIME || type == DataType.DATE_NANOS;
+    }
+
+    /**
      * The input configuration of this group.
      *
      * @param channel The source channel of this group
@@ -543,6 +571,7 @@ public abstract class AbstractPhysicalOperationProviders {
 
     public abstract Operator.OperatorFactory timeSeriesAggregatorOperatorFactory(
         TimeSeriesAggregateExec ts,
+        PhysicalOperation source,
         AggregatorMode aggregatorMode,
         List<GroupingAggregator.Factory> aggregatorFactories,
         List<BlockHash.GroupSpec> groupSpecs,

@@ -96,6 +96,28 @@ public class ParallelHashAggregationOperatorTests extends ComputeTestCase {
         runTest(between(10 * 1024, 100 * 1000), randomBoolean(), randomBoolean(), driverContext.blockFactory(), driverContext(), config);
     }
 
+    /**
+     * Repeated keys make generations overlap, so ranges may fold while input is still arriving.
+     */
+    public void testFoldsRepeatedKeys() {
+        HashAggregationOperator.ParallelConfig config = new HashAggregationOperator.ParallelConfig(
+            randomWorkerExecutor(),
+            randomIntBetween(2, 32),
+            randomIntBetween(1, 1024),
+            randomIntBetween(256, 1024)
+        );
+        DriverContext driverContext = driverContext();
+        runTest(
+            between(50_000, 100_000),
+            between(40, 80),
+            randomBoolean(),
+            randomBoolean(),
+            driverContext.blockFactory(),
+            driverContext,
+            config
+        );
+    }
+
     public void testRejectionButOkay() {
         HashAggregationOperator.ParallelConfig config = new HashAggregationOperator.ParallelConfig(
             threadPool.executor(SMALL_TEST_EXECUTOR),
@@ -203,7 +225,7 @@ public class ParallelHashAggregationOperatorTests extends ComputeTestCase {
     /**
      * A worker that holds its lock when the driver closes the operator closes itself once its task ends, on its own
      * thread. The driver context parks the worker inside its first measurement until the operator is closed, and the
-     * worker's release is the only CPU time that passes on the fake clock.
+     * releases of the worker and the fold ranges' operators are the only CPU time that passes on the fake clock.
      */
     public void testWorkerClosedAfterOperatorIsInDriverCpu() {
         FakeCpuClock clock = new FakeCpuClock();
@@ -263,7 +285,8 @@ public class ParallelHashAggregationOperatorTests extends ComputeTestCase {
         PlainActionFuture<Void> asyncActionsDone = new PlainActionFuture<>();
         driverContext.waitForAsyncActions(asyncActionsDone);
         safeGet(asyncActionsDone);
-        assertThat(driverContext.cpuNanos(), equalTo(1000L));
+        // one release for the worker and one per fold range
+        assertThat(driverContext.cpuNanos(), equalTo((1 + PartitionedHashAggregations.FOLD_RANGES) * 1000L));
     }
 
     record Key(Long longValue, Integer intValue) {}
@@ -272,6 +295,18 @@ public class ParallelHashAggregationOperatorTests extends ComputeTestCase {
 
     DriverStatus runTest(
         int numValues,
+        boolean singlePass,
+        boolean allowPartitionedOutput,
+        BlockFactory sourceBlockFactory,
+        DriverContext driverContext,
+        HashAggregationOperator.ParallelConfig parallelConfig
+    ) {
+        return runTest(numValues, numValues * 2, singlePass, allowPartitionedOutput, sourceBlockFactory, driverContext, parallelConfig);
+    }
+
+    DriverStatus runTest(
+        int numValues,
+        int keyRange,
         boolean singlePass,
         boolean allowPartitionedOutput,
         BlockFactory sourceBlockFactory,
@@ -287,8 +322,8 @@ public class ParallelHashAggregationOperatorTests extends ComputeTestCase {
                 sums[v] = randomIntBetween(0, Integer.MAX_VALUE);
             }
             Key key = new Key(
-                nullKeys && randomInt(100) < 20 ? null : randomLongBetween(0, numValues * 2L),
-                nullKeys && randomInt(100) < 20 ? null : randomIntBetween(0, numValues * 2)
+                nullKeys && randomInt(100) < 20 ? null : randomLongBetween(0, keyRange),
+                nullKeys && randomInt(100) < 20 ? null : randomIntBetween(0, keyRange)
             );
             inputRows.add(new Row(key, sums));
         }

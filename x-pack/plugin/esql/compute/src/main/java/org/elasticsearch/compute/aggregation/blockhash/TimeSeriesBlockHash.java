@@ -50,6 +50,7 @@ public final class TimeSeriesBlockHash extends PartitionedBlockHash {
     private final LongLongHashTable finalHash;
     private final BytesRef scratch = new BytesRef();
     private final boolean trackTimestamp;
+    private final boolean routeByHash;
     private long minTimestamp = Long.MAX_VALUE;
     private long maxTimestamp = Long.MIN_VALUE;
 
@@ -60,11 +61,26 @@ public final class TimeSeriesBlockHash extends PartitionedBlockHash {
         boolean trackTimestamp,
         BlockFactory blockFactory
     ) {
+        this(tsidChannel, timestampChannel, reverseOutput, trackTimestamp, false, blockFactory);
+    }
+
+    /**
+     * @param routeByHash partition by the hash of the series key, for keys such as packed dimensions whose last byte isn't random
+     */
+    public TimeSeriesBlockHash(
+        int tsidChannel,
+        int timestampChannel,
+        boolean reverseOutput,
+        boolean trackTimestamp,
+        boolean routeByHash,
+        BlockFactory blockFactory
+    ) {
         super(blockFactory);
         this.tsidChannel = tsidChannel;
         this.timestampChannel = timestampChannel;
         this.reverseOutput = reverseOutput;
         this.trackTimestamp = trackTimestamp;
+        this.routeByHash = routeByHash;
         boolean success = false;
         try {
             this.tsidHash = HashImplFactory.newBytesRefHash(blockFactory);
@@ -104,7 +120,7 @@ public final class TimeSeriesBlockHash extends PartitionedBlockHash {
 
     private TimeSeriesPartitionedHash partitioned() {
         if (tsidHash instanceof BytesRefSwissHash bytes && finalHash instanceof LongLongSwissHash longlong) {
-            return new TimeSeriesPartitionedHash(bytes, longlong, blockFactory.bigArrays());
+            return new TimeSeriesPartitionedHash(bytes, longlong, blockFactory.bigArrays(), routeByHash);
         } else {
             throw new UnsupportedOperationException(getClass().getSimpleName() + " doesn't support partitioning");
         }

@@ -32,11 +32,17 @@ public final class TimeSeriesPartitionedHash implements PartitionedHashTable {
     private final BytesRefSwissHash tsidHash;
     private final LongLongSwissHash pairHash;
     private final BigArrays bigArrays;
+    private final boolean routeByHash;
 
-    public TimeSeriesPartitionedHash(BytesRefSwissHash tsidHash, LongLongSwissHash pairHash, BigArrays bigArrays) {
+    /**
+     * @param routeByHash route each series key by its hash instead of its last byte, which is already random for a {@code _tsid}
+     *                    but not for packed dimensions
+     */
+    public TimeSeriesPartitionedHash(BytesRefSwissHash tsidHash, LongLongSwissHash pairHash, BigArrays bigArrays, boolean routeByHash) {
         this.tsidHash = tsidHash;
         this.pairHash = pairHash;
         this.bigArrays = bigArrays;
+        this.routeByHash = routeByHash;
     }
 
     @Override
@@ -71,7 +77,9 @@ public final class TimeSeriesPartitionedHash implements PartitionedHashTable {
         final BytesRef scratch = new BytesRef();
         for (int i = 0; i < numTsids; i++) {
             tsids.get(i, scratch);
-            final int p = scratch.bytes[scratch.offset + scratch.length - 1] & PARTITION_MASK;
+            final int p = routeByHash
+                ? BytesRefSwissHash.partition(BytesRefSwissHash.hash64(scratch))
+                : scratch.bytes[scratch.offset + scratch.length - 1] & PARTITION_MASK;
             partitions[i] = (byte) p;
             mappedOrdinals[i] = Math.toIntExact(keys.tsidKeys[p].size());
             keys.tsidKeys[p].append(scratch);

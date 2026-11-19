@@ -20,6 +20,7 @@ import org.elasticsearch.xpack.esql.core.tree.NodeUtils;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 import org.elasticsearch.xpack.esql.io.stream.PlanStreamInput;
 import org.elasticsearch.xpack.esql.plan.logical.EsRelation;
+import org.elasticsearch.xpack.esql.querydsl.query.TsidPrefixRangeQueryBuilder;
 
 import java.io.IOException;
 import java.util.List;
@@ -42,7 +43,13 @@ public class EsSourceExec extends LeafExec implements DataSourceExec {
     private final QueryBuilder query;
 
     public EsSourceExec(EsRelation relation) {
-        this(relation.source(), relation.indexPattern(), relation.indexMode(), relation.output(), null);
+        this(
+            relation.source(),
+            relation.indexPattern(),
+            relation.indexMode(),
+            relation.output(),
+            relation.tsidRange() == null ? null : new TsidPrefixRangeQueryBuilder(relation.tsidRange())
+        );
     }
 
     public EsSourceExec(Source source, String indexPattern, IndexMode indexMode, List<Attribute> attributes, QueryBuilder query) {

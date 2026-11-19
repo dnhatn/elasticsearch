@@ -9,9 +9,11 @@ package org.elasticsearch.xpack.esql.plan.physical;
 
 import org.elasticsearch.compute.data.DocVector;
 import org.elasticsearch.compute.data.ElementType;
+import org.elasticsearch.core.Nullable;
 import org.elasticsearch.xpack.esql.EsqlIllegalArgumentException;
 import org.elasticsearch.xpack.esql.core.expression.Alias;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
+import org.elasticsearch.xpack.esql.core.expression.NameId;
 import org.elasticsearch.xpack.esql.core.expression.NamedExpression;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.PackDimsAgg;
@@ -62,10 +64,9 @@ public interface EstimatesRowSize {
 
         private int size(Expression expr, boolean countTextFieldAsKeyword) {
             if (plan != null && expr.dataType() == DataType.SOURCE && Alias.unwrap(expr) instanceof NamedExpression named) {
-                for (PackDimsExec packDims : plan.collect(PackDimsExec.class)) {
-                    if (packDims.packed().id().equals(named.id())) {
-                        return packDims.estimateRowSize();
-                    }
+                Integer packed = packedDimsSize(named.id());
+                if (packed != null) {
+                    return packed;
                 }
             }
             if (Alias.unwrap(expr) instanceof PackDimsAgg packDims) {
@@ -77,6 +78,23 @@ public interface EstimatesRowSize {
                 }
                 return EstimatesRowSize.estimateSize(dataType);
             }
+        }
+
+        @Nullable
+        private Integer packedDimsSize(NameId id) {
+            for (PhysicalPlan node : plan.collect(p -> p instanceof PackDimsExec || p instanceof AggregateExec)) {
+                if (node instanceof PackDimsExec packDims && packDims.packed().id().equals(id)) {
+                    return packDims.estimateRowSize();
+                }
+                if (node instanceof AggregateExec aggregate) {
+                    for (NamedExpression agg : aggregate.aggregates()) {
+                        if (agg.id().equals(id) && Alias.unwrap(agg) instanceof PackDimsAgg packDims) {
+                            return packDims.estimateRowSize();
+                        }
+                    }
+                }
+            }
+            return null;
         }
 
         /**

@@ -18,6 +18,7 @@ import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchTransportService;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.action.support.ContextPreservingActionListener;
+import org.elasticsearch.action.support.RefCountingRunnable;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.client.internal.ParentTaskAssigningClient;
 import org.elasticsearch.cluster.RemoteException;
@@ -1304,7 +1305,8 @@ public class ComputeService {
                     planTimeProfile,
                     warnIndexCoordinatorOnce,
                     SiblingPlacement.SINGLE,
-                    maxResultSize
+                    maxResultSize,
+                    BranchPhases.NONE
                 );
                 case SubPlan.Merge merge -> new SubPlansExecutor(
                     this,
@@ -1380,7 +1382,8 @@ public class ComputeService {
         PlanTimeProfile planTimeProfile,
         Runnable warnIndexCoordinatorOnce,
         SiblingPlacement placement,
-        @Nullable ByteSizeValue maxResultSize
+        @Nullable ByteSizeValue maxResultSize,
+        BranchPhases phases
     ) {
         final long splitDiscoveryStart = System.nanoTime();
         ExternalPlanningReservation reservation = execInfo == null ? null : execInfo.externalPlanning();
@@ -1418,7 +1421,8 @@ public class ComputeService {
                     warnIndexCoordinatorOnce,
                     splitDiscoveryStart + waitedNanos,
                     placement,
-                    maxResultSize
+                    maxResultSize,
+                    phases
                 ),
                 releasing
             );
@@ -1536,7 +1540,8 @@ public class ComputeService {
         Runnable warnIndexCoordinatorOnce,
         long splitDiscoveryStart,
         SiblingPlacement placement,
-        @Nullable ByteSizeValue maxResultSize
+        @Nullable ByteSizeValue maxResultSize,
+        BranchPhases phases
     ) {
         final ExternalDistributionResult distributionResult;
         try {
@@ -1568,16 +1573,16 @@ public class ComputeService {
         Map<String, OriginalIndices> clusterToConcreteIndices = getIndices(resolvedPlan, EsRelation::concreteIndices);
         boolean hasConcreteIndices = clusterToConcreteIndices.values().stream().anyMatch(indices -> indices.indices().length > 0);
         var coordinatorAndDataNode = PlannerUtils.breakPlanBetweenCoordinatorAndDataNode(resolvedPlan, configuration);
-        PhysicalPlan coordinatorPlan = coordinatorAndDataNode.v1();
+        final PhysicalPlan splitCoordinatorPlan = coordinatorAndDataNode.v1();
 
-        final PageStreamPublisher streamPublisher = coordinatorPlan instanceof StreamingOutputExec streaming
+        final PageStreamPublisher streamPublisher = splitCoordinatorPlan instanceof StreamingOutputExec streaming
             ? streaming.pageStream()
             : null;
-        if (exchangeSinkSupplier == null
-            && coordinatorPlan instanceof StreamingOutputExec == false
-            && coordinatorPlan instanceof OutputExec == false) {
-            coordinatorPlan = new OutputExec(coordinatorPlan, pageCollector);
-        }
+        final PhysicalPlan coordinatorPlan = exchangeSinkSupplier == null
+            && splitCoordinatorPlan instanceof StreamingOutputExec == false
+            && splitCoordinatorPlan instanceof OutputExec == false
+                ? new OutputExec(splitCoordinatorPlan, pageCollector)
+                : splitCoordinatorPlan;
 
         PhysicalPlan dataNodePlan = coordinatorAndDataNode.v2();
         if (dataNodePlan != null && dataNodePlan instanceof ExchangeSinkExec == false) {
@@ -1616,15 +1621,21 @@ public class ComputeService {
                 updateExecutionInfoAfterCoordinatorOnlyQuery(execInfo, exchangeSinkSupplier == null);
                 return new Result(resolvedPlan.output(), collectedPages, null, configuration, completionInfo, execInfo, null);
             }), execInfo::addFailedWork)) {
-                runCompute(
-                    rootTask,
-                    computeContext,
-                    coordinatorPlan,
-                    plannerSettings.get(),
-                    LocalPhysicalOptimization.ENABLED,
-                    distributionResult.coordinatorSplits(),
-                    planTimeProfile,
-                    computeListener.acquireCompute()
+                final ActionListener<DriverCompletionInfo> coordinatorListener = computeListener.acquireCompute();
+                phases.startCoordinator(
+                    ActionListener.wrap(
+                        slot -> runCompute(
+                            rootTask,
+                            computeContext,
+                            coordinatorPlan,
+                            plannerSettings.get(),
+                            LocalPhysicalOptimization.ENABLED,
+                            distributionResult.coordinatorSplits(),
+                            planTimeProfile,
+                            ActionListener.releaseAfter(coordinatorListener, slot)
+                        ),
+                        coordinatorListener::onFailure
+                    )
                 );
                 return;
             }
@@ -1647,6 +1658,7 @@ public class ComputeService {
                 cancelQueryOnFailure,
                 exchangeSinkSupplier,
                 planTimeProfile,
+                phases,
                 listener
             );
             return;
@@ -1683,7 +1695,10 @@ public class ComputeService {
             }
             l.onResponse(new Result(outputAttributes, collectedPages, null, configuration, completionInfo, execInfo, null));
         }), execInfo::addFailedWork)) {
-            try (Releasable ignored = exchangeSource.addEmptySink()) {
+            try (
+                Releasable ignored = exchangeSource.addEmptySink();
+                RefCountingRunnable dataComputes = new RefCountingRunnable(phases::dataCompleted)
+            ) {
                 // run compute on the coordinator
                 final AtomicBoolean localClusterWasInterrupted = new AtomicBoolean();
                 try (
@@ -1721,35 +1736,42 @@ public class ComputeService {
                             new QueryFetchScope(rootTask, sessionId, configuration, localListener::acquireCompute, fetchContexts)
                         );
                     }
-                    runCompute(
-                        rootTask,
-                        new ComputeContext(
-                            sessionId,
-                            queryId(rootTask),
-                            profileDescription(profileQualifier, "final"),
-                            LOCAL_CLUSTER,
-                            flags,
-                            EmptyIndexedByShardId.instance(),
-                            configuration,
-                            foldContext,
-                            exchangeSource::createExchangeSource,
-                            exchangeSinkSupplier,
-                            false,
-                            null,
-                            null,
-                            fetchOperators,
-                            execInfo,
-                            new QueryLoad()
-                        ),
-                        coordinatorPlan,
-                        plannerSettings.get(),
-                        LocalPhysicalOptimization.ENABLED,
-                        planTimeProfile,
-                        localListener.acquireCompute()
+                    final ComputeContext coordinatorContext = new ComputeContext(
+                        sessionId,
+                        queryId(rootTask),
+                        profileDescription(profileQualifier, "final"),
+                        LOCAL_CLUSTER,
+                        flags,
+                        EmptyIndexedByShardId.instance(),
+                        configuration,
+                        foldContext,
+                        exchangeSource::createExchangeSource,
+                        exchangeSinkSupplier,
+                        false,
+                        null,
+                        null,
+                        fetchOperators,
+                        execInfo,
+                        new QueryLoad()
+                    );
+                    final ActionListener<DriverCompletionInfo> coordinatorListener = localListener.acquireCompute();
+                    phases.startCoordinator(
+                        ActionListener.wrap(
+                            slot -> runCompute(
+                                rootTask,
+                                coordinatorContext,
+                                coordinatorPlan,
+                                plannerSettings.get(),
+                                LocalPhysicalOptimization.ENABLED,
+                                planTimeProfile,
+                                ActionListener.releaseAfter(coordinatorListener, slot)
+                            ),
+                            coordinatorListener::onFailure
+                        )
                     );
                     // starts computes on data nodes on the main cluster
                     if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
-                        final var dataNodesListener = localListener.acquireCompute();
+                        final var dataNodesListener = ActionListener.releaseAfter(localListener.acquireCompute(), dataComputes.acquire());
                         dataNodeComputeHandler.startComputeOnDataNodes(
                             sessionId,
                             LOCAL_CLUSTER,
@@ -1829,7 +1851,7 @@ public class ComputeService {
                         cancelQueryOnFailure,
                         execInfo,
                         exchangeSinkSupplier != null,
-                        computeListener.acquireCompute().delegateResponse((l, ex) -> {
+                        ActionListener.releaseAfter(computeListener.acquireCompute(), dataComputes.acquire()).delegateResponse((l, ex) -> {
                             /*
                              * At various points, when collecting failures before sending a response, we manually check
                              * if an ex is a transport error and if it is, we unwrap it. Because we're wrapping an ex
@@ -1867,6 +1889,7 @@ public class ComputeService {
         Runnable cancelQueryOnFailure,
         Supplier<ExchangeSink> exchangeSinkSupplier,
         PlanTimeProfile planTimeProfile,
+        BranchPhases phases,
         ActionListener<Result> listener
     ) {
         List<Attribute> outputAttributes = resolvedPlan.output();
@@ -1880,31 +1903,38 @@ public class ComputeService {
             l.onResponse(new Result(outputAttributes, collectedPages, null, configuration, completionInfo, execInfo, null));
         }), execInfo::addFailedWork)) {
             // Run the coordinator plan
-            runCompute(
-                rootTask,
-                new ComputeContext(
-                    sessionId,
-                    queryId(rootTask),
-                    profileDescription(profileQualifier, "final"),
-                    LOCAL_CLUSTER,
-                    flags,
-                    EmptyIndexedByShardId.instance(),
-                    configuration,
-                    foldContext,
-                    exchangeSource::createExchangeSource,
-                    exchangeSinkSupplier,
-                    false,
-                    null,
-                    null,
-                    FetchOperatorProvider.UNSUPPORTED,
-                    execInfo,
-                    new QueryLoad()
-                ),
-                coordinatorPlan,
-                plannerSettings.get(),
-                LocalPhysicalOptimization.ENABLED,
-                planTimeProfile,
-                computeListener.acquireCompute()
+            final ComputeContext coordinatorContext = new ComputeContext(
+                sessionId,
+                queryId(rootTask),
+                profileDescription(profileQualifier, "final"),
+                LOCAL_CLUSTER,
+                flags,
+                EmptyIndexedByShardId.instance(),
+                configuration,
+                foldContext,
+                exchangeSource::createExchangeSource,
+                exchangeSinkSupplier,
+                false,
+                null,
+                null,
+                FetchOperatorProvider.UNSUPPORTED,
+                execInfo,
+                new QueryLoad()
+            );
+            final ActionListener<DriverCompletionInfo> coordinatorListener = computeListener.acquireCompute();
+            phases.startCoordinator(
+                ActionListener.wrap(
+                    slot -> runCompute(
+                        rootTask,
+                        coordinatorContext,
+                        coordinatorPlan,
+                        plannerSettings.get(),
+                        LocalPhysicalOptimization.ENABLED,
+                        planTimeProfile,
+                        ActionListener.releaseAfter(coordinatorListener, slot)
+                    ),
+                    coordinatorListener::onFailure
+                )
             );
             // Dispatch to each data node with its assigned splits
             dataNodeComputeHandler.startExternalComputeOnDataNodes(
