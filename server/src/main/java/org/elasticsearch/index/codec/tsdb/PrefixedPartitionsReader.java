@@ -10,6 +10,7 @@
 package org.elasticsearch.index.codec.tsdb;
 
 import org.apache.lucene.store.IndexInput;
+import org.elasticsearch.common.io.stream.ByteArrayStreamInput;
 
 import java.io.IOException;
 
@@ -20,26 +21,23 @@ import java.io.IOException;
 public final class PrefixedPartitionsReader {
     public static PartitionedDocValues.PrefixPartitions prefixPartitions(IndexInput dataIn, PartitionedDocValues.PrefixPartitions reused)
         throws IOException {
-        final int numPartitions = dataIn.readVInt();
-        final int[] prefixes;
-        final int[] startDocs;
-        if (reused == null || reused.numPartitions() < numPartitions) {
-            prefixes = new int[numPartitions];
-            startDocs = new int[numPartitions];
-        } else {
-            prefixes = reused.prefixes();
-            startDocs = reused.startDocs();
-        }
+        final int dataLength = Math.toIntExact(dataIn.length());
+        final byte[] bytes = new byte[dataLength];
+        dataIn.readBytes(bytes, 0, dataLength);
+        ByteArrayStreamInput bytesInput = new ByteArrayStreamInput(bytes);
+        final int numPartitions = bytesInput.readVInt();
+        final int[] prefixes = new int[numPartitions];
+        final int[] startDocs = new int[numPartitions];
         int last = 0;
         for (int i = 0; i < numPartitions; i++) {
-            final int diff = dataIn.readVInt();
+            final int diff = bytesInput.readVInt();
             final int prefix = last + diff;
             prefixes[i] = prefix;
             last = prefix;
         }
         last = 0;
         for (int i = 0; i < numPartitions; i++) {
-            final int diff = dataIn.readVInt();
+            final int diff = bytesInput.readVInt();
             final int doc = last + diff;
             startDocs[i] = doc;
             last = doc;
