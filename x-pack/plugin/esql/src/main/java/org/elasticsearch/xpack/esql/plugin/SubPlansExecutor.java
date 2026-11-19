@@ -13,6 +13,7 @@ import org.elasticsearch.common.util.concurrent.RunOnce;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.lucene.EmptyIndexedByShardId;
 import org.elasticsearch.compute.operator.DriverCompletionInfo;
+import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.compute.operator.PageStreamPublisher;
 import org.elasticsearch.compute.operator.PlanTimeProfile;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
@@ -20,9 +21,13 @@ import org.elasticsearch.compute.operator.exchange.LocalExchange;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.core.expression.FoldContext;
+import org.elasticsearch.xpack.esql.plan.logical.EsRelation;
+import org.elasticsearch.xpack.esql.plan.physical.FragmentExec;
 import org.elasticsearch.xpack.esql.plan.physical.MergeExec;
 import org.elasticsearch.xpack.esql.plan.physical.OutputExec;
 import org.elasticsearch.xpack.esql.plan.physical.PhysicalPlan;
@@ -83,6 +88,8 @@ import static org.elasticsearch.xpack.esql.plugin.ComputeService.LOCAL_CLUSTER;
  * {@code runCompute} / {@code executePlan}. Failure cancels the root task; remaining nodes observe that and fail without starting new work.
  */
 final class SubPlansExecutor {
+    private static final Logger logger = LogManager.getLogger(SubPlansExecutor.class);
+
     private final ComputeService computeService;
     private final String sessionPrefix;
     private final CancellableTask rootTask;
@@ -94,6 +101,8 @@ final class SubPlansExecutor {
     private final Runnable warnIndexCoordinatorOnce;
     private final QueryPragmas queryPragmas;
     private final Runnable cancelOnFailure;
+    private final boolean tsidSplit;
+    private final long createdMillis = System.currentTimeMillis();
 
     /**
      * Number of leaves that may be started before another must complete. Initialized to {@code branch_parallel_degree}.
@@ -139,6 +148,7 @@ final class SubPlansExecutor {
         this.warnIndexCoordinatorOnce = warnIndexCoordinatorOnce;
         this.queryPragmas = configuration.pragmas();
         this.executionPermits = new AtomicInteger(queryPragmas.branchParallelDegree());
+        this.tsidSplit = isTsidSplit(rootPlan);
         this.cancelOnFailure = new RunOnce(computeService.cancelQueryOnFailure(rootTask));
         this.rootPlanTimeProfile = planTimeProfile;
         final BoundedPageCollector pageCollector = new BoundedPageCollector(maxResultSize);
@@ -187,6 +197,61 @@ final class SubPlansExecutor {
             } finally {
                 scheduling.set(false);
             }
+        }
+    }
+
+    private static boolean isTsidSplit(SubPlan.Merge merge) {
+        for (SubPlan child : merge.children()) {
+            if (child instanceof SubPlan.Leaf == false || readsTsidRange(child.plan()) == false) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean readsTsidRange(PhysicalPlan plan) {
+        return plan.anyMatch(
+            p -> p instanceof FragmentExec fragment
+                && fragment.fragment().anyMatch(l -> l instanceof EsRelation relation && relation.tsidRange() != null)
+        );
+    }
+
+    private void logTsidSplitTiming(String path, long startMillis, DriverCompletionInfo info) {
+        final long endMillis = System.currentTimeMillis();
+        long firstDataStart = Long.MAX_VALUE;
+        long lastDataStop = Long.MIN_VALUE;
+        long dataCpuNanos = 0;
+        int dataDrivers = 0;
+        for (DriverProfile profile : info.driverProfiles()) {
+            if (profile.description().equals(ComputeService.DATA_DESCRIPTION)) {
+                firstDataStart = Math.min(firstDataStart, profile.startMillis());
+                lastDataStop = Math.max(lastDataStop, profile.stopMillis());
+                dataCpuNanos += profile.cpuNanos();
+                dataDrivers++;
+            }
+        }
+        if (dataDrivers == 0) {
+            logger.info(
+                "tsid split [{}]: waited [{}ms] took [{}ms] cpu [{}ms]; run with profile for setup/data/tail",
+                path,
+                startMillis - createdMillis,
+                endMillis - startMillis,
+                info.cpuNanos() / 1_000_000
+            );
+        } else {
+            logger.info(
+                "tsid split [{}]: waited [{}ms] took [{}ms] = setup [{}ms] + data [{}ms] + tail [{}ms]; "
+                    + "data drivers [{}] data cpu [{}ms] total cpu [{}ms]",
+                path,
+                startMillis - createdMillis,
+                endMillis - startMillis,
+                firstDataStart - startMillis,
+                lastDataStop - firstDataStart,
+                endMillis - lastDataStop,
+                dataDrivers,
+                dataCpuNanos / 1_000_000,
+                info.cpuNanos() / 1_000_000
+            );
         }
     }
 
@@ -401,6 +466,7 @@ final class SubPlansExecutor {
         }
 
         private void startLeaf() {
+            final long startMillis = System.currentTimeMillis();
             final ActionListener<DriverCompletionInfo> resultListener = ActionListener.runAfter(leafListener, this::after);
             if (rootTask.isCancelled()) {
                 resultListener.onFailure(rootTask.getTaskCancelledException());
@@ -420,7 +486,12 @@ final class SubPlansExecutor {
                     foldContext,
                     execInfo,
                     path,
-                    resultListener.safeMap(Result::completionInfo),
+                    resultListener.safeMap(result -> {
+                        if (tsidSplit) {
+                            logTsidSplitTiming(path, startMillis, result.completionInfo());
+                        }
+                        return result.completionInfo();
+                    }),
                     () -> parent.exchange.exchangeSink(() -> {}),
                     initialClusterStatuses,
                     configuration.profile() ? new PlanTimeProfile() : null,

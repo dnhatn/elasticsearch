@@ -32,11 +32,10 @@ public interface PartitionedDocValues {
     }
 
     /**
-     * Returns the prefixed partition from the doc-values of this field if exists.
-     * @param reused an existing prefix partitions can be reused to avoid allocating memory
+     * Returns the prefix partitions of the doc-values of this field, or {@code null} if it has none.
      */
     @Nullable
-    PrefixPartitions prefixPartitions(PrefixPartitions reused) throws IOException;
+    PrefixPartitions prefixPartitions() throws IOException;
 
     /**
      * The number of bits used in prefix partitions

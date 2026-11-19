@@ -78,7 +78,7 @@ public abstract class AbstractPrefixPartitionTests extends ESTestCase {
                 assertThat(dv, instanceOf(PartitionedDocValues.class));
                 PartitionedDocValues partitionedDV = (PartitionedDocValues) dv;
                 assertThat(partitionedDV.prefixPartitionBits(), equalTo(18));
-                var partitions = partitionedDV.prefixPartitions(null);
+                var partitions = partitionedDV.prefixPartitions();
                 assertNotNull(partitions);
                 return partitions;
             }

@@ -76,12 +76,10 @@ public abstract class AbstractTSDBDocValuesFormatSingleNodeTests extends ESSingl
         try (Engine.Searcher searcher = shard.acquireExternalSearcher("test", SplitShardCountSummary.IRRELEVANT)) {
             assertTrue(canPartitionByTsidPrefix(searcher));
             assertTrue(PartitionedDocValues.canPartitionByTsidPrefix(shard.indexSettings().getIndexVersionCreated()));
-            PartitionedDocValues.PrefixPartitions partition = null;
             for (LeafReaderContext leaf : searcher.getLeafContexts()) {
                 final SortedDocValues dv = leaf.reader().getSortedDocValues("_tsid");
                 assertThat(dv, instanceOf(PartitionedDocValues.class));
-                partition = ((PartitionedDocValues) dv).prefixPartitions(partition);
-                assertNotNull(partition);
+                assertNotNull(((PartitionedDocValues) dv).prefixPartitions());
             }
         }
     }

@@ -19,8 +19,7 @@ import java.io.IOException;
  * The data consists of delta-encoded prefix keys and their corresponding starting document IDs.
  */
 public final class PrefixedPartitionsReader {
-    public static PartitionedDocValues.PrefixPartitions prefixPartitions(IndexInput dataIn, PartitionedDocValues.PrefixPartitions reused)
-        throws IOException {
+    public static PartitionedDocValues.PrefixPartitions prefixPartitions(IndexInput dataIn) throws IOException {
         final int dataLength = Math.toIntExact(dataIn.length());
         final byte[] bytes = new byte[dataLength];
         dataIn.readBytes(bytes, 0, dataLength);

@@ -46,7 +46,8 @@ public class FieldCapabilitiesIndexResponseTests extends ESTestCase {
                     between(1, 100),
                     randomIntBetween(1, Integer.MAX_VALUE),
                     randomLongBetween(1, Long.MAX_VALUE),
-                    randomLongBetween(1, Long.MAX_VALUE)
+                    randomLongBetween(1, Long.MAX_VALUE),
+                    randomBoolean() ? null : new TimeSeriesStats(randomNonNegativeLong(), randomLong(), randomLong())
                 )
             );
         }

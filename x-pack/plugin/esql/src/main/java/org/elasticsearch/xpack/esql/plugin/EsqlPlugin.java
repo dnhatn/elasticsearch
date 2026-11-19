@@ -170,6 +170,7 @@ import org.elasticsearch.xpack.esql.plan.QuerySettings;
 import org.elasticsearch.xpack.esql.plan.logical.LogicalPlan;
 import org.elasticsearch.xpack.esql.planner.PlannerSettings;
 import org.elasticsearch.xpack.esql.querydsl.query.SingleValueQuery;
+import org.elasticsearch.xpack.esql.querydsl.query.TsidPrefixRangeQueryBuilder;
 import org.elasticsearch.xpack.esql.querylog.EsqlQueryLog;
 import org.elasticsearch.xpack.esql.session.EsqlLicenseChecker;
 import org.elasticsearch.xpack.esql.session.IndexResolver;
@@ -954,6 +955,7 @@ public class EsqlPlugin extends Plugin implements ActionPlugin, ExtensiblePlugin
 
         entries.add(ExpressionQueryBuilder.ENTRY);
         entries.add(PlanStreamWrapperQueryBuilder.ENTRY);
+        entries.add(TsidPrefixRangeQueryBuilder.ENTRY);
         entries.addAll(ViewMetadata.ENTRIES);
         entries.addAll(DataSourceMetadata.ENTRIES);
         entries.addAll(DatasetMetadata.ENTRIES);

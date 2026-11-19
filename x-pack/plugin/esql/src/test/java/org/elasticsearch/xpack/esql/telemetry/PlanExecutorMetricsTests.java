@@ -48,7 +48,9 @@ import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
 import org.elasticsearch.search.crossproject.ProjectRoutingRequestInfo;
+import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.Task;
+import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.telemetry.InstrumentType;
 import org.elasticsearch.telemetry.Measurement;
 import org.elasticsearch.telemetry.RecordingMeterRegistry;
@@ -279,7 +281,7 @@ public class PlanExecutorMetricsTests extends ESTestCase {
                     MOCK_TRANSPORT_ACTION_SERVICES,
                     EsExecutors.DIRECT_EXECUTOR_SERVICE,
                     1,
-                    () -> false,
+                    new CancellableTask(1, "transport", "esql", "test", TaskId.EMPTY_TASK_ID, Map.of()),
                     new ActionListener<>() {
                         @Override
                         public void onResponse(Versioned<Result> result) {
@@ -320,7 +322,7 @@ public class PlanExecutorMetricsTests extends ESTestCase {
                     MOCK_TRANSPORT_ACTION_SERVICES,
                     EsExecutors.DIRECT_EXECUTOR_SERVICE,
                     1,
-                    () -> false,
+                    new CancellableTask(1, "transport", "esql", "test", TaskId.EMPTY_TASK_ID, Map.of()),
                     new ActionListener<>() {
                         @Override
                         public void onResponse(Versioned<Result> result) {}
@@ -1005,7 +1007,7 @@ public class PlanExecutorMetricsTests extends ESTestCase {
             services,
             EsExecutors.DIRECT_EXECUTOR_SERVICE,
             1,
-            () -> false,
+            new CancellableTask(1, "transport", "esql", "test", TaskId.EMPTY_TASK_ID, Map.of()),
             listener
         );
     }

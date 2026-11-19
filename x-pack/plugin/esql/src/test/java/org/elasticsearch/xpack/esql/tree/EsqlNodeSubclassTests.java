@@ -16,6 +16,7 @@ import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.compute.data.ElementType;
 import org.elasticsearch.compute.data.Page;
+import org.elasticsearch.compute.lucene.query.TsidRange;
 import org.elasticsearch.compute.operator.InsertEmptyBucketsOperator.DefaultValue;
 import org.elasticsearch.core.PathUtils;
 import org.elasticsearch.core.SuppressForbidden;
@@ -666,6 +667,9 @@ public class EsqlNodeSubclassTests<T extends B, B extends Node<B>> extends NodeS
                 SliceSelection.ALL,
                 SliceSelection.of(randomList(1, 3, () -> randomAlphaOfLengthBetween(1, 8)))
             );
+        }
+        if (argClass == TsidRange.class) {
+            return new TsidRange(between(8, 18), between(0, 100), between(101, 200));
         }
         if (argClass == IndexProperties.class) {
             IndexMode mode = randomFrom(IndexMode.availableModes());

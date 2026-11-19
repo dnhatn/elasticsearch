@@ -211,6 +211,7 @@ public abstract class AbstractPhysicalOperationProviders {
             if (aggregateExec instanceof TimeSeriesAggregateExec ts) {
                 operatorFactory = timeSeriesAggregatorOperatorFactory(
                     ts,
+                    source,
                     aggregatorMode,
                     aggregatorFactories,
                     groupSpecs.stream().map(GroupSpec::toHashGroupSpec).toList(),
@@ -543,6 +544,7 @@ public abstract class AbstractPhysicalOperationProviders {
 
     public abstract Operator.OperatorFactory timeSeriesAggregatorOperatorFactory(
         TimeSeriesAggregateExec ts,
+        PhysicalOperation source,
         AggregatorMode aggregatorMode,
         List<GroupingAggregator.Factory> aggregatorFactories,
         List<BlockHash.GroupSpec> groupSpecs,

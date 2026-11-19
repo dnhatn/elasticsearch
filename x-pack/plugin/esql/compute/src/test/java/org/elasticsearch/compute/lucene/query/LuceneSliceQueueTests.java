@@ -25,8 +25,14 @@ import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.TermVectors;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.search.AcceptDocs;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.ConstantScoreQuery;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnCollector;
+import org.apache.lucene.search.MatchAllDocsQuery;
+import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
@@ -722,6 +728,80 @@ public class LuceneSliceQueueTests extends ESTestCase {
         }
     }
 
+    public void testTimeSeriesPartitionerWithRange() throws IOException {
+        var prefixes0 = new PartitionedDocValues.PrefixPartitions(2, new int[] { 0, 1 }, new int[] { 0, 100 });
+        var prefixes1 = new PartitionedDocValues.PrefixPartitions(2, new int[] { 1, 6 }, new int[] { 0, 160 });
+        var prefixes2 = new PartitionedDocValues.PrefixPartitions(5, new int[] { 0, 1, 2, 3, 6 }, new int[] { 0, 50, 120, 250, 470 });
+        MultiReader reader = new MultiReader(
+            new MockLeafReader(200, prefixes0),
+            new MockLeafReader(370, prefixes1),
+            new MockLeafReader(801, prefixes2)
+        );
+        var partitioner = new LuceneSliceQueue.TimeSeriesPartitioner();
+        {
+            List<List<PartialLeafReaderContext>> slices = partitioner.partition(reader.leaves(), 1, 1371, new TsidRange(1, 1, 6));
+            assertThat(slices, hasSize(1));
+            assertThat(
+                slices.get(0),
+                containsInAnyOrder(
+                    new PartialLeafReaderContext(reader.leaves().get(0), 100, 200),
+                    new PartialLeafReaderContext(reader.leaves().get(1), 0, 160),
+                    new PartialLeafReaderContext(reader.leaves().get(2), 50, 470)
+                )
+            );
+        }
+        {
+            List<List<PartialLeafReaderContext>> slices = partitioner.partition(reader.leaves(), 5, 200, new TsidRange(1, 2, 7));
+            assertThat(slices, hasSize(2));
+            assertThat(slices.get(0), containsInAnyOrder(new PartialLeafReaderContext(reader.leaves().get(2), 120, 470)));
+            assertThat(
+                slices.get(1),
+                containsInAnyOrder(
+                    new PartialLeafReaderContext(reader.leaves().get(1), 160, 370),
+                    new PartialLeafReaderContext(reader.leaves().get(2), 470, 801)
+                )
+            );
+        }
+        {
+            assertThat(partitioner.partition(reader.leaves(), 5, 200, new TsidRange(1, 4, 6)), hasSize(0));
+        }
+        List<List<PartialLeafReaderContext>> all = new ArrayList<>();
+        int[] cuts = { 0, 1, 3, 7 };
+        for (int i = 0; i < cuts.length - 1; i++) {
+            all.addAll(partitioner.partition(reader.leaves(), 2, 100, new TsidRange(1, cuts[i], cuts[i + 1])));
+        }
+        assertThat(all.stream().flatMap(List::stream).mapToInt(leaf -> leaf.maxDoc() - leaf.minDoc()).sum(), equalTo(1371));
+    }
+
+    public void testTsidPrefixRangeQuery() throws IOException {
+        var prefixes = new PartitionedDocValues.PrefixPartitions(3, new int[] { 0, 2, 3 }, new int[] { 0, 100, 300 });
+        LeafReaderContext leaf = new MultiReader(new MockLeafReader(500, prefixes)).leaves().get(0);
+        {
+            TsidPrefixRangeQuery query = new TsidPrefixRangeQuery(new TsidRange(1, 1, 3));
+            DocIdSetIterator iterator = query.createWeight(null, ScoreMode.COMPLETE_NO_SCORES, 1f)
+                .scorerSupplier(leaf)
+                .get(Long.MAX_VALUE)
+                .iterator();
+            assertThat(iterator.nextDoc(), equalTo(100));
+            assertThat(iterator.advance(299), equalTo(299));
+            assertThat(iterator.nextDoc(), equalTo(DocIdSetIterator.NO_MORE_DOCS));
+        }
+        {
+            TsidPrefixRangeQuery query = new TsidPrefixRangeQuery(new TsidRange(1, 1, 2));
+            assertNull(query.createWeight(null, ScoreMode.COMPLETE_NO_SCORES, 1f).scorerSupplier(leaf));
+        }
+        assertThat(
+            TsidPrefixRangeQuery.docRanges(List.of(leaf), new TsidRange(1, 2, 9)).get(leaf),
+            equalTo(new PrimarySortRange.DocRange(100, 500))
+        );
+        TsidRange range = new TsidRange(18, 10, 20);
+        Query wrapped = new BooleanQuery.Builder().add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+            .add(new ConstantScoreQuery(new TsidPrefixRangeQuery(range)), BooleanClause.Occur.FILTER)
+            .build();
+        assertThat(TsidPrefixRangeQuery.find(wrapped), equalTo(range));
+        assertNull(TsidPrefixRangeQuery.find(new MatchAllDocsQuery()));
+    }
+
     static class MockLeafReader extends LeafReader {
         private final int maxDoc;
         private final PartitionedDocValues.PrefixPartitions prefixPartitions;
@@ -894,7 +974,7 @@ public class LuceneSliceQueueTests extends ESTestCase {
         }
 
         @Override
-        public PrefixPartitions prefixPartitions(PrefixPartitions reuse) throws IOException {
+        public PrefixPartitions prefixPartitions() throws IOException {
             return prefixPartitions;
         }
 

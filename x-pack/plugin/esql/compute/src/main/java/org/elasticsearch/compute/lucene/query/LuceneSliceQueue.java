@@ -274,6 +274,10 @@ public final class LuceneSliceQueue {
         return totalSlices;
     }
 
+    LuceneSlice slice(int index) {
+        return slices.get(index);
+    }
+
     /**
      * Strategy used to partition each shard in this queue.
      */
@@ -577,7 +581,12 @@ public final class LuceneSliceQueue {
                 int minDocsPerSlice
             ) {
                 try {
-                    return new TimeSeriesPartitioner().partition(searcher.getLeafContexts(), taskConcurrency, MAX_DOCS_PER_SLICE);
+                    return new TimeSeriesPartitioner().partition(
+                        searcher.getLeafContexts(),
+                        taskConcurrency,
+                        MAX_DOCS_PER_SLICE,
+                        TsidPrefixRangeQuery.find(weight == null ? null : weight.getQuery())
+                    );
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
@@ -706,6 +715,10 @@ public final class LuceneSliceQueue {
             List<LeafReaderContext> largeLeaves = leaves.stream()
                 .filter(leaf -> keepWhole.contains(leaf) == false && partitioner.isLarge(leaf))
                 .toList();
+            TsidRange tsidRange = TsidPrefixRangeQuery.find(weight.getQuery());
+            if (tsidRange != null) {
+                return TsidPrefixRangeQuery.docRanges(largeLeaves, tsidRange);
+            }
             return PrimarySortRange.find(largeLeaves, weight.getQuery());
         }
 
@@ -909,19 +922,21 @@ public final class LuceneSliceQueue {
             int next;
             int metricEnd;
 
-            LeafPartitions(LeafReaderContext leaf, PartitionedDocValues.PrefixPartitions partitions, int shift) {
+            LeafPartitions(LeafReaderContext leaf, PartitionedDocValues.PrefixPartitions partitions, int shift, int first, int end) {
                 this.leaf = leaf;
                 this.prefixes = partitions.prefixes();
                 this.startDocs = partitions.startDocs();
                 this.numPartitions = partitions.numPartitions();
                 int partition = 0;
                 for (int metric = 0; metric < NUM_METRICS; metric++) {
-                    metricStarts[metric] = partition;
+                    metricStarts[metric] = Math.clamp(partition, first, end);
                     while (partition < numPartitions && prefixes[partition] >>> shift == metric) {
                         partition++;
                     }
                 }
-                metricStarts[NUM_METRICS] = numPartitions;
+                metricStarts[NUM_METRICS] = end;
+                this.next = first;
+                this.sliceStart = first;
             }
 
             int nextPrefix() {
@@ -933,6 +948,11 @@ public final class LuceneSliceQueue {
             }
         }
 
+        List<List<PartialLeafReaderContext>> partition(List<LeafReaderContext> leaves, int taskConcurrency, int maxDocsPerLeave)
+            throws IOException {
+            return partition(leaves, taskConcurrency, maxDocsPerLeave, null);
+        }
+
         /**
          * Combines prefix groups into slices, targeting at least {@code taskConcurrency} slices
          * for each metric (indicated via the first prefix byte). Each slice contains at least
@@ -940,8 +960,12 @@ public final class LuceneSliceQueue {
          * single leaf within a slice reaches {@code maxDocsPerLeave} docs to bound per-leaf
          * processing cost.
          */
-        List<List<PartialLeafReaderContext>> partition(List<LeafReaderContext> leaves, int taskConcurrency, int maxDocsPerLeave)
-            throws IOException {
+        List<List<PartialLeafReaderContext>> partition(
+            List<LeafReaderContext> leaves,
+            int taskConcurrency,
+            int maxDocsPerLeave,
+            @Nullable TsidRange range
+        ) throws IOException {
             int prefixBitsShift = -1;
             final List<LeafPartitions> leafPartitions = new ArrayList<>(leaves.size());
             for (LeafReaderContext leaf : leaves) {
@@ -950,12 +974,15 @@ public final class LuceneSliceQueue {
                     continue; // empty
                 }
                 var partitionedDV = (PartitionedDocValues) tsidValues;
+                final int partitionBits = partitionedDV.prefixPartitionBits();
                 if (prefixBitsShift == -1) {
-                    prefixBitsShift = partitionedDV.prefixPartitionBits() - Byte.SIZE;
+                    prefixBitsShift = partitionBits - Byte.SIZE;
                 }
-                var prefixPartitions = partitionedDV.prefixPartitions(null);
+                var prefixPartitions = partitionedDV.prefixPartitions();
                 assert prefixPartitions != null;
-                leafPartitions.add(new LeafPartitions(leaf, prefixPartitions, prefixBitsShift));
+                final int first = range == null ? 0 : range.firstPartition(prefixPartitions, partitionBits);
+                final int end = range == null ? prefixPartitions.numPartitions() : range.endPartition(prefixPartitions, partitionBits);
+                leafPartitions.add(new LeafPartitions(leaf, prefixPartitions, prefixBitsShift, first, end));
             }
             final LeafPartitions[] partitions = leafPartitions.toArray(LeafPartitions[]::new);
             final List<List<PartialLeafReaderContext>> slices = new ArrayList<>();

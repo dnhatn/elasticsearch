@@ -68,7 +68,7 @@ public class SortedFieldObserverTests extends ESTestCase {
             }
 
             try (IndexInput dataInput = dir.openInput("data", IOContext.DEFAULT)) {
-                PartitionedDocValues.PrefixPartitions partitions = PrefixedPartitionsReader.prefixPartitions(dataInput, null);
+                PartitionedDocValues.PrefixPartitions partitions = PrefixedPartitionsReader.prefixPartitions(dataInput);
 
                 assertEquals(2, partitions.numPartitions());
                 assertEquals(0, partitions.startDocs()[0]);
@@ -94,85 +94,10 @@ public class SortedFieldObserverTests extends ESTestCase {
             }
 
             try (IndexInput dataInput = dir.openInput("data", IOContext.DEFAULT)) {
-                PartitionedDocValues.PrefixPartitions partitions = PrefixedPartitionsReader.prefixPartitions(dataInput, null);
+                PartitionedDocValues.PrefixPartitions partitions = PrefixedPartitionsReader.prefixPartitions(dataInput);
 
                 assertEquals(1, partitions.numPartitions());
                 assertEquals(0, partitions.startDocs()[0]);
-            }
-        }
-    }
-
-    public void testReaderReusesExistingPartitions() throws IOException {
-        final PrefixedPartitionsWriter writer = new PrefixedPartitionsWriter();
-
-        final byte[] term1Bytes = new byte[] { 0x01, 0x00, 0x00, 0x00 };
-        final byte[] term2Bytes = new byte[] { 0x02, 0x00, 0x00, 0x00 };
-        final byte[] term3Bytes = new byte[] { 0x03, 0x00, 0x00, 0x00 };
-
-        writer.onTerm(new BytesRef(term1Bytes), 0);
-        writer.onTerm(new BytesRef(term2Bytes), 1);
-        writer.onTerm(new BytesRef(term3Bytes), 2);
-        writer.prepareForDocs();
-        writer.onDoc(0, 0);
-        writer.onDoc(100, 1);
-        writer.onDoc(200, 2);
-
-        try (Directory dir = newDirectory()) {
-            try (
-                IndexOutput data = dir.createOutput("data", IOContext.DEFAULT);
-                IndexOutput meta = dir.createOutput("meta", IOContext.DEFAULT)
-            ) {
-                writer.flush(data, meta);
-            }
-
-            try (IndexInput dataInput = dir.openInput("data", IOContext.DEFAULT)) {
-                final PartitionedDocValues.PrefixPartitions first = PrefixedPartitionsReader.prefixPartitions(dataInput, null);
-                assertEquals(3, first.numPartitions());
-                assertEquals(0, first.startDocs()[0]);
-                assertEquals(100, first.startDocs()[1]);
-                assertEquals(200, first.startDocs()[2]);
-
-                dataInput.seek(0);
-                final PartitionedDocValues.PrefixPartitions reused = PrefixedPartitionsReader.prefixPartitions(dataInput, first);
-                assertEquals(3, reused.numPartitions());
-                assertSame(first.prefixes(), reused.prefixes());
-                assertSame(first.startDocs(), reused.startDocs());
-            }
-        }
-    }
-
-    public void testReaderAllocatesWhenReusedTooSmall() throws IOException {
-        final PrefixedPartitionsWriter writer = new PrefixedPartitionsWriter();
-
-        final byte[] term1Bytes = new byte[] { 0x01, 0x00, 0x00, 0x00 };
-        final byte[] term2Bytes = new byte[] { 0x02, 0x00, 0x00, 0x00 };
-        final byte[] term3Bytes = new byte[] { 0x03, 0x00, 0x00, 0x00 };
-
-        writer.onTerm(new BytesRef(term1Bytes), 0);
-        writer.onTerm(new BytesRef(term2Bytes), 1);
-        writer.onTerm(new BytesRef(term3Bytes), 2);
-        writer.prepareForDocs();
-        writer.onDoc(0, 0);
-        writer.onDoc(50, 1);
-        writer.onDoc(99, 2);
-
-        try (Directory dir = newDirectory()) {
-            try (
-                IndexOutput data = dir.createOutput("data", IOContext.DEFAULT);
-                IndexOutput meta = dir.createOutput("meta", IOContext.DEFAULT)
-            ) {
-                writer.flush(data, meta);
-            }
-
-            try (IndexInput dataInput = dir.openInput("data", IOContext.DEFAULT)) {
-                PartitionedDocValues.PrefixPartitions tooSmall = new PartitionedDocValues.PrefixPartitions(1, new int[1], new int[1]);
-                PartitionedDocValues.PrefixPartitions result = PrefixedPartitionsReader.prefixPartitions(dataInput, tooSmall);
-                assertEquals(3, result.numPartitions());
-                assertNotSame(tooSmall.prefixes(), result.prefixes());
-                assertNotSame(tooSmall.startDocs(), result.startDocs());
-                assertEquals(0, result.startDocs()[0]);
-                assertEquals(50, result.startDocs()[1]);
-                assertEquals(99, result.startDocs()[2]);
             }
         }
     }
@@ -202,7 +127,7 @@ public class SortedFieldObserverTests extends ESTestCase {
             }
 
             try (IndexInput dataInput = dir.openInput("data", IOContext.DEFAULT)) {
-                PartitionedDocValues.PrefixPartitions partitions = PrefixedPartitionsReader.prefixPartitions(dataInput, null);
+                PartitionedDocValues.PrefixPartitions partitions = PrefixedPartitionsReader.prefixPartitions(dataInput);
 
                 assertEquals(2, partitions.numPartitions());
                 assertEquals(0, partitions.startDocs()[0]);

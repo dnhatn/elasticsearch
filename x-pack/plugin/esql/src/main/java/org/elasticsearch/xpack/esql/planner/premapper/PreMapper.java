@@ -8,9 +8,14 @@
 package org.elasticsearch.xpack.esql.planner.premapper;
 
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.core.Nullable;
+import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.xpack.esql.expression.function.fulltext.QueryBuilderResolver;
 import org.elasticsearch.xpack.esql.plan.logical.LogicalPlan;
+import org.elasticsearch.xpack.esql.plugin.EsqlFlags;
 import org.elasticsearch.xpack.esql.plugin.TransportActionServices;
+import org.elasticsearch.xpack.esql.session.Configuration;
 import org.elasticsearch.xpack.esql.session.Versioned;
 
 /**
@@ -33,11 +38,32 @@ public class PreMapper {
      * that is not backwards compatible, the minimum version can be used to gate the new behavior. See {@link Versioned} for
      * the broader rationale.
      */
-    public void preMapper(Versioned<LogicalPlan> plan, ActionListener<LogicalPlan> listener) {
-        queryRewrite(plan.inner(), listener.delegateFailureAndWrap((l, p) -> {
-            p.setOptimized();
-            l.onResponse(p);
-        }));
+    public void preMapper(
+        Versioned<LogicalPlan> plan,
+        Configuration configuration,
+        @Nullable QueryBuilder requestFilter,
+        EsqlFlags flags,
+        CancellableTask queryTask,
+        ActionListener<LogicalPlan> listener
+    ) {
+        queryRewrite(
+            plan.inner(),
+            listener.delegateFailureAndWrap(
+                (l, rewritten) -> TimeSeriesSplitResolver.resolve(
+                    rewritten,
+                    plan.minimumVersion(),
+                    configuration,
+                    requestFilter,
+                    flags,
+                    queryTask,
+                    services,
+                    l.delegateFailureAndWrap((ll, p) -> {
+                        p.setOptimized();
+                        ll.onResponse(p);
+                    })
+                )
+            )
+        );
     }
 
     private void queryRewrite(LogicalPlan plan, ActionListener<LogicalPlan> listener) {

@@ -41,6 +41,8 @@ import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
+import org.elasticsearch.tasks.CancellableTask;
+import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.telemetry.metric.MeterRegistry;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.threadpool.TestThreadPool;
@@ -215,7 +217,7 @@ public class NestedExpandSessionTests extends ESTestCase {
             transportActionServices(),
             EsExecutors.DIRECT_EXECUTOR_SERVICE,
             1,
-            () -> false,
+            new CancellableTask(1, "transport", "esql", "test", TaskId.EMPTY_TASK_ID, Map.of()),
             future
         );
         future.actionGet(TEST_REQUEST_TIMEOUT);

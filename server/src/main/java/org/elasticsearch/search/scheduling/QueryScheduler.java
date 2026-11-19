@@ -11,12 +11,15 @@ package org.elasticsearch.search.scheduling;
 
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.breaker.NoopCircuitBreaker;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.index.search.stats.ShardSearchStats;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 import org.elasticsearch.tasks.RemovedTaskListener;
 import org.elasticsearch.tasks.TaskId;
 
@@ -41,6 +44,7 @@ import java.util.function.LongSupplier;
  * Each query charges its memory through {@link QueryPart#breaker()}, one breaker for all its parts on the node.
  */
 public final class QueryScheduler {
+    private static final Logger logger = LogManager.getLogger(QueryScheduler.class);
 
     /**
      * Accumulates the search waiting of one shard.
@@ -431,6 +435,9 @@ public final class QueryScheduler {
                 return false;
             }
             forgotten = true;
+            if (breaker != null) {
+                logger.info("query [{}] peak memory [{}]", id, ByteSizeValue.ofBytes(breaker.peakBytes()));
+            }
             return true;
         }
 

@@ -12,6 +12,7 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
+import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.logging.HeaderWarning;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
@@ -27,6 +28,7 @@ import org.elasticsearch.compute.lucene.query.LuceneSliceQueue;
 import org.elasticsearch.compute.lucene.query.LuceneSourceOperator;
 import org.elasticsearch.compute.lucene.query.LuceneTopNSourceOperator;
 import org.elasticsearch.compute.lucene.query.MinCompetitiveQuery;
+import org.elasticsearch.compute.lucene.query.TimeSeriesGroups;
 import org.elasticsearch.compute.lucene.query.TimeSeriesSourceOperator;
 import org.elasticsearch.compute.lucene.read.ReadDimsOperator;
 import org.elasticsearch.compute.lucene.read.ValuesSourceReaderOperator;
@@ -110,6 +112,7 @@ import org.elasticsearch.xpack.esql.type.EsqlDataTypeConverter;
 import org.elasticsearch.xpack.esql.type.EsqlDataTypeRegistry;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -671,6 +674,46 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         return PhysicalOperation.fromSource(luceneFactory, layout.build());
     }
 
+    /**
+     * Each time-series driver of a split holds the groups of the slice it reads, plus up to the partial emit threshold of
+     * groups from earlier slices, so the drivers are as many as fit that state in twice the memory of one time-series split.
+     */
+    private static void capTimeSeriesDrivers(
+        LuceneOperator.Factory source,
+        @Nullable Rounding.Prepared timeBucket,
+        LocalExecutionPlannerContext context
+    ) {
+        DriverParallelism parallelism = context.driverParallelism().get();
+        int drivers = parallelism.instanceCount();
+        if (drivers <= 1 || TimeSeriesGroups.readsTsidRange(source) == false) {
+            return;
+        }
+        final long groupsPerSlice;
+        try {
+            groupsPerSlice = TimeSeriesGroups.maxGroupsPerSlice(source, timeBucket);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        int carriedGroups = context.queryPragmas()
+            .partialAggregationEmitKeysThreshold(context.plannerSettings().partialEmitKeysThreshold());
+        long budget = 2 * context.queryPragmas().timeSeriesSplitMemory().getBytes();
+        int capped = timeSeriesDrivers(drivers, groupsPerSlice, carriedGroups, budget);
+        if (capped < drivers) {
+            logger.info(
+                "time-series drivers [{}] of [{}]: largest slice groups [{}], budget [{}]",
+                capped,
+                drivers,
+                groupsPerSlice,
+                ByteSizeValue.ofBytes(budget)
+            );
+            context.driverParallelism(new DriverParallelism(parallelism.type(), capped));
+        }
+    }
+
+    static int timeSeriesDrivers(int drivers, long groupsPerSlice, int carriedGroups, long budget) {
+        return (int) Math.max(1, Math.min(drivers, budget / TimeSeriesGroups.bytes(groupsPerSlice + carriedGroups)));
+    }
+
     List<ValuesSourceReaderOperator.FieldInfo> extractFields(FieldExtractExec fieldExtractExec) {
         return extractFields(fieldExtractExec, fieldExtractExec.attributesToExtract(), fieldExtractExec::fieldExtractPreference);
     }
@@ -833,6 +876,7 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
     @Override
     public Operator.OperatorFactory timeSeriesAggregatorOperatorFactory(
         TimeSeriesAggregateExec ts,
+        PhysicalOperation source,
         AggregatorMode aggregatorMode,
         List<GroupingAggregator.Factory> aggregatorFactories,
         List<BlockHash.GroupSpec> groupSpecs,
@@ -842,8 +886,12 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
     ) {
         var pragmas = context.queryPragmas();
         int targetChunkRows = pragmas.timeSeriesTargetChunkRows(plannerSettings.timeSeriesTargetChunkRows());
+        Rounding.Prepared timeBucket = ts.timeBucketRounding(context.foldCtx());
+        if (source.sourceOperatorFactory instanceof LuceneOperator.Factory luceneFactory) {
+            capTimeSeriesDrivers(luceneFactory, timeBucket, context);
+        }
         return new TimeSeriesAggregationOperator.Factory(
-            ts.timeBucketRounding(context.foldCtx()),
+            timeBucket,
             ts.timeBucket() != null && ts.timeBucket().dataType() == DataType.DATE_NANOS,
             groupSpecs,
             aggregatorMode,

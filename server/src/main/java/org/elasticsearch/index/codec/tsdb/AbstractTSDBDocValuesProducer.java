@@ -1621,10 +1621,10 @@ public abstract class AbstractTSDBDocValuesProducer extends DocValuesProducer {
         }
 
         @Override
-        public PrefixPartitions prefixPartitions(PrefixPartitions reused) throws IOException {
+        public PrefixPartitions prefixPartitions() throws IOException {
             if (entry instanceof PrefixPartitionedEntry partitioned) {
                 var slice = data.slice("partitioning", partitioned.partitionStartPointer, partitioned.partitionDataLength);
-                return PrefixedPartitionsReader.prefixPartitions(slice, reused);
+                return PrefixedPartitionsReader.prefixPartitions(slice);
             } else {
                 return null;
             }

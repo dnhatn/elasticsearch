@@ -9,6 +9,7 @@
 
 package org.elasticsearch.action.fieldcaps;
 
+import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.InferenceFieldMetadata;
 import org.elasticsearch.cluster.metadata.MappingMetadata;
@@ -23,6 +24,7 @@ import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.analysis.AnalysisRegistry;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
 import org.elasticsearch.index.engine.Engine;
+import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.ObjectMapper;
@@ -39,6 +41,7 @@ import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.internal.AliasFilter;
 import org.elasticsearch.search.internal.ShardSearchRequest;
+import org.elasticsearch.snapshots.SearchableSnapshotsSettings;
 import org.elasticsearch.tasks.CancellableTask;
 
 import java.io.IOException;
@@ -59,14 +62,16 @@ import java.util.function.Predicate;
 class FieldCapabilitiesFetcher {
     private final IndicesService indicesService;
     private final boolean includeEmptyFields;
+    private final boolean includeTimeSeriesStats;
     private final Map<String, Map<String, IndexFieldCapabilities>> indexMappingHashToResponses = new HashMap<>();
     private static final boolean enableFieldHasValue = Booleans.parseBoolean(
         System.getProperty("es.field_caps_empty_fields_filter", Boolean.TRUE.toString())
     );
 
-    FieldCapabilitiesFetcher(IndicesService indicesService, boolean includeEmptyFields) {
+    FieldCapabilitiesFetcher(IndicesService indicesService, boolean includeEmptyFields, boolean includeTimeSeriesStats) {
         this.indicesService = indicesService;
         this.includeEmptyFields = includeEmptyFields;
+        this.includeTimeSeriesStats = includeTimeSeriesStats;
     }
 
     FieldCapabilitiesIndexResponse fetch(
@@ -82,7 +87,7 @@ class FieldCapabilitiesFetcher {
         final IndexService indexService = indicesService.indexServiceSafe(shardId.getIndex());
         final IndexShard indexShard = indexService.getShard(shardId.getId());
         final Engine.Searcher searcher;
-        if (alwaysMatches(indexFilter)) {
+        if (alwaysMatches(indexFilter) && timeSeriesStatsRequested(indexService) == false) {
             // no need to open a searcher if we aren't filtering, but make sure we are reading from an up-to-dated shard
             indexShard.readAllowed();
             searcher = null;
@@ -133,7 +138,9 @@ class FieldCapabilitiesFetcher {
         var indexMode = searchExecutionContext.getIndexSettings().getMode();
         final int numberOfShards = searchExecutionContext.getIndexSettings().getNumberOfShards();
         final int createdVersion = searchExecutionContext.getIndexSettings().getIndexVersionCreated().id();
-        if (searcher != null && canMatchShard(shardId, indexFilter, nowInMillis, searchExecutionContext, requestBreaker()) == false) {
+        if (searcher != null
+            && alwaysMatches(indexFilter) == false
+            && canMatchShard(shardId, indexFilter, nowInMillis, searchExecutionContext, requestBreaker()) == false) {
             return new FieldCapabilitiesIndexResponse(
                 shardId.getIndexName(),
                 null,
@@ -143,9 +150,13 @@ class FieldCapabilitiesFetcher {
                 numberOfShards,
                 createdVersion,
                 settingsVersion,
-                mappingVersion
+                mappingVersion,
+                null
             );
         }
+        final TimeSeriesStats timeSeriesStats = searcher != null && timeSeriesStatsRequested(indexService)
+            ? timeSeriesStats(searcher, searchExecutionContext, numberOfShards)
+            : null;
 
         final MappingMetadata mapping = indexMetadata.mapping();
         String indexMappingHash;
@@ -172,7 +183,8 @@ class FieldCapabilitiesFetcher {
                     numberOfShards,
                     createdVersion,
                     settingsVersion,
-                    mappingVersion
+                    mappingVersion,
+                    timeSeriesStats
                 );
             }
         }
@@ -198,8 +210,27 @@ class FieldCapabilitiesFetcher {
             numberOfShards,
             createdVersion,
             settingsVersion,
-            mappingVersion
+            mappingVersion,
+            timeSeriesStats
         );
+    }
+
+    /**
+     * Searchable snapshots are skipped: opening their doc values may fetch from the repository, which field caps must not pay.
+     */
+    private boolean timeSeriesStatsRequested(IndexService indexService) {
+        return includeTimeSeriesStats
+            && indexService.getIndexSettings().getMode() == IndexMode.TIME_SERIES
+            && SearchableSnapshotsSettings.isSearchableSnapshotStore(indexService.getIndexSettings().getSettings()) == false;
+    }
+
+    @Nullable
+    private static TimeSeriesStats timeSeriesStats(Engine.Searcher searcher, SearchExecutionContext context, int numberOfShards)
+        throws IOException {
+        if (context.getFieldType(DataStream.TIMESTAMP_FIELD_NAME) instanceof DateFieldMapper.DateFieldType timestamp) {
+            return TimeSeriesStats.ofShard(searcher.getIndexReader(), timestamp.resolution(), numberOfShards);
+        }
+        return null;
     }
 
     static Map<String, IndexFieldCapabilities> retrieveFieldCaps(

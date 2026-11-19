@@ -15,6 +15,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.compute.lucene.IndexedByShardIdFromSingleton;
+import org.elasticsearch.compute.lucene.query.TimeSeriesGroups;
 import org.elasticsearch.compute.lucene.read.ValuesSourceReaderOperator;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.querydsl.query.QueryWarnings;
@@ -91,6 +92,14 @@ import static org.hamcrest.Matchers.hasToString;
 import static org.hamcrest.Matchers.instanceOf;
 
 public class EsPhysicalOperationProvidersTests extends MapperServiceTestCase {
+
+    public void testTimeSeriesDriversFitTheirSlicesInTheBudget() {
+        long bytesPerGroup = TimeSeriesGroups.ESTIMATED_BYTES_PER_GROUP;
+        assertThat(EsPhysicalOperationProviders.timeSeriesDrivers(16, 0, 1000, 1000 * bytesPerGroup * 100), equalTo(16));
+        assertThat(EsPhysicalOperationProviders.timeSeriesDrivers(16, 3000, 1000, 4000 * bytesPerGroup * 4), equalTo(4));
+        assertThat(EsPhysicalOperationProviders.timeSeriesDrivers(16, 3000, 1000, 4000 * bytesPerGroup * 4 - 1), equalTo(3));
+        assertThat(EsPhysicalOperationProviders.timeSeriesDrivers(16, Integer.MAX_VALUE, 1000, bytesPerGroup), equalTo(1));
+    }
 
     public void testNullsFilteredFieldInfos() {
         record TestCase(QueryBuilder query, List<String> nullsFilteredFields) {

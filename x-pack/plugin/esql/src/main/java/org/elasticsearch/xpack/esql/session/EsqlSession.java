@@ -51,6 +51,7 @@ import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
 import org.elasticsearch.search.crossproject.TargetProjects;
+import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.ConnectTransportException;
 import org.elasticsearch.transport.RemoteClusterAware;
@@ -198,7 +199,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import static java.util.stream.Collectors.toSet;
@@ -491,7 +491,7 @@ public class EsqlSession {
         EsqlQueryRequest request,
         EsqlExecutionInfo executionInfo,
         PlanRunner planRunner,
-        BooleanSupplier cancellation,
+        CancellableTask queryTask,
         ActionListener<Versioned<Result>> listener
     ) {
         executionInfo.queryProfile().planning().start();
@@ -500,13 +500,14 @@ public class EsqlSession {
         if (externalSourceResolver != null) {
             externalSourceResolver.planningCpu(planningCpu);
         }
-        planningCpu.meteredCpu(() -> doExecute(request, executionInfo, planRunner, listener));
+        planningCpu.meteredCpu(() -> doExecute(request, executionInfo, planRunner, queryTask, listener));
     }
 
     private void doExecute(
         EsqlQueryRequest request,
         EsqlExecutionInfo executionInfo,
         PlanRunner planRunner,
+        CancellableTask queryTask,
         ActionListener<Versioned<Result>> listener
     ) {
         assert planningCpu.isMeteringCurrentThread() : "planning started on a thread without an open planning CPU measurement";
@@ -629,7 +630,7 @@ public class EsqlSession {
                 }
                 viewResolutionProfile.stop();
                 request.setViewSettings(viewResolution.viewSettings());
-                analyseAndExecute(request, executionInfo, planRunner, statement, resolved, viewResolution, l);
+                analyseAndExecute(request, executionInfo, planRunner, queryTask, statement, resolved, viewResolution, l);
             }))
         );
     }
@@ -649,6 +650,7 @@ public class EsqlSession {
         EsqlQueryRequest request,
         EsqlExecutionInfo executionInfo,
         PlanRunner planRunner,
+        CancellableTask queryTask,
         EsqlStatement statement,
         ResolvedSettings resolved,
         ViewResolver.ViewResolutionResult viewResolution,
@@ -823,6 +825,10 @@ public class EsqlSession {
                             assert planningCpu.isMeteringCurrentThread() : "logical optimizer reached on an unmetered thread";
                             preMapper.preMapper(
                                 new Versioned<>(optimizedPlan(p, logicalPlanOptimizer, planTimeProfile), minimumVersion),
+                                finalConfiguration,
+                                request.filter(),
+                                flags,
+                                queryTask,
                                 planningCpu.meteredCpu(l)
                             );
                         })

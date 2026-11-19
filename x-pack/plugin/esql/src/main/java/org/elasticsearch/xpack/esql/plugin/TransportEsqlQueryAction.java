@@ -178,6 +178,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             federationLicense
         );
         exchangeService.registerTransportHandler(transportService);
+        TsidStats.registerHandler(transportService, searchService.getIndicesService());
         this.exchangeService = exchangeService;
         this.enrichPolicyResolver = new EnrichPolicyResolver(
             clusterService,
@@ -449,7 +450,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             services,
             externalBlobStoreExecutor(),
             externalSourceConcurrency(),
-            ((CancellableTask) task)::isCancelled,
+            (CancellableTask) task,
             ActionListener.wrap(result -> {
                 try {
                     failIfCancelled(task, result.inner());
