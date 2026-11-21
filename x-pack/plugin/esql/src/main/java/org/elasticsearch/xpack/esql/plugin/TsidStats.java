@@ -95,6 +95,7 @@ public final class TsidStats {
         @Nullable QueryBuilder metricFilter,
         long minTimestamp,
         long maxTimestamp,
+        long bucketMillis,
         ActionListener<TsidPrefixHistogram> listener
     ) {
         if (queryTask.notifyIfCancelled(listener)) {
@@ -138,7 +139,7 @@ public final class TsidStats {
                 transportService.sendChildRequest(
                     node,
                     ACTION_NAME,
-                    new NodeRequest(entry.getValue(), metricFilter, nowInMillis, minTimestamp, maxTimestamp),
+                    new NodeRequest(entry.getValue(), metricFilter, nowInMillis, minTimestamp, maxTimestamp, bucketMillis),
                     queryTask,
                     TransportRequestOptions.EMPTY,
                     new ActionListenerResponseHandler<>(nodeListener, NodeResponse::new, responseExecutor)
@@ -262,7 +263,8 @@ public final class TsidStats {
                             matching,
                             tsid,
                             minTimestamp,
-                            maxTimestamp
+                            maxTimestamp,
+                            request.bucketMillis
                         )
                     );
                 }
@@ -278,13 +280,22 @@ public final class TsidStats {
         private final long nowInMillis;
         private final long minTimestamp;
         private final long maxTimestamp;
+        private final long bucketMillis;
 
-        NodeRequest(List<ShardId> shardIds, @Nullable QueryBuilder metricFilter, long nowInMillis, long minTimestamp, long maxTimestamp) {
+        NodeRequest(
+            List<ShardId> shardIds,
+            @Nullable QueryBuilder metricFilter,
+            long nowInMillis,
+            long minTimestamp,
+            long maxTimestamp,
+            long bucketMillis
+        ) {
             this.shardIds = shardIds;
             this.metricFilter = metricFilter;
             this.nowInMillis = nowInMillis;
             this.minTimestamp = minTimestamp;
             this.maxTimestamp = maxTimestamp;
+            this.bucketMillis = bucketMillis;
         }
 
         NodeRequest(StreamInput in) throws IOException {
@@ -294,6 +305,7 @@ public final class TsidStats {
             this.nowInMillis = in.readVLong();
             this.minTimestamp = in.readLong();
             this.maxTimestamp = in.readLong();
+            this.bucketMillis = in.readVLong();
         }
 
         @Override
@@ -309,6 +321,7 @@ public final class TsidStats {
             out.writeVLong(nowInMillis);
             out.writeLong(minTimestamp);
             out.writeLong(maxTimestamp);
+            out.writeVLong(bucketMillis);
         }
 
         @Override

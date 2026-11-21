@@ -58,7 +58,9 @@ public final class TsidPrefixHistogram implements Writeable {
 
     /**
      * Builds the histogram of one segment whose {@code @timestamp} values, clipped to the query, span
-     * {@code minTimestamp..maxTimestamp}. A partition counts in full once {@code matching} hits any of its docs.
+     * {@code minTimestamp..maxTimestamp}. A partition counts in full once {@code matching} hits any of its docs. Each
+     * {@code bucketMillis} group holds at least one doc, so the cells scale down to at most one group per doc
+     * {@code matching} may hit.
      */
     public static TsidPrefixHistogram ofLeaf(
         PartitionedDocValues.PrefixPartitions partitions,
@@ -67,11 +69,13 @@ public final class TsidPrefixHistogram implements Writeable {
         @Nullable DocIdSetIterator matching,
         SortedDocValues tsid,
         long minTimestamp,
-        long maxTimestamp
+        long maxTimestamp,
+        long bucketMillis
     ) throws IOException {
         assert minTimestamp <= maxTimestamp;
         final long spanMillis = maxTimestamp - minTimestamp + 1;
         final DocIdSetIterator iterator = matching == null ? DocIdSetIterator.all(maxDoc) : matching;
+        final long docs = iterator.cost();
         final int numPartitions = partitions.numPartitions();
         final int[] startDocs = partitions.startDocs();
         final int[] prefixes = new int[numPartitions];
@@ -97,6 +101,18 @@ public final class TsidPrefixHistogram implements Writeable {
                 break;
             }
             doc = iterator.advance(endDoc);
+        }
+        if (bucketMillis > 0) {
+            long totalSeriesMillis = 0;
+            for (int i = 0; i < size; i++) {
+                totalSeriesMillis += seriesMillis[i];
+            }
+            final double scale = (double) docs * bucketMillis / totalSeriesMillis;
+            if (scale < 1) {
+                for (int i = 0; i < size; i++) {
+                    seriesMillis[i] = (long) Math.ceil(seriesMillis[i] * scale);
+                }
+            }
         }
         return new TsidPrefixHistogram(bits, Arrays.copyOf(prefixes, size), Arrays.copyOf(seriesMillis, size), minTimestamp, maxTimestamp);
     }

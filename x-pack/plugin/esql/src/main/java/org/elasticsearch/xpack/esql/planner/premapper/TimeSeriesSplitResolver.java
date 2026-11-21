@@ -102,6 +102,7 @@ public final class TimeSeriesSplitResolver {
             metricFilter,
             bounds[0],
             bounds[1],
+            bucketMillis(aggregate.timeBucket(), bounds[0] == Long.MIN_VALUE ? configuration.now().toEpochMilli() : bounds[0]),
             ActionListener.wrap(histogram -> {
                 long groups = estimatedGroups(histogram, aggregate.timeBucket());
                 int numSplits = numSplits(groups, memoryPerSplit, pragmas.timeSeriesMaxSplits());
@@ -184,6 +185,11 @@ public final class TimeSeriesSplitResolver {
             maxTimestamp - minTimestamp + 1,
             TimeSeriesGroups.bucketMillis(rounding, minTimestamp)
         );
+    }
+
+    static long bucketMillis(@Nullable Bucket timeBucket, long timestamp) {
+        Rounding.Prepared rounding = timeBucket == null ? null : timeBucket.getDateRounding(FoldContext.small(), null, null);
+        return TimeSeriesGroups.bucketMillis(rounding, timestamp);
     }
 
     static LogicalPlan fork(LogicalPlan plan, TimeSeriesAggregate aggregate, List<TsidRange> splits) {

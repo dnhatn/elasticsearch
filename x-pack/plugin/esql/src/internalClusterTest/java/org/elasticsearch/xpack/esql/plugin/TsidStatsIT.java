@@ -169,6 +169,13 @@ public class TsidStatsIT extends AbstractEsqlIntegTestCase {
         assertThat(cpu.estimatedSeries(), greaterThanOrEqualTo((long) HOSTS));
         assertThat(cpu.estimatedSeries(), lessThan(all.estimatedSeries()));
 
+        // cpu is reported once a second, so 100ms buckets hold no more groups than there are cpu docs
+        TsidPrefixHistogram cpuFine = probe(null, QueryBuilders.existsQuery("cpu"), 100);
+        long fineGroups = Math.ceilDiv(cpuFine.totalSeriesMillis(), 100);
+        assertThat(fineGroups, greaterThanOrEqualTo(cpuDocs));
+        assertThat(fineGroups, lessThanOrEqualTo(cpuDocs + cpuFine.size()));
+        assertThat(Math.ceilDiv(cpu.totalSeriesMillis(), 100), greaterThan(fineGroups));
+
         TsidPrefixHistogram missing = probe(null, QueryBuilders.existsQuery("unknown"));
         assertThat(missing.size(), equalTo(0));
         assertThat(missing.estimatedSeries(), equalTo(0L));
@@ -316,6 +323,10 @@ public class TsidStatsIT extends AbstractEsqlIntegTestCase {
     }
 
     private TsidPrefixHistogram probe(QueryBuilder shardFilter, QueryBuilder metricFilter) {
+        return probe(shardFilter, metricFilter, 0);
+    }
+
+    private TsidPrefixHistogram probe(QueryBuilder shardFilter, QueryBuilder metricFilter, long bucketMillis) {
         long[] bounds = TsidStats.timestampBounds(shardFilter, System.currentTimeMillis());
         PlainActionFuture<TsidPrefixHistogram> future = new PlainActionFuture<>();
         var transport = internalCluster().getInstance(TransportService.class);
@@ -334,6 +345,7 @@ public class TsidStatsIT extends AbstractEsqlIntegTestCase {
                 metricFilter,
                 bounds[0],
                 bounds[1],
+                bucketMillis,
                 future
             );
             return future.actionGet(DEFAULT_REQUEST_TIMEOUT);

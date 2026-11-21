@@ -23,13 +23,14 @@ import java.util.stream.LongStream;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 public class TsidPrefixHistogramTests extends ESTestCase {
 
     public void testLeafWithoutFilter() throws IOException {
         var partitions = new PrefixPartitions(3, new int[] { 0, 2, 3 }, new int[] { 0, 100, 300 });
-        var histogram = TsidPrefixHistogram.ofLeaf(partitions, 10, 450, null, tenDocsPerSeries(450), 1000, 1999);
+        var histogram = TsidPrefixHistogram.ofLeaf(partitions, 10, 450, null, tenDocsPerSeries(450), 1000, 1999, 0);
         assertThat(
             histogram,
             equalTo(new TsidPrefixHistogram(10, new int[] { 0, 2, 3 }, new long[] { 10_000, 20_000, 15_000 }, 1000, 1999))
@@ -44,7 +45,16 @@ public class TsidPrefixHistogramTests extends ESTestCase {
         matching.set(130);
         matching.set(299);
         matching.set(449);
-        var histogram = TsidPrefixHistogram.ofLeaf(partitions, 10, 450, new BitSetIterator(matching, 4), tenDocsPerSeries(450), 1000, 1999);
+        var histogram = TsidPrefixHistogram.ofLeaf(
+            partitions,
+            10,
+            450,
+            new BitSetIterator(matching, 4),
+            tenDocsPerSeries(450),
+            1000,
+            1999,
+            0
+        );
         assertThat(histogram, equalTo(new TsidPrefixHistogram(10, new int[] { 2, 7 }, new long[] { 20_000, 5_000 }, 1000, 1999)));
 
         var none = TsidPrefixHistogram.ofLeaf(
@@ -54,24 +64,55 @@ public class TsidPrefixHistogramTests extends ESTestCase {
             new BitSetIterator(new FixedBitSet(450), 0),
             tenDocsPerSeries(450),
             1000,
-            1999
+            1999,
+            0
         );
         assertThat(none.size(), equalTo(0));
         assertThat(none.estimatedSeries(), equalTo(0L));
     }
 
+    public void testCappedByDocs() throws IOException {
+        var partitions = new PrefixPartitions(3, new int[] { 0, 2, 3 }, new int[] { 0, 100, 300 });
+        // 45 series over 1000ms in 25ms buckets would be 1800 groups, but 450 docs hold at most 450
+        var dense = TsidPrefixHistogram.ofLeaf(partitions, 10, 450, null, tenDocsPerSeries(450), 1000, 1999, 25);
+        assertThat(dense, equalTo(new TsidPrefixHistogram(10, new int[] { 0, 2, 3 }, new long[] { 2_500, 5_000, 3_750 }, 1000, 1999)));
+
+        var coarse = TsidPrefixHistogram.ofLeaf(partitions, 10, 450, null, tenDocsPerSeries(450), 1000, 1999, 100);
+        assertThat(coarse.totalSeriesMillis(), equalTo(45_000L));
+
+        // a metric in one doc of three series matches every partition, yet holds at most three groups
+        FixedBitSet matching = new FixedBitSet(450);
+        matching.set(0);
+        matching.set(100);
+        matching.set(300);
+        var sparse = TsidPrefixHistogram.ofLeaf(
+            partitions,
+            10,
+            450,
+            new BitSetIterator(matching, 3),
+            tenDocsPerSeries(450),
+            1000,
+            1999,
+            10
+        );
+        assertThat(sparse.size(), equalTo(3));
+        long groups = Math.ceilDiv(sparse.totalSeriesMillis(), 10);
+        assertThat(groups, greaterThanOrEqualTo(3L));
+        assertThat(groups, lessThanOrEqualTo(3L + sparse.size()));
+    }
+
     public void testSingleDocPartition() throws IOException {
         // partitions start at prefix changes, so they never split a series: the second one is the single doc of series 1
         var partitions = new PrefixPartitions(2, new int[] { 0, 5 }, new int[] { 0, 10 });
-        var histogram = TsidPrefixHistogram.ofLeaf(partitions, 10, 11, null, tenDocsPerSeries(11), 0, 9);
+        var histogram = TsidPrefixHistogram.ofLeaf(partitions, 10, 11, null, tenDocsPerSeries(11), 0, 9, 0);
         assertThat(histogram.seriesMillis(0), equalTo(10L));
         assertThat(histogram.seriesMillis(1), equalTo(10L));
     }
 
     public void testSeriesAcrossSegments() throws IOException {
         var partitions = new PrefixPartitions(1, new int[] { 0 }, new int[] { 0 });
-        var older = TsidPrefixHistogram.ofLeaf(partitions, 10, 100, null, tenDocsPerSeries(100), 0, 499);
-        var newer = TsidPrefixHistogram.ofLeaf(partitions, 10, 100, null, tenDocsPerSeries(100), 500, 999);
+        var older = TsidPrefixHistogram.ofLeaf(partitions, 10, 100, null, tenDocsPerSeries(100), 0, 499, 0);
+        var newer = TsidPrefixHistogram.ofLeaf(partitions, 10, 100, null, tenDocsPerSeries(100), 500, 999, 0);
         var merged = older.merge(newer);
         assertThat(merged.minTimestamp(), equalTo(0L));
         assertThat(merged.maxTimestamp(), equalTo(999L));
