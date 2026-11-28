@@ -57,6 +57,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.elasticsearch.index.mapper.DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailures;
+import static org.elasticsearch.xpack.esql.action.EsqlQueryRequest.syncEsqlQueryRequest;
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.containsInAnyOrder;
@@ -73,6 +75,11 @@ import static org.hamcrest.Matchers.startsWith;
 
 @LuceneTestCase.SuppressCodecs("*") // require production codecs
 public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
+
+    @Override
+    protected boolean forbidPrivateIndexSettings() {
+        return false;
+    }
 
     public void testEmpty() {
         Settings settings = Settings.builder().put("mode", "time_series").putList("routing_path", List.of("host")).build();
@@ -1241,6 +1248,135 @@ public class TimeSeriesIT extends AbstractEsqlIntegTestCase {
             List<List<Object>> rows = EsqlTestUtils.getValuesList(resp);
             assertThat(rows, not(empty()));
         }
+    }
+
+    public void testTimeSeriesSplit() {
+        assumeTrue("query pragmas require a snapshot build", canUseQueryPragmas());
+        long start = 1_700_000_000_000L;
+        String[] indices = { "split-hosts-1", "split-hosts-2" };
+        var bulk = client().prepareBulk();
+        for (String index : indices) {
+            Settings settings = Settings.builder()
+                .put("mode", "time_series")
+                .putList(IndexMetadata.INDEX_DIMENSIONS.getKey(), "host")
+                .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, between(1, 3))
+                .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0)
+                .build();
+            client().admin()
+                .indices()
+                .prepareCreate(index)
+                .setSettings(settings)
+                .setMapping(
+                    "@timestamp",
+                    "type=date",
+                    "host",
+                    "type=keyword,time_series_dimension=true",
+                    "cpu",
+                    "type=long,time_series_metric=gauge",
+                    "memory",
+                    "type=long,time_series_metric=gauge"
+                )
+                .get();
+            for (int host = 0; host < 50; host++) {
+                String metric = host % 2 == 0 ? "cpu" : "memory";
+                for (int point = 0; point < 20; point++) {
+                    bulk.add(
+                        client().prepareIndex(index)
+                            .setSource("@timestamp", start + point * 1000L, "host", "host-" + host, metric, host + point)
+                    );
+                }
+            }
+        }
+        var bulkResponse = bulk.get();
+        assertFalse(bulkResponse.buildFailureMessage(), bulkResponse.hasFailures());
+        client().admin().indices().prepareRefresh(indices).get();
+        assertNoFailures(client().admin().indices().prepareForceMerge(indices).setMaxNumSegments(1).get());
+
+        var timeRange = QueryBuilders.rangeQuery("@timestamp").gte(start + 5000).format("epoch_millis");
+        var request = syncEsqlQueryRequest("TS split-hosts-* | STATS n = SUM(CHANGES(cpu)) BY host | SORT host");
+        request.filter(timeRange);
+        request.profile(true);
+        List<List<Object>> unsplit;
+        try (var response = run(request)) {
+            unsplit = EsqlTestUtils.getValuesList(response);
+            assertEquals(25, unsplit.size());
+        }
+
+        request.acceptedPragmaRisks(true);
+        int maxSplits = 2;
+        for (int maxConcurrentBranches : List.of(1, maxSplits)) {
+            request.pragmas(splitPragmas(maxConcurrentBranches, maxSplits));
+            try (var response = run(request)) {
+                assertEquals(unsplit, EsqlTestUtils.getValuesList(response));
+                assertEquals(
+                    "TSID ranges should reach the data-node plan only when some splits must wait",
+                    maxSplits > maxConcurrentBranches,
+                    readsTsidRange(response)
+                );
+            }
+        }
+
+        // the histogram applies the query's filters, so it only counts the series the query reads
+        String byHost = "TS split-hosts-* | WHERE host IN (\"host-0\", \"host-2\") | STATS n = SUM(CHANGES(cpu)) BY host | SORT host";
+        request.query(byHost);
+        request.pragmas(QueryPragmas.EMPTY);
+        List<List<Object>> unsplitByHost;
+        try (var response = run(request)) {
+            unsplitByHost = EsqlTestUtils.getValuesList(response);
+            assertEquals(2, unsplitByHost.size());
+        }
+        request.pragmas(splitPragmas(1, maxSplits));
+        try (var response = run(request)) {
+            assertEquals(unsplitByHost, EsqlTestUtils.getValuesList(response));
+            assertTrue(readsTsidRange(response));
+        }
+        request.filter(QueryBuilders.boolQuery().filter(timeRange).filter(QueryBuilders.termsQuery("host", "host-0", "host-2")));
+        request.query("TS split-hosts-* | STATS n = SUM(CHANGES(cpu)) BY host | SORT host");
+        try (var response = run(request)) {
+            assertEquals(unsplitByHost, EsqlTestUtils.getValuesList(response));
+            assertTrue(readsTsidRange(response));
+        }
+
+        // a filter that matches no host leaves the histogram with no groups to split
+        request.filter(timeRange);
+        request.query("TS split-hosts-* | WHERE host == \"no-such-host\" | STATS n = SUM(CHANGES(cpu)) BY host");
+        try (var response = run(request)) {
+            assertEquals(0, EsqlTestUtils.getValuesList(response).size());
+            assertFalse(readsTsidRange(response));
+        }
+
+        request.query("TS split-hosts-* | WHERE host RLIKE \"host-[02]\" | STATS n = SUM(CHANGES(cpu)) BY host | SORT host");
+        try (var response = run(request)) {
+            assertEquals(unsplitByHost, EsqlTestUtils.getValuesList(response));
+            assertTrue(readsTsidRange(response));
+        }
+
+        request.query("TS split-hosts-* | WHERE host LIKE (\"host-0\", \"host-2\") | STATS n = SUM(CHANGES(cpu)) BY host | SORT host");
+        try (var response = run(request)) {
+            assertEquals(unsplitByHost, EsqlTestUtils.getValuesList(response));
+            assertTrue(readsTsidRange(response));
+        }
+
+        // the histogram can't apply a filter that has no Lucene query, so the query is not split
+        request.query("TS split-hosts-* | WHERE LENGTH(host) == 6 | STATS n = SUM(CHANGES(cpu)) BY host | SORT host");
+        try (var response = run(request)) {
+            assertEquals(5, EsqlTestUtils.getValuesList(response).size());
+            assertFalse(readsTsidRange(response));
+        }
+    }
+
+    private static QueryPragmas splitPragmas(int maxConcurrentBranches, int maxSplits) {
+        return new QueryPragmas(
+            Settings.builder()
+                .put(QueryPragmas.BRANCH_PARALLEL_DEGREE.getKey(), maxConcurrentBranches)
+                .put(QueryPragmas.TIME_SERIES_MAX_SPLITS.getKey(), maxSplits)
+                .put(QueryPragmas.TIME_SERIES_SPLIT_TARGET_MEMORY.getKey(), "1b")
+                .build()
+        );
+    }
+
+    private static boolean readsTsidRange(EsqlQueryResponse response) {
+        return response.profile().plans().stream().anyMatch(p -> p.planTree() != null && p.planTree().contains("esql_tsid_prefix_range"));
     }
 
     public void testAggregationEmitPartialResultPeriodically() {

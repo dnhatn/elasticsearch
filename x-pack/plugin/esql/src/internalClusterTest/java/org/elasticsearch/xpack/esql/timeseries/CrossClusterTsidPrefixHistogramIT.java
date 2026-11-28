@@ -17,6 +17,7 @@ import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.action.support.WriteRequest;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.esql.action.AbstractCrossClusterTestCase;
@@ -118,7 +119,7 @@ public class CrossClusterTsidPrefixHistogramIT extends AbstractCrossClusterTestC
                 queryTask,
                 concreteIndices,
                 originalIndices,
-                List.of("cpu"),
+                QueryBuilders.existsQuery("cpu"),
                 Long.MIN_VALUE,
                 Long.MAX_VALUE,
                 0,

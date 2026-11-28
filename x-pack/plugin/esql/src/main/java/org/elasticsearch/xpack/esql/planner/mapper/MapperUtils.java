@@ -38,6 +38,7 @@ import org.elasticsearch.xpack.esql.plan.logical.SparklineGenerateEmptyBuckets;
 import org.elasticsearch.xpack.esql.plan.logical.Subquery;
 import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesAggregate;
 import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesCollapse;
+import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesSplit;
 import org.elasticsearch.xpack.esql.plan.logical.TopNPreFilter;
 import org.elasticsearch.xpack.esql.plan.logical.UnaryPlan;
 import org.elasticsearch.xpack.esql.plan.logical.UnpackDims;
@@ -77,6 +78,7 @@ import org.elasticsearch.xpack.esql.plan.physical.ShowExec;
 import org.elasticsearch.xpack.esql.plan.physical.SparklineGenerateEmptyBucketsExec;
 import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesAggregateExec;
 import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesCollapseExec;
+import org.elasticsearch.xpack.esql.plan.physical.TimeSeriesSplitExec;
 import org.elasticsearch.xpack.esql.plan.physical.TopNPreFilterExec;
 import org.elasticsearch.xpack.esql.plan.physical.UnpackDimsExec;
 import org.elasticsearch.xpack.esql.plan.physical.UriPartsExec;
@@ -268,6 +270,10 @@ public class MapperUtils {
                 highlight.indexKey(),
                 highlight.fieldMappings()
             );
+        }
+
+        if (p instanceof TimeSeriesSplit split) {
+            return new TimeSeriesSplitExec(split.source(), child, split.ranges());
         }
 
         if (p instanceof TimeSeriesCollapse collapse) {

@@ -398,7 +398,7 @@ public class TransportEsqlStreamQueryAction extends TransportAction<EsqlStreamQu
             services,
             externalBlobStoreExecutor(),
             externalSourceConcurrency(),
-            ((CancellableTask) task)::isCancelled,
+            (CancellableTask) task,
             coordination.breaker(),
             ActionListener.wrap(versionedResult -> {
                 Result result = versionedResult.inner();

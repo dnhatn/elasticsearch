@@ -13,8 +13,6 @@ import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.PointValues;
 import org.apache.lucene.index.SortedDocValues;
-import org.apache.lucene.search.BooleanClause;
-import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
@@ -32,6 +30,7 @@ import org.elasticsearch.index.codec.tsdb.PartitionedDocValues;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.SearchExecutionContext;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.tasks.CancellableTask;
@@ -56,21 +55,21 @@ public final class TsidPrefixHistogramCollector {
      *
      * @param concreteIndices resolved concrete index names grouped by cluster
      * @param originalIndices original index expressions grouped by cluster, used for authorization
-     * @param metricFields    metrics to match when selecting prefix cells; at least one metric must be specified
+     * @param filter          the docs to count, such as the docs that have the queried metrics; it must not match every doc
      */
     public static void collect(
         TransportService transportService,
         CancellableTask queryTask,
         Map<String, String[]> concreteIndices,
         Map<String, OriginalIndices> originalIndices,
-        List<String> metricFields,
+        QueryBuilder filter,
         long minTimestamp,
         long maxTimestamp,
         long bucketMillis,
         ActionListener<TsidPrefixHistogramResponse> listener
     ) {
-        if (metricFields.isEmpty()) {
-            listener.onFailure(new IllegalArgumentException("collecting a tsid prefix histogram requires metric fields"));
+        if (filter == null) {
+            listener.onFailure(new IllegalArgumentException("collecting a tsid prefix histogram requires a filter"));
             return;
         }
         if (queryTask.notifyIfCancelled(listener)) {
@@ -97,7 +96,7 @@ public final class TsidPrefixHistogramCollector {
                 clusterListener.onFailure(new IllegalStateException("missing original index expressions for cluster [" + cluster + "]"));
                 continue;
             }
-            var request = new TsidPrefixHistogramRequest(indices, entry.getValue(), metricFields, minTimestamp, maxTimestamp, bucketMillis);
+            var request = new TsidPrefixHistogramRequest(indices, entry.getValue(), filter, minTimestamp, maxTimestamp, bucketMillis);
             collectOneCluster(transportService, queryTask, clusterAlias, request, clusterListener);
         }
     }
@@ -151,7 +150,7 @@ public final class TsidPrefixHistogramCollector {
                 null,
                 null
             );
-            Query filter = metricFilter(request.metricFields, context);
+            Query filter = context.toQuery(request.filter).query();
             Weight weight = searcher.createWeight(searcher.rewrite(filter), ScoreMode.COMPLETE_NO_SCORES, 1f);
             PartitionedDocValues.PrefixPartitions partitions = null;
             for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
@@ -265,16 +264,6 @@ public final class TsidPrefixHistogramCollector {
         final boolean found = tsid.advanceExact(doc);
         assert found : "every time-series doc has a _tsid";
         return tsid.ordValue();
-    }
-
-    static Query metricFilter(List<String> metricFields, SearchExecutionContext context) {
-        BooleanQuery.Builder exists = new BooleanQuery.Builder();
-        for (String field : metricFields) {
-            if (context.isFieldMapped(field)) {
-                exists.add(context.getFieldType(field).existsQuery(context), BooleanClause.Occur.SHOULD);
-            }
-        }
-        return exists.build();
     }
 
     private static long[] timestampRange(LeafReader reader, DateFieldMapper.DateFieldType timestamp) throws IOException {

@@ -17,6 +17,9 @@ import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.action.support.WriteRequest;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.transport.TransportService;
@@ -179,7 +182,7 @@ public class TsidPrefixHistogramIT extends AbstractEsqlIntegTestCase {
                 queryTask,
                 Map.of(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, concreteIndices),
                 LOCAL_INDICES,
-                metricFields,
+                metricsFilter(metricFields),
                 minTimestamp,
                 maxTimestamp,
                 bucketMillis,
@@ -189,5 +192,11 @@ public class TsidPrefixHistogramIT extends AbstractEsqlIntegTestCase {
         } finally {
             taskManager.unregister(queryTask);
         }
+    }
+
+    private static QueryBuilder metricsFilter(List<String> metricFields) {
+        BoolQueryBuilder exists = QueryBuilders.boolQuery();
+        metricFields.forEach(field -> exists.should(QueryBuilders.existsQuery(field)));
+        return exists;
     }
 }

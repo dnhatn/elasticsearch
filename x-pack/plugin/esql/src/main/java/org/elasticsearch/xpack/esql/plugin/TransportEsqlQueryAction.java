@@ -460,7 +460,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             services,
             externalBlobStoreExecutor(),
             externalSourceConcurrency(),
-            ((CancellableTask) task)::isCancelled,
+            (CancellableTask) task,
             coordination.breaker(),
             ActionListener.wrap(result -> {
                 try {

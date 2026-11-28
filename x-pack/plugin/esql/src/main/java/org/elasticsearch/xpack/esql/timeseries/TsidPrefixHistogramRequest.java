@@ -12,12 +12,12 @@ import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.support.broadcast.BroadcastRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.TaskId;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 
 import static org.elasticsearch.action.ValidateActions.addValidationError;
@@ -25,15 +25,15 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
 final class TsidPrefixHistogramRequest extends BroadcastRequest<TsidPrefixHistogramRequest> {
     final OriginalIndices originalIndices;
     final String[] concreteIndices;
-    final List<String> metricFields;
     final long minTimestamp;
     final long maxTimestamp;
     final long bucketMillis;
+    final QueryBuilder filter;
 
     TsidPrefixHistogramRequest(
         OriginalIndices originalIndices,
         String[] concreteIndices,
-        List<String> metricFields,
+        QueryBuilder filter,
         long minTimestamp,
         long maxTimestamp,
         long bucketMillis
@@ -41,20 +41,20 @@ final class TsidPrefixHistogramRequest extends BroadcastRequest<TsidPrefixHistog
         super(originalIndices.indices(), originalIndices.indicesOptions());
         this.originalIndices = originalIndices;
         this.concreteIndices = concreteIndices;
-        this.metricFields = metricFields;
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
         this.bucketMillis = bucketMillis;
+        this.filter = filter;
     }
 
     TsidPrefixHistogramRequest(StreamInput in) throws IOException {
         super(in);
         this.originalIndices = OriginalIndices.readOriginalIndices(in);
         this.concreteIndices = in.readStringArray();
-        this.metricFields = in.readStringCollectionAsList();
         this.minTimestamp = in.readLong();
         this.maxTimestamp = in.readLong();
         this.bucketMillis = in.readVLong();
+        this.filter = in.readNamedWriteable(QueryBuilder.class);
     }
 
     @Override
@@ -62,17 +62,17 @@ final class TsidPrefixHistogramRequest extends BroadcastRequest<TsidPrefixHistog
         super.writeTo(out);
         OriginalIndices.writeOriginalIndices(originalIndices, out);
         out.writeStringArray(concreteIndices);
-        out.writeStringCollection(metricFields);
         out.writeLong(minTimestamp);
         out.writeLong(maxTimestamp);
         out.writeVLong(bucketMillis);
+        out.writeNamedWriteable(filter);
     }
 
     @Override
     public ActionRequestValidationException validate() {
         ActionRequestValidationException validationException = super.validate();
-        if (metricFields.isEmpty()) {
-            validationException = addValidationError("metric fields are required", validationException);
+        if (filter == null) {
+            validationException = addValidationError("filter is required", validationException);
         }
         return validationException;
     }
@@ -84,14 +84,14 @@ final class TsidPrefixHistogramRequest extends BroadcastRequest<TsidPrefixHistog
             public String getDescription() {
                 return "concrete_indices="
                     + Arrays.toString(concreteIndices)
-                    + ", metric_fields="
-                    + metricFields
                     + ", time_range=["
                     + minTimestamp
                     + ", "
                     + maxTimestamp
                     + "], bucket_millis="
-                    + bucketMillis;
+                    + bucketMillis
+                    + ", filter="
+                    + filter;
             }
         };
     }

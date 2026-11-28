@@ -10,6 +10,7 @@ package org.elasticsearch.xpack.esql.optimizer;
 import org.elasticsearch.xpack.esql.VerificationException;
 import org.elasticsearch.xpack.esql.common.Failures;
 import org.elasticsearch.xpack.esql.core.expression.Attribute;
+import org.elasticsearch.xpack.esql.optimizer.rules.physical.ExpandTimeSeriesSplits;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.InsertPartialWindowAggregates;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.ProjectAwayColumns;
 import org.elasticsearch.xpack.esql.optimizer.rules.physical.ReplaceSampledStatsBySampleAndStats;
@@ -60,7 +61,8 @@ public class PhysicalPlanOptimizer extends ParameterizedRuleExecutor<PhysicalPla
                 new ProjectAwayColumns(),
                 new ReplaceSampledStatsBySampleAndStats(() -> approximationApplied.set(true)),
                 new InsertPartialWindowAggregates()
-            )
+            ),
+            new Batch<>("Expand Splits", Limiter.ONCE, new ExpandTimeSeriesSplits())
         );
     }
 }

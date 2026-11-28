@@ -10,6 +10,7 @@ import org.elasticsearch.action.IndicesRequest;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.TaskId;
@@ -30,19 +31,19 @@ final class TsidPrefixHistogramNodeRequest extends AbstractTransportRequest
     private String[] indices;
     private final IndicesOptions indicesOptions;
     private List<ShardId> shardIds;
-    final List<String> metricFields;
     final long minTimestamp;
     final long maxTimestamp;
     final long bucketMillis;
+    final QueryBuilder filter;
 
     TsidPrefixHistogramNodeRequest(TsidPrefixHistogramRequest request, List<ShardId> shardIds) {
         this.indices = request.originalIndices.indices();
         this.indicesOptions = request.originalIndices.indicesOptions();
         this.shardIds = List.copyOf(shardIds);
-        this.metricFields = request.metricFields;
         this.minTimestamp = request.minTimestamp;
         this.maxTimestamp = request.maxTimestamp;
         this.bucketMillis = request.bucketMillis;
+        this.filter = request.filter;
     }
 
     TsidPrefixHistogramNodeRequest(StreamInput in) throws IOException {
@@ -50,10 +51,10 @@ final class TsidPrefixHistogramNodeRequest extends AbstractTransportRequest
         this.indices = in.readStringArray();
         this.indicesOptions = IndicesOptions.readIndicesOptions(in);
         this.shardIds = in.readCollectionAsImmutableList(ShardId::new);
-        this.metricFields = in.readStringCollectionAsList();
         this.minTimestamp = in.readLong();
         this.maxTimestamp = in.readLong();
         this.bucketMillis = in.readVLong();
+        this.filter = in.readNamedWriteable(QueryBuilder.class);
     }
 
     @Override
@@ -62,10 +63,10 @@ final class TsidPrefixHistogramNodeRequest extends AbstractTransportRequest
         out.writeStringArray(indices);
         indicesOptions.writeIndicesOptions(out);
         out.writeCollection(shardIds);
-        out.writeStringCollection(metricFields);
         out.writeLong(minTimestamp);
         out.writeLong(maxTimestamp);
         out.writeVLong(bucketMillis);
+        out.writeNamedWriteable(filter);
     }
 
     @Override
@@ -104,14 +105,14 @@ final class TsidPrefixHistogramNodeRequest extends AbstractTransportRequest
             public String getDescription() {
                 return "shards="
                     + shardIds
-                    + ", metric_fields="
-                    + metricFields
                     + ", time_range=["
                     + minTimestamp
                     + ", "
                     + maxTimestamp
                     + "], bucket_millis="
-                    + bucketMillis;
+                    + bucketMillis
+                    + ", filter="
+                    + filter;
             }
         };
     }

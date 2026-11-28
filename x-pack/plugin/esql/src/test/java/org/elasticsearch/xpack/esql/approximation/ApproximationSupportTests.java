@@ -98,6 +98,7 @@ import org.elasticsearch.xpack.esql.plan.logical.Row;
 import org.elasticsearch.xpack.esql.plan.logical.SparklineGenerateEmptyBuckets;
 import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesAggregate;
 import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesCollapse;
+import org.elasticsearch.xpack.esql.plan.logical.TimeSeriesSplit;
 import org.elasticsearch.xpack.esql.plan.logical.TopNPreFilter;
 import org.elasticsearch.xpack.esql.plan.logical.TsInfo;
 import org.elasticsearch.xpack.esql.plan.logical.UnaryPlan;
@@ -171,6 +172,7 @@ public class ApproximationSupportTests extends ESTestCase {
         // They require chained stats commands.
         TimeSeriesAggregate.class,
         TimeSeriesCollapse.class,
+        TimeSeriesSplit.class,
 
         // HIGHLIGHT is not supported;
         Highlight.class,

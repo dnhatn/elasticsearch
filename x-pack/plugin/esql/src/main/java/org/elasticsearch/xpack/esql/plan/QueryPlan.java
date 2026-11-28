@@ -95,6 +95,16 @@ public abstract class QueryPlan<PlanType extends QueryPlan<PlanType>> extends No
     }
 
     /**
+     * Gives this node its own {@link #planId} and records the id it had in its {@link #origin}. For a node that a rewrite
+     * copied, such as one of several branches built from the same plan, so that each copy is told apart.
+     */
+    public final void renewPlanId() {
+        PlanId copiedFrom = planId;
+        planId = new PlanId();
+        withOrigin(copiedFrom);
+    }
+
+    /**
      * Copies {@link #planId}, {@link #origin} and {@link #exchange} from this node onto {@code replacement}, and returns it.
      * {@code replaceChildren} does this so a rewrite of the same node keeps its identity.
      * The fields are mutable on purpose, the same way {@code LogicalPlan} stage is set after construction.

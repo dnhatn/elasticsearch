@@ -47,6 +47,7 @@ import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
 import org.elasticsearch.search.crossproject.ProjectRoutingRequestInfo;
 import org.elasticsearch.search.scheduling.QueryScheduler;
+import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.telemetry.metric.MeterRegistry;
 import org.elasticsearch.test.ESTestCase;
@@ -250,7 +251,7 @@ public class PlanExecutorMetricsTests extends ESTestCase {
                     MOCK_TRANSPORT_ACTION_SERVICES,
                     EsExecutors.DIRECT_EXECUTOR_SERVICE,
                     1,
-                    () -> false,
+                    new CancellableTask(1, "transport", "esql", "test", TaskId.EMPTY_TASK_ID, Map.of()),
                     NoopCircuitBreaker.INSTANCE,
                     new ActionListener<>() {
                         @Override
@@ -292,7 +293,7 @@ public class PlanExecutorMetricsTests extends ESTestCase {
                     MOCK_TRANSPORT_ACTION_SERVICES,
                     EsExecutors.DIRECT_EXECUTOR_SERVICE,
                     1,
-                    () -> false,
+                    new CancellableTask(1, "transport", "esql", "test", TaskId.EMPTY_TASK_ID, Map.of()),
                     NoopCircuitBreaker.INSTANCE,
                     new ActionListener<>() {
                         @Override
@@ -828,7 +829,7 @@ public class PlanExecutorMetricsTests extends ESTestCase {
             services,
             EsExecutors.DIRECT_EXECUTOR_SERVICE,
             1,
-            () -> false,
+            new CancellableTask(1, "transport", "esql", "test", TaskId.EMPTY_TASK_ID, Map.of()),
             planningBreaker,
             listener
         );

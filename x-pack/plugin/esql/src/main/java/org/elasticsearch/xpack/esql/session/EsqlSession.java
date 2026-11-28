@@ -61,10 +61,12 @@ import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
 import org.elasticsearch.search.crossproject.TargetProjects;
+import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.ConnectTransportException;
 import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.transport.RemoteClusterService;
+import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.esql.VerificationException;
 import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryRequest;
@@ -130,7 +132,9 @@ import org.elasticsearch.xpack.esql.into.IntoDestinationAuthorizer;
 import org.elasticsearch.xpack.esql.into.IntoPageWriter;
 import org.elasticsearch.xpack.esql.optimizer.LogicalOptimizerContext;
 import org.elasticsearch.xpack.esql.optimizer.LogicalPlanOptimizer;
+import org.elasticsearch.xpack.esql.optimizer.LogicalPlanPostOptimizer;
 import org.elasticsearch.xpack.esql.optimizer.LogicalPlanPreOptimizer;
+import org.elasticsearch.xpack.esql.optimizer.LogicalPostOptimizerContext;
 import org.elasticsearch.xpack.esql.optimizer.LogicalPreOptimizerContext;
 import org.elasticsearch.xpack.esql.optimizer.PhysicalOptimizerContext;
 import org.elasticsearch.xpack.esql.optimizer.PhysicalPlanOptimizer;
@@ -212,7 +216,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import static java.util.stream.Collectors.toSet;
@@ -317,6 +320,7 @@ public class EsqlSession {
     private final IndexNameExpressionResolver indexNameExpressionResolver;
     private final InferenceService inferenceService;
     private final RemoteClusterService remoteClusterService;
+    private final TransportService transportService;
     private final BlockFactory blockFactory;
     private final ThreadPool threadPool;
     private final PlannerSettings plannerSettings;
@@ -481,6 +485,7 @@ public class EsqlSession {
         this.inferenceService = services.inferenceService();
         this.preMapper = new PreMapper(services);
         this.remoteClusterService = services.transportService().getRemoteClusterService();
+        this.transportService = services.transportService();
         this.blockFactory = services.blockFactoryProvider().blockFactory();
         this.threadPool = services.transportService().getThreadPool();
         this.plannerSettings = plannerSettings;
@@ -507,7 +512,7 @@ public class EsqlSession {
         EsqlQueryRequest request,
         EsqlExecutionInfo executionInfo,
         PlanRunner planRunner,
-        BooleanSupplier cancellation,
+        CancellableTask queryTask,
         ActionListener<Versioned<Result>> listener
     ) {
         executionInfo.queryProfile().planning().start();
@@ -516,13 +521,14 @@ public class EsqlSession {
         if (externalSourceResolver != null) {
             externalSourceResolver.planningCpu(planningCpu);
         }
-        planningCpu.meteredCpu(() -> doExecute(request, executionInfo, planRunner, listener));
+        planningCpu.meteredCpu(() -> doExecute(request, executionInfo, planRunner, queryTask, listener));
     }
 
     private void doExecute(
         EsqlQueryRequest request,
         EsqlExecutionInfo executionInfo,
         PlanRunner planRunner,
+        CancellableTask queryTask,
         ActionListener<Versioned<Result>> listener
     ) {
         assert planningCpu.isMeteringCurrentThread() : "planning started on a thread without an open planning CPU measurement";
@@ -645,7 +651,7 @@ public class EsqlSession {
                 }
                 viewResolutionProfile.stop();
                 request.setViewSettings(viewResolution.viewSettings());
-                analyseAndExecute(request, executionInfo, planRunner, statement, resolved, viewResolution, l);
+                analyseAndExecute(request, executionInfo, planRunner, queryTask, statement, resolved, viewResolution, l);
             }))
         );
     }
@@ -665,6 +671,7 @@ public class EsqlSession {
         EsqlQueryRequest request,
         EsqlExecutionInfo executionInfo,
         PlanRunner planRunner,
+        CancellableTask queryTask,
         EsqlStatement statement,
         ResolvedSettings resolved,
         ViewResolver.ViewResolutionResult viewResolution,
@@ -860,17 +867,28 @@ public class EsqlSession {
                     var logicalPlanOptimizer = new LogicalPlanOptimizer(
                         new LogicalOptimizerContext(finalConfiguration, foldContext, minimumVersion, flags)
                     );
+                    var logicalPlanPostOptimizer = new LogicalPlanPostOptimizer(
+                        new LogicalPostOptimizerContext(
+                            finalConfiguration,
+                            request.filter(),
+                            flags,
+                            minimumVersion,
+                            transportService,
+                            queryTask
+                        )
+                    );
                     var physicalPlanOptimizer = new PhysicalPlanOptimizer(new PhysicalOptimizerContext(configuration, minimumVersion));
 
                     var columnMetadata = new Holder<Map<NameId, Map<String, Object>>>();
                     SubscribableListener.<LogicalPlan>newForked(l -> preOptimizedPlan(plan, logicalPlanPreOptimizer, planTimeProfile, l))
                         .<LogicalPlan>andThen((l, p) -> {
                             assert planningCpu.isMeteringCurrentThread() : "logical optimizer reached on an unmetered thread";
-                            preMapper.preMapper(
-                                new Versioned<>(optimizedPlan(p, logicalPlanOptimizer, planTimeProfile), minimumVersion),
+                            logicalPlanPostOptimizer.postOptimize(
+                                optimizedPlan(p, logicalPlanOptimizer, planTimeProfile),
                                 planningCpu.meteredCpu(l)
                             );
                         })
+                        .<LogicalPlan>andThen((l, p) -> preMapper.preMapper(new Versioned<>(p, minimumVersion), planningCpu.meteredCpu(l)))
                         .<Result>andThen((l, p) -> {
                             columnMetadata.set(
                                 createColumnMetadata(

@@ -20,6 +20,7 @@ import org.elasticsearch.index.analysis.AnalysisRegistry;
 import org.elasticsearch.indices.IndicesExpressionGrouper;
 import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
+import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.tasks.TaskCancelledException;
 import org.elasticsearch.telemetry.metric.MeterRegistry;
@@ -307,8 +308,7 @@ public class PlanExecutor {
      *                               {@code snapshot_meta} shape, capped at 100): footer reads are async (the pool
      *                               thread is released across the network round-trip), so the bound caps concurrent
      *                               in-flight reads rather than pinning that many threads.
-     * @param cancellation consulted before each per-file footer read so a wide-glob discovery aborts promptly when
-     *                               the originating query is cancelled.
+     * @param queryTask the originating query task, used to cancel planning work such as external source discovery.
      * @param planningBreaker the breaker the query's external planning charges: the query's own breaker on this node,
      *                               so planning memory counts towards the query like the memory of its computes.
      */
@@ -326,7 +326,7 @@ public class PlanExecutor {
         TransportActionServices services,
         Executor externalSourceExecutor,
         int externalSourceConcurrency,
-        BooleanSupplier cancellation,
+        CancellableTask queryTask,
         CircuitBreaker planningBreaker,
         ActionListener<Versioned<Result>> listener
     ) {
@@ -350,7 +350,7 @@ public class PlanExecutor {
             dataSourceModule,
             services.clusterService().getSettings(),
             cacheService,
-            cancellation,
+            queryTask::isCancelled,
             externalSourceConcurrency,
             threadContext,
             maxDiscoveredFiles,
@@ -412,7 +412,7 @@ public class PlanExecutor {
 
         // Wrap it in a listener so that if we have any exceptions during execution, the listener picks it up
         // and all the metrics are properly updated
-        ActionListener.run(executeListener, l -> session.execute(request, executionInfo, planRunner, cancellation, l));
+        ActionListener.run(executeListener, l -> session.execute(request, executionInfo, planRunner, queryTask, l));
     }
 
     /**

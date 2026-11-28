@@ -11,6 +11,7 @@ import org.apache.lucene.search.IndexSearcher;
 import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.MapperServiceTestCase;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.SearchExecutionContext;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.xpack.aggregatemetric.AggregateMetricMapperPlugin;
@@ -52,16 +53,17 @@ public class TsidPrefixHistogramCollectorTests extends MapperServiceTestCase {
             SearchExecutionContext context = createSearchExecutionContext(mapperService, searcher);
             // the values live in the cpu.min and cpu.max sub-fields, so the parent name alone matches nothing
             assertThat(searcher.count(new FieldExistsQuery("cpu")), equalTo(0));
-            assertThat(searcher.count(TsidPrefixHistogramCollector.metricFilter(List.of("cpu"), context)), equalTo(2));
-            assertThat(searcher.count(TsidPrefixHistogramCollector.metricFilter(List.of("memory"), context)), equalTo(1));
-            assertThat(searcher.count(TsidPrefixHistogramCollector.metricFilter(List.of("cpu", "memory"), context)), equalTo(3));
-            assertThat(searcher.count(TsidPrefixHistogramCollector.metricFilter(List.of("unknown"), context)), equalTo(0));
+            assertThat(searcher.count(context.toQuery(QueryBuilders.existsQuery("cpu")).query()), equalTo(2));
+            assertThat(searcher.count(context.toQuery(QueryBuilders.existsQuery("memory")).query()), equalTo(1));
+            var either = QueryBuilders.boolQuery().should(QueryBuilders.existsQuery("cpu")).should(QueryBuilders.existsQuery("memory"));
+            assertThat(searcher.count(context.toQuery(either).query()), equalTo(3));
+            assertThat(searcher.count(context.toQuery(QueryBuilders.existsQuery("unknown")).query()), equalTo(0));
         });
     }
 
-    public void testRejectsEmptyMetricFields() {
+    public void testRejectsMissingFilter() {
         PlainActionFuture<TsidPrefixHistogramResponse> future = new PlainActionFuture<>();
-        TsidPrefixHistogramCollector.collect(null, null, Map.of(), Map.of(), List.of(), Long.MIN_VALUE, Long.MAX_VALUE, 0, future);
+        TsidPrefixHistogramCollector.collect(null, null, Map.of(), Map.of(), null, Long.MIN_VALUE, Long.MAX_VALUE, 0, future);
         expectThrows(IllegalArgumentException.class, future::actionGet);
     }
 }
